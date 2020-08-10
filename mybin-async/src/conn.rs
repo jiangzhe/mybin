@@ -1,15 +1,14 @@
-use async_net::TcpStream;
-use serde_derive::*;
-use std::net::{SocketAddr, ToSocketAddrs};
-use crate::error::{Result, Error};
 use crate::auth_plugin::{AuthPlugin, MysqlNativePassword};
-use mybin_parser::handshake::{initial_handshake, 
-    HandshakeClientResponse41};
-use mybin_parser::flag::CapabilityFlags;
-use mybin_parser::packet::{Message, parse_message};
-use crate::number::{AsyncReadNumber, AsyncWriteNumber};
 use crate::bytes::AsyncReadBytes;
+use crate::error::{Error, Result};
+use crate::number::{AsyncReadNumber, AsyncWriteNumber};
+use async_net::TcpStream;
+use mybin_parser::flag::CapabilityFlags;
+use mybin_parser::handshake::{initial_handshake, HandshakeClientResponse41};
+use mybin_parser::packet::{parse_message, Message};
+use serde_derive::*;
 use smol::io::AsyncWriteExt;
+use std::net::{SocketAddr, ToSocketAddrs};
 
 #[derive(Debug)]
 pub struct Conn {
@@ -22,7 +21,7 @@ pub struct Conn {
 #[allow(dead_code)]
 impl Conn {
     /// create a new connection to MySQL
-    /// 
+    ///
     /// this method only make the initial connection to MySQL server,
     /// user has to finish the handshake manually
     pub async fn connect<T: ToSocketAddrs>(addr: T) -> Result<Conn> {
@@ -33,22 +32,27 @@ impl Conn {
         };
         let stream = TcpStream::connect(socket_addr).await?;
         log::debug!("connected to MySQL: {}", socket_addr);
-        Ok(Conn{socket_addr, stream, buf: Vec::new(), cap_flags: CapabilityFlags::empty()})
+        Ok(Conn {
+            socket_addr,
+            stream,
+            buf: Vec::new(),
+            cap_flags: CapabilityFlags::empty(),
+        })
     }
 
     /// process the initial handshake with MySQL server,
     /// should be called before any other commands
-    /// this mehtod will change the connect capability flags
-    pub async fn handshake<T: ToSocketAddrs>(
-        &mut self, opts: ConnOpts,
-    ) -> Result<()> {
+    /// this method will change the connect capability flags
+    pub async fn handshake<T: ToSocketAddrs>(&mut self, opts: ConnOpts) -> Result<()> {
         let seed = {
             let msg = self.recv_msg().await?;
             let handshake = initial_handshake(msg)?;
-            log::debug!("protocol version: {}, server version: {}, connection_id: {}", 
-                handshake.protocol_version, 
+            log::debug!(
+                "protocol version: {}, server version: {}, connection_id: {}",
+                handshake.protocol_version,
                 String::from_utf8_lossy(handshake.server_version),
-                handshake.connection_id);
+                handshake.connection_id
+            );
             let mut seed = vec![];
             seed.extend(handshake.auth_plugin_data_1);
             seed.extend(handshake.auth_plugin_data_2);
@@ -60,8 +64,9 @@ impl Conn {
         self.cap_flags.insert(CapabilityFlags::TRANSACTIONS);
         self.cap_flags.insert(CapabilityFlags::MULTI_RESULTS);
         self.cap_flags.insert(CapabilityFlags::SECURE_CONNECTION);
-        self.cap_flags.insert(CapabilityFlags::PLUGIN_AUTH_LENENC_CLIENT_DATA);
-            CapabilityFlags::default();
+        self.cap_flags
+            .insert(CapabilityFlags::PLUGIN_AUTH_LENENC_CLIENT_DATA);
+        CapabilityFlags::default();
         // disable ssl currently
         self.cap_flags.remove(CapabilityFlags::SSL);
         // by default use mysql_native_password auth_plugin
@@ -74,7 +79,7 @@ impl Conn {
             self.cap_flags.insert(CapabilityFlags::CONNECT_WITH_DB);
         }
 
-        let client_resp = HandshakeClientResponse41{
+        let client_resp = HandshakeClientResponse41 {
             capability_flags: self.cap_flags.clone(),
             username: opts.username,
             auth_response,
@@ -87,24 +92,29 @@ impl Conn {
         let msg = self.recv_msg().await?;
         match parse_message(&msg, &cap_flags)? {
             Message::Ok(_) => (),
-            Message::Err(err) => return Err(Error::PacketError(
-                format!("error_code: {}, error_message: {}", 
-                err.error_code, String::from_utf8_lossy(err.error_message))
-            )),
+            Message::Err(err) => {
+                return Err(Error::PacketError(format!(
+                    "error_code: {}, error_message: {}",
+                    err.error_code,
+                    String::from_utf8_lossy(err.error_message)
+                )))
+            }
             Message::Eof(_) => return Err(Error::PacketError("unexpected EOF".to_owned())),
         }
         Ok(())
     }
 
     /// receive message from MySQL server
-    /// 
+    ///
     /// this method will concat mutliple packets if payload too large.
     pub async fn recv_msg(&mut self) -> Result<&[u8]> {
         self.reset_buf();
         loop {
             let payload_len = self.stream.read_le_u24().await?;
             let _seq_id = self.stream.read_u8().await?;
-            self.stream.take_out(payload_len as usize, &mut self.buf).await?;
+            self.stream
+                .take_out(payload_len as usize, &mut self.buf)
+                .await?;
             // read multiple packets if payload larger than or equal to 2^24-1
             // https://dev.mysql.com/doc/internals/en/sending-more-than-16mbyte.html
             if payload_len < 0xffffff {
@@ -115,7 +125,7 @@ impl Conn {
     }
 
     /// send message to MySQL server
-    /// 
+    ///
     /// this method will split message into multiple packets if payload too large.
     pub async fn send_msg(&mut self, msg: &[u8]) -> Result<()> {
         let mut chunk_size = 0;
@@ -133,7 +143,7 @@ impl Conn {
             self.stream.write_u8(seq_id).await?;
         }
         Ok(())
-    } 
+    }
 
     fn reset_buf(&mut self) {
         self.buf.clear();

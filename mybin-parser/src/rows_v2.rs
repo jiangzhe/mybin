@@ -1,12 +1,14 @@
 //! meaningful data structures and parsing logic of RowsEventV2
+use crate::col::{ColumnMetadata, ColumnValue};
 use crate::error::Error;
-use crate::util::{len_enc_int, len_enc_str, LenEncStr, streaming_le_u48, bitmap_index};
+use crate::util::{bitmap_index, len_enc_int, len_enc_str, streaming_le_u48, LenEncStr};
 use nom::bytes::streaming::take;
 use nom::error::ParseError;
-use nom::number::streaming::{le_i8, le_i16, le_i32, le_i64, le_f32, le_f64, le_u8, le_u16, le_u32};
+use nom::number::streaming::{
+    le_f32, le_f64, le_i16, le_i32, le_i64, le_i8, le_u16, le_u32, le_u8,
+};
 use nom::IResult;
 use serde_derive::*;
-use crate::col::{ColumnMetadata, ColumnValue};
 
 /// Data of DeleteRowEventV2, UpdateRowsEventV2, WriteRowsEventV2
 ///
@@ -24,13 +26,13 @@ pub struct RowsDataV2<'a> {
 }
 
 impl<'a> RowsDataV2<'a> {
-
     pub fn raw_delete_rows(&self) -> Result<RawRowsV2<'a>, Error> {
         self.raw_rows(false)
     }
 
     pub fn delete_rows(&self, col_metas: &[ColumnMetadata]) -> Result<RowsV2, Error> {
-        self.raw_delete_rows().and_then(|rr| rr.delete_rows(col_metas))
+        self.raw_delete_rows()
+            .and_then(|rr| rr.delete_rows(col_metas))
     }
 
     pub fn raw_write_rows(&self) -> Result<RawRowsV2<'a>, Error> {
@@ -38,7 +40,8 @@ impl<'a> RowsDataV2<'a> {
     }
 
     pub fn write_rows(&self, col_metas: &[ColumnMetadata]) -> Result<RowsV2, Error> {
-        self.raw_write_rows().and_then(|rr| rr.write_rows(col_metas))
+        self.raw_write_rows()
+            .and_then(|rr| rr.write_rows(col_metas))
     }
 
     pub fn raw_update_rows(&self) -> Result<RawRowsV2<'a>, Error> {
@@ -46,12 +49,13 @@ impl<'a> RowsDataV2<'a> {
     }
 
     pub fn update_rows(&self, col_metas: &[ColumnMetadata]) -> Result<UpdateRowsV2, Error> {
-        self.raw_update_rows().and_then(|rr| rr.update_rows(col_metas))
+        self.raw_update_rows()
+            .and_then(|rr| rr.update_rows(col_metas))
     }
 
     fn raw_rows(&self, update: bool) -> Result<RawRowsV2<'a>, Error> {
         // extra_data_len - 2 is the length of extra data
-        let (input, raw_rows) = parse_raw_rows_v2(self.payload, self.extra_data_len-2, update)
+        let (input, raw_rows) = parse_raw_rows_v2(self.payload, self.extra_data_len - 2, update)
             .map_err(|e| Error::from((self.payload, e)))?;
         Ok(raw_rows)
     }
@@ -106,30 +110,38 @@ pub struct RawRowsV2<'a> {
 }
 
 impl<'a> RawRowsV2<'a> {
-
     pub fn write_rows(&self, col_metas: &[ColumnMetadata]) -> Result<RowsV2, Error> {
         // todo: error handling
-        let (_, rows) = self.parse_rows(col_metas, true).map_err(|e| Error::from((self.rows_data, e)))?;
+        let (_, rows) = self
+            .parse_rows(col_metas, true)
+            .map_err(|e| Error::from((self.rows_data, e)))?;
         Ok(rows)
     }
 
     pub fn delete_rows(&self, col_metas: &[ColumnMetadata]) -> Result<RowsV2, Error> {
         // todo: error handling
-        let (_, rows) = self.parse_rows(col_metas, false).map_err(|e| Error::from((self.rows_data, e)))?;
+        let (_, rows) = self
+            .parse_rows(col_metas, false)
+            .map_err(|e| Error::from((self.rows_data, e)))?;
         Ok(rows)
     }
 
     pub fn update_rows(&self, col_metas: &[ColumnMetadata]) -> Result<UpdateRowsV2, Error> {
         // todo: error handling
-        let (_, rows) = self.parse_update_rows(col_metas, ).map_err(|e| Error::from((self.rows_data, e)))?;
+        let (_, rows) = self
+            .parse_update_rows(col_metas)
+            .map_err(|e| Error::from((self.rows_data, e)))?;
         Ok(rows)
     }
 
-    fn parse_rows<E>(&self, col_metas: &[ColumnMetadata], write: bool) -> IResult<&'a [u8], RowsV2, E> 
+    fn parse_rows<E>(
+        &self,
+        col_metas: &[ColumnMetadata],
+        write: bool,
+    ) -> IResult<&'a [u8], RowsV2, E>
     where
         E: ParseError<&'a [u8]>,
     {
-        
         let mut rows = Vec::new();
         let bm1 = if write {
             self.after_col_bitmap
@@ -141,7 +153,11 @@ impl<'a> RawRowsV2<'a> {
         let mut input = self.rows_data;
         while !input.is_empty() {
             let (in1, col_bm) = take(bitmap_len)(input)?;
-            let col_bm: Vec<u8> = bm1.iter().zip(col_bm.iter()).map(|(b1, b2)| b1 ^ b2).collect();
+            let col_bm: Vec<u8> = bm1
+                .iter()
+                .zip(col_bm.iter())
+                .map(|(b1, b2)| b1 ^ b2)
+                .collect();
             let (in1, row) = parse_row(in1, n_cols, &col_bm, col_metas)?;
             rows.push(row);
             input = in1;
@@ -149,7 +165,10 @@ impl<'a> RawRowsV2<'a> {
         Ok((input, RowsV2(rows)))
     }
 
-    fn parse_update_rows<E>(&self, col_metas: &[ColumnMetadata]) -> IResult<&'a [u8], UpdateRowsV2, E> 
+    fn parse_update_rows<E>(
+        &self,
+        col_metas: &[ColumnMetadata],
+    ) -> IResult<&'a [u8], UpdateRowsV2, E>
     where
         E: ParseError<&'a [u8]>,
     {
@@ -161,11 +180,21 @@ impl<'a> RawRowsV2<'a> {
         while !input.is_empty() {
             // before row
             let (in1, before_col_bm) = take(bitmap_len)(input)?;
-            let before_col_bm: Vec<u8> = self.before_col_bitmap.iter().zip(before_col_bm.iter()).map(|(b1, b2)| b1 ^ b2).collect();
+            let before_col_bm: Vec<u8> = self
+                .before_col_bitmap
+                .iter()
+                .zip(before_col_bm.iter())
+                .map(|(b1, b2)| b1 ^ b2)
+                .collect();
             let (in1, before_row) = parse_row(in1, n_cols, &before_col_bm, col_metas)?;
             // after row
             let (in1, after_col_bm) = take(bitmap_len)(in1)?;
-            let after_col_bm: Vec<u8> = self.after_col_bitmap.iter().zip(after_col_bm.iter()).map(|(b1, b2)| b1 ^ b2).collect();
+            let after_col_bm: Vec<u8> = self
+                .after_col_bitmap
+                .iter()
+                .zip(after_col_bm.iter())
+                .map(|(b1, b2)| b1 ^ b2)
+                .collect();
             let (in1, after_row) = parse_row(in1, n_cols, &after_col_bm, col_metas)?;
             rows.push(UpdateRow(before_row.0, after_row.0));
             input = in1;
@@ -175,9 +204,13 @@ impl<'a> RawRowsV2<'a> {
 }
 
 /// parse raw rows v2, including WriteRows and DeleteRows v2
-/// 
+///
 /// the extra data length should be real length: len in binlog file minus 2
-pub fn parse_raw_rows_v2<'a, E>(input: &'a [u8], extra_data_len: u16, update: bool) -> IResult<&'a [u8], RawRowsV2<'a>, E> 
+pub fn parse_raw_rows_v2<'a, E>(
+    input: &'a [u8],
+    extra_data_len: u16,
+    update: bool,
+) -> IResult<&'a [u8], RawRowsV2<'a>, E>
 where
     E: ParseError<&'a [u8]>,
 {
@@ -193,7 +226,16 @@ where
         (input, before_col_bitmap)
     };
     let (input, rows_data) = take(input.len())(input)?;
-    Ok((input, RawRowsV2{extra_data, n_cols, before_col_bitmap, after_col_bitmap, rows_data}))
+    Ok((
+        input,
+        RawRowsV2 {
+            extra_data,
+            n_cols,
+            before_col_bitmap,
+            after_col_bitmap,
+            rows_data,
+        },
+    ))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -208,7 +250,12 @@ pub struct UpdateRowsV2(Vec<UpdateRow>);
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateRow(Vec<ColumnValue>, Vec<ColumnValue>);
 
-fn parse_row<'a, E>(input: &'a [u8], n_cols: usize, col_bm: &[u8], col_metas: &[ColumnMetadata]) -> IResult<&'a [u8], Row, E> 
+fn parse_row<'a, E>(
+    input: &'a [u8],
+    n_cols: usize,
+    col_bm: &[u8],
+    col_metas: &[ColumnMetadata],
+) -> IResult<&'a [u8], Row, E>
 where
     E: ParseError<&'a [u8]>,
 {
@@ -229,45 +276,46 @@ where
 
 /// todo: use error instead of panic
 /// reference: https://github.com/mysql/mysql-server/blob/5.7/sql/protocol_classic.cc
-fn parse_column_value<'a, E>(input: &'a [u8], col_meta: &ColumnMetadata) -> IResult<&'a [u8], ColumnValue, E> 
+fn parse_column_value<'a, E>(
+    input: &'a [u8],
+    col_meta: &ColumnMetadata,
+) -> IResult<&'a [u8], ColumnValue, E>
 where
     E: ParseError<&'a [u8]>,
 {
     let (input, col_val) = match col_meta {
-        ColumnMetadata::Decimal{..} => {
+        ColumnMetadata::Decimal { .. } => {
             let (input, v) = len_enc_str(input)?;
             match v {
                 LenEncStr::Null => (input, ColumnValue::Null),
                 LenEncStr::Err => panic!("invalid decimal"),
                 LenEncStr::Ref(s) => (input, ColumnValue::Decimal(Vec::from(s))),
             }
-        },
-        ColumnMetadata::Tiny{..} => {
+        }
+        ColumnMetadata::Tiny { .. } => {
             let (input, v) = le_i8(input)?;
             (input, ColumnValue::Tiny(v))
-        },
-        ColumnMetadata::Short{..} => {
+        }
+        ColumnMetadata::Short { .. } => {
             let (input, v) = le_i16(input)?;
             (input, ColumnValue::Short(v))
-        },
-        ColumnMetadata::Long{..} => {
+        }
+        ColumnMetadata::Long { .. } => {
             let (input, v) = le_i32(input)?;
             (input, ColumnValue::Long(v))
-        },
+        }
         // todo: pack_len not used?
-        ColumnMetadata::Float{..} => {
+        ColumnMetadata::Float { .. } => {
             let (input, v) = le_f32(input)?;
             (input, ColumnValue::Float(v))
-        },
+        }
         // todo: pack_len not used?
-        ColumnMetadata::Double{..} => {
+        ColumnMetadata::Double { .. } => {
             let (input, v) = le_f64(input)?;
             (input, ColumnValue::Double(v))
-        },
-        ColumnMetadata::Null{..} => {
-            (input, ColumnValue::Null)
-        },
-        ColumnMetadata::Timestamp{..} => {
+        }
+        ColumnMetadata::Null { .. } => (input, ColumnValue::Null),
+        ColumnMetadata::Timestamp { .. } => {
             let (input, len) = le_u8(input)?;
             match len {
                 0 => (input, ColumnValue::Null),
@@ -278,20 +326,30 @@ where
                     let (input, hour) = le_u8(input)?;
                     let (input, minute) = le_u8(input)?;
                     let (input, second) = le_u8(input)?;
-                    (input, ColumnValue::Timestamp{year, month, day, hour, minute, second})
-                },
+                    (
+                        input,
+                        ColumnValue::Timestamp {
+                            year,
+                            month,
+                            day,
+                            hour,
+                            minute,
+                            second,
+                        },
+                    )
+                }
                 _ => panic!("invalid length of timestamp"),
             }
-        },
-        ColumnMetadata::LongLong{..} => {
+        }
+        ColumnMetadata::LongLong { .. } => {
             let (input, v) = le_i64(input)?;
             (input, ColumnValue::LongLong(v))
-        },
-        ColumnMetadata::Int24{..} => {
+        }
+        ColumnMetadata::Int24 { .. } => {
             let (input, v) = le_i32(input)?;
             (input, ColumnValue::Int24(v))
-        },
-        ColumnMetadata::Date{..} => {
+        }
+        ColumnMetadata::Date { .. } => {
             let (input, len) = le_u8(input)?;
             match len {
                 0 => (input, ColumnValue::Null),
@@ -299,12 +357,12 @@ where
                     let (input, year) = le_u16(input)?;
                     let (input, month) = le_u8(input)?;
                     let (input, day) = le_u8(input)?;
-                    (input, ColumnValue::Date{year, month, day})
+                    (input, ColumnValue::Date { year, month, day })
                 }
                 _ => panic!("invalid length of date"),
             }
-        },
-        ColumnMetadata::Time{..} => {
+        }
+        ColumnMetadata::Time { .. } => {
             let (input, len) = le_u8(input)?;
             match len {
                 0 => (input, ColumnValue::Null),
@@ -315,7 +373,17 @@ where
                     let (input, hours) = le_u8(input)?;
                     let (input, minutes) = le_u8(input)?;
                     let (input, seconds) = le_u8(input)?;
-                    (input, ColumnValue::Time{negative, days, hours, minutes, seconds, micro_seconds: 0})
+                    (
+                        input,
+                        ColumnValue::Time {
+                            negative,
+                            days,
+                            hours,
+                            minutes,
+                            seconds,
+                            micro_seconds: 0,
+                        },
+                    )
                 }
                 12 => {
                     let (input, negative) = le_u8(input)?;
@@ -325,12 +393,22 @@ where
                     let (input, minutes) = le_u8(input)?;
                     let (input, seconds) = le_u8(input)?;
                     let (input, micro_seconds) = le_u32(input)?;
-                    (input, ColumnValue::Time{negative, days, hours, minutes, seconds, micro_seconds})
+                    (
+                        input,
+                        ColumnValue::Time {
+                            negative,
+                            days,
+                            hours,
+                            minutes,
+                            seconds,
+                            micro_seconds,
+                        },
+                    )
                 }
                 _ => panic!("invalid length of time"),
             }
-        },
-        ColumnMetadata::DateTime{..} => {
+        }
+        ColumnMetadata::DateTime { .. } => {
             let (input, len) = le_u8(input)?;
             match len {
                 0 => (input, ColumnValue::Null),
@@ -341,8 +419,19 @@ where
                     let (input, hour) = le_u8(input)?;
                     let (input, minute) = le_u8(input)?;
                     let (input, second) = le_u8(input)?;
-                    (input, ColumnValue::DateTime{year, month, day, hour, minute, second, micro_second: 0})
-                },
+                    (
+                        input,
+                        ColumnValue::DateTime {
+                            year,
+                            month,
+                            day,
+                            hour,
+                            minute,
+                            second,
+                            micro_second: 0,
+                        },
+                    )
+                }
                 11 => {
                     let (input, year) = le_u16(input)?;
                     let (input, month) = le_u8(input)?;
@@ -351,81 +440,92 @@ where
                     let (input, minute) = le_u8(input)?;
                     let (input, second) = le_u8(input)?;
                     let (input, micro_second) = le_u32(input)?;
-                    (input, ColumnValue::DateTime{year, month, day, hour, minute, second, micro_second})
+                    (
+                        input,
+                        ColumnValue::DateTime {
+                            year,
+                            month,
+                            day,
+                            hour,
+                            minute,
+                            second,
+                            micro_second,
+                        },
+                    )
                 }
                 _ => panic!("invalid length of timestamp"),
             }
-        },
-        ColumnMetadata::Year{..} => {
+        }
+        ColumnMetadata::Year { .. } => {
             let (input, v) = le_u16(input)?;
             (input, ColumnValue::Year(v))
-        },
+        }
         // NewDate,
-        ColumnMetadata::Varchar{..} => {
+        ColumnMetadata::Varchar { .. } => {
             let (input, v) = len_enc_str(input)?;
             match v {
                 LenEncStr::Null => (input, ColumnValue::Null),
                 LenEncStr::Err => panic!("invalid decimal"),
                 LenEncStr::Ref(s) => (input, ColumnValue::Varchar(Vec::from(s))),
             }
-        },
-        ColumnMetadata::Bit{..} => {
+        }
+        ColumnMetadata::Bit { .. } => {
             let (input, v) = len_enc_str(input)?;
             match v {
                 LenEncStr::Null => (input, ColumnValue::Null),
                 LenEncStr::Err => panic!("invalid bit"),
                 LenEncStr::Ref(s) => (input, ColumnValue::Bit(Vec::from(s))),
             }
-        },
+        }
         // Timestamp2,
         // DateTime2,
         // Time2,
         // Json,
-        ColumnMetadata::NewDecimal{..} => {
+        ColumnMetadata::NewDecimal { .. } => {
             let (input, v) = len_enc_str(input)?;
             match v {
                 LenEncStr::Null => (input, ColumnValue::Null),
                 LenEncStr::Err => panic!("invalid newdecimal"),
                 LenEncStr::Ref(s) => (input, ColumnValue::NewDecimal(Vec::from(s))),
             }
-        },
+        }
         // Enum,
         // Set,
         // TinyBlob,
         // MediumBlob,
         // LongBlob,
-        ColumnMetadata::Blob{..} => {
+        ColumnMetadata::Blob { .. } => {
             let (input, v) = len_enc_str(input)?;
             match v {
                 LenEncStr::Null => (input, ColumnValue::Null),
                 LenEncStr::Err => panic!("invalid newdecimal"),
                 LenEncStr::Ref(s) => (input, ColumnValue::Blob(Vec::from(s))),
             }
-        },
-        ColumnMetadata::VarString{..} => {
+        }
+        ColumnMetadata::VarString { .. } => {
             let (input, v) = len_enc_str(input)?;
             match v {
                 LenEncStr::Null => (input, ColumnValue::Null),
                 LenEncStr::Err => panic!("invalid newdecimal"),
                 LenEncStr::Ref(s) => (input, ColumnValue::VarString(Vec::from(s))),
             }
-        },
-        ColumnMetadata::String{..} => {
+        }
+        ColumnMetadata::String { .. } => {
             let (input, v) = len_enc_str(input)?;
             match v {
                 LenEncStr::Null => (input, ColumnValue::Null),
                 LenEncStr::Err => panic!("invalid newdecimal"),
                 LenEncStr::Ref(s) => (input, ColumnValue::String(Vec::from(s))),
             }
-        },
-        ColumnMetadata::Geometry{..} => {
+        }
+        ColumnMetadata::Geometry { .. } => {
             let (input, v) = len_enc_str(input)?;
             match v {
                 LenEncStr::Null => (input, ColumnValue::Null),
                 LenEncStr::Err => panic!("invalid newdecimal"),
                 LenEncStr::Ref(s) => (input, ColumnValue::Geometry(Vec::from(s))),
             }
-        },
+        }
     };
     Ok((input, col_val))
 }
@@ -443,10 +543,10 @@ mod tests {
     #[test]
     fn test_field_types() {
         use nom::error::VerboseError;
-        let input: [u8;4] = [0x33, 0x33, 0x23, 0x41];
+        let input: [u8; 4] = [0x33, 0x33, 0x23, 0x41];
         let (_, v) = nom::number::streaming::le_f32::<VerboseError<_>>(&input).unwrap();
         println!("{}", v);
-        let input: [u8;8] = [0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x24, 0x40];
+        let input: [u8; 8] = [0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x24, 0x40];
         let (_, v) = nom::number::streaming::le_f64::<VerboseError<_>>(&input).unwrap();
         println!("{}", v);
     }

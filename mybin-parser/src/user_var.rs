@@ -1,9 +1,9 @@
+use crate::error::Error;
 use nom::bytes::streaming::take;
 use nom::error::ParseError;
 use nom::number::streaming::{le_u32, le_u8};
 use nom::IResult;
 use serde_derive::*;
-use crate::error::Error;
 
 /// Data of UserVarEvent
 ///

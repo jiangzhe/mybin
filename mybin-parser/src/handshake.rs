@@ -1,14 +1,14 @@
-use serde_derive::*;
-use nom::IResult;
-use nom::error::ParseError;
-use nom::number::streaming::{le_u8, le_u16, le_u32};
-use nom::bytes::streaming::{take, take_till};
 use crate::error::Error;
-use crate::util::LenEncInt;
 use crate::flag::*;
+use crate::util::LenEncInt;
+use nom::bytes::streaming::{take, take_till};
+use nom::error::ParseError;
+use nom::number::streaming::{le_u16, le_u32, le_u8};
+use nom::IResult;
+use serde_derive::*;
 
 /// used for placeholder for optional part in payload
-const EMPTY_BYTE_ARRAY: [u8;0] = [];
+const EMPTY_BYTE_ARRAY: [u8; 0] = [];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InitialHandshake<'a> {
@@ -50,7 +50,8 @@ where
     let (input, auth_plugin_data_length) = le_u8(input)?;
     let (input, _) = take(10usize)(input)?;
     // construct complete capability_flags
-    let capability_flags = (capability_flags_lower as u32) | ((capability_flags_upper as u32) << 16);
+    let capability_flags =
+        (capability_flags_lower as u32) | ((capability_flags_upper as u32) << 16);
     let cap_flags = CapabilityFlags::from_bits_truncate(capability_flags);
     let (input, auth_plugin_data_2) = if cap_flags.contains(CapabilityFlags::SECURE_CONNECTION) {
         let len = std::cmp::max(13, auth_plugin_data_length - 8);
@@ -65,22 +66,25 @@ where
     } else {
         (input, &EMPTY_BYTE_ARRAY[..])
     };
-    Ok((input, InitialHandshake{
-        protocol_version,
-        server_version,
-        connection_id,
-        auth_plugin_data_1,
-        character_set,
-        status_flags,
-        capability_flags,
-        auth_plugin_data_length,
-        auth_plugin_data_2,
-        auth_plugin_name,
-    }))
+    Ok((
+        input,
+        InitialHandshake {
+            protocol_version,
+            server_version,
+            connection_id,
+            auth_plugin_data_1,
+            character_set,
+            status_flags,
+            capability_flags,
+            auth_plugin_data_length,
+            auth_plugin_data_2,
+            auth_plugin_name,
+        },
+    ))
 }
 
 /// handshake response of client protocol 41
-/// 
+///
 /// reference: https://dev.mysql.com/doc/internals/en/connection-phase-packets.html
 /// this struct should be constructed by user and will be sent to
 /// MySQL server to finish handshake process
@@ -120,7 +124,10 @@ impl HandshakeClientResponse41 {
         let auth_response_len = LenEncInt::from(self.auth_response.len() as u64);
         rst.extend(auth_response_len.to_bytes());
         // null-terminated database if connect with db
-        if self.capability_flags.contains(CapabilityFlags::CONNECT_WITH_DB) {
+        if self
+            .capability_flags
+            .contains(CapabilityFlags::CONNECT_WITH_DB)
+        {
             rst.extend(self.database.as_bytes());
             rst.push(0);
         }
@@ -129,7 +136,10 @@ impl HandshakeClientResponse41 {
             rst.extend(self.auth_plugin_name.as_bytes());
             rst.push(0);
         }
-        if self.capability_flags.contains(CapabilityFlags::CONNECT_ATTRS) {
+        if self
+            .capability_flags
+            .contains(CapabilityFlags::CONNECT_ATTRS)
+        {
             let mut lb = Vec::new();
             for attr in &self.connect_attrs {
                 let klen = LenEncInt::from(attr.key.len() as u64);
@@ -150,7 +160,7 @@ impl HandshakeClientResponse41 {
 
 impl Default for HandshakeClientResponse41 {
     fn default() -> Self {
-        HandshakeClientResponse41{
+        HandshakeClientResponse41 {
             capability_flags: CapabilityFlags::default(),
             max_packet_size: 1024 * 1024 * 1024,
             // by default use utf-8
@@ -185,8 +195,14 @@ mod tests {
         let (input, handshake) = parse_initial_handshake::<VerboseError<_>>(pkt.payload).unwrap();
         assert!(input.is_empty());
         dbg!(&handshake);
-        println!("server_version={}", String::from_utf8_lossy(handshake.server_version));
-        println!("auth_plugin_name={}", String::from_utf8_lossy(handshake.auth_plugin_name));
+        println!(
+            "server_version={}",
+            String::from_utf8_lossy(handshake.server_version)
+        );
+        println!(
+            "auth_plugin_name={}",
+            String::from_utf8_lossy(handshake.auth_plugin_name)
+        );
         let capability_flags = CapabilityFlags::from_bits(handshake.capability_flags).unwrap();
         println!("capability_flags={:#?}", capability_flags);
     }

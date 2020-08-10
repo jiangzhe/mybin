@@ -1,16 +1,16 @@
 //! defines structure and metadata for mysql columns
 
 use crate::error::Error;
+use crate::util::bitmap_index;
 use serde_derive::*;
 use std::convert::TryFrom;
-use crate::util::bitmap_index;
 
 /// ColumnType defined in binlog
-/// 
-/// the complete types listed in 
+///
+/// the complete types listed in
 /// https://github.com/mysql/mysql-server/blob/5.7/libbinlogevents/export/binary_log_types.h
-/// 
-/// several types are missing in binlog, refer to: 
+///
+/// several types are missing in binlog, refer to:
 /// https://github.com/mysql/mysql-server/blob/5.7/libbinlogevents/include/rows_event.h#L174
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum ColumnType {
@@ -331,7 +331,7 @@ pub enum ColumnValue {
     Long(i32),
     Float(f32),
     Double(f64),
-    Timestamp{
+    Timestamp {
         year: u16,
         month: u8,
         day: u8,
@@ -341,12 +341,12 @@ pub enum ColumnValue {
     },
     LongLong(i64),
     Int24(i32),
-    Date{
+    Date {
         year: u16,
         month: u8,
         day: u8,
     },
-    Time{
+    Time {
         negative: bool,
         days: u32,
         hours: u8,
@@ -354,7 +354,7 @@ pub enum ColumnValue {
         seconds: u8,
         micro_seconds: u32,
     },
-    DateTime{
+    DateTime {
         year: u16,
         month: u8,
         day: u8,

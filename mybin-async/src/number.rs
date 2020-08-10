@@ -1,57 +1,46 @@
+use crate::error::{Error, Needed, Result};
+use crate::{read_number_future, write_number_future};
 use smol::io::{AsyncRead, AsyncWrite};
 use smol::ready;
-use crate::error::{Result, Error, Needed};
 use std::future::Future;
+use std::io::ErrorKind;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use std::io::ErrorKind;
-use crate::{read_number_future, write_number_future};
 
 pub trait AsyncReadNumber: AsyncRead {
-
     fn read_u8(&mut self) -> ReadU8Future<Self>
     where
         Self: Unpin,
     {
-        ReadU8Future{
-            reader: self,
-        }
+        ReadU8Future { reader: self }
     }
 
     fn read_le_u16(&mut self) -> ReadLeU16Future<Self>
     where
         Self: Unpin,
     {
-        ReadLeU16Future{
-            reader: self,
-        }
+        ReadLeU16Future { reader: self }
     }
 
     fn read_le_u24(&mut self) -> ReadLeU24Future<Self>
-    where 
+    where
         Self: Unpin,
     {
-        ReadLeU24Future{
-            reader: self,
-        }
+        ReadLeU24Future { reader: self }
     }
 
     fn read_le_u32(&mut self) -> ReadLeU32Future<Self>
-    where 
+    where
         Self: Unpin,
     {
-        ReadLeU32Future{
-            reader: self,
-        }
+        ReadLeU32Future { reader: self }
     }
 
     fn read_le_u64(&mut self) -> ReadLeU64Future<Self>
-    where 
+    where
         Self: Unpin,
     {
-        ReadLeU64Future{
-            reader: self,
-        }
+        ReadLeU64Future { reader: self }
     }
 }
 
@@ -76,7 +65,6 @@ impl<R: AsyncRead + Unpin + ?Sized> Future for ReadU8Future<'_, R> {
                 Err(e) => return Poll::Ready(Err(Error::from(e))),
             }
         }
-        
     }
 }
 
@@ -101,8 +89,7 @@ read_number_future!(ReadLeU32Future, u32, 4, to_le_u32);
 #[inline]
 fn to_le_u32(bs: &[u8]) -> u32 {
     debug_assert_eq!(4, bs.len());
-    bs[0] as u32 + ((bs[1] as u32) << 8)
-        + ((bs[2] as u32) << 16) + ((bs[3] as u32) << 24)
+    bs[0] as u32 + ((bs[1] as u32) << 8) + ((bs[2] as u32) << 16) + ((bs[3] as u32) << 24)
 }
 
 read_number_future!(ReadLeU64Future, u64, 8, to_le_u64);
@@ -110,10 +97,14 @@ read_number_future!(ReadLeU64Future, u64, 8, to_le_u64);
 #[inline]
 fn to_le_u64(bs: &[u8]) -> u64 {
     debug_assert_eq!(8, bs.len());
-    bs[0] as u64 + ((bs[1] as u64) << 8) 
-        + ((bs[2] as u64) << 16) + ((bs[3] as u64) << 24)
-        + ((bs[4] as u64) << 32) + ((bs[5] as u64) << 40)
-        + ((bs[6] as u64) << 48) + ((bs[7] as u64) << 56)
+    bs[0] as u64
+        + ((bs[1] as u64) << 8)
+        + ((bs[2] as u64) << 16)
+        + ((bs[3] as u64) << 24)
+        + ((bs[4] as u64) << 32)
+        + ((bs[5] as u64) << 40)
+        + ((bs[6] as u64) << 48)
+        + ((bs[7] as u64) << 56)
 }
 
 pub trait AsyncWriteNumber: AsyncWrite {
@@ -121,50 +112,35 @@ pub trait AsyncWriteNumber: AsyncWrite {
     where
         Self: Unpin,
     {
-        WriteU8Future{
-            writer: self,
-            n,
-        }
+        WriteU8Future { writer: self, n }
     }
 
     fn write_le_u16(&mut self, n: u16) -> WriteU16Future<Self>
     where
         Self: Unpin,
     {
-        WriteU16Future{
-            writer: self,
-            n,
-        }
+        WriteU16Future { writer: self, n }
     }
 
     fn write_le_u24(&mut self, n: u32) -> WriteU24Future<Self>
     where
         Self: Unpin,
     {
-        WriteU24Future{
-            writer: self,
-            n,
-        }
+        WriteU24Future { writer: self, n }
     }
 
     fn write_le_u32(&mut self, n: u32) -> WriteU32Future<Self>
     where
         Self: Unpin,
     {
-        WriteU32Future{
-            writer: self,
-            n,
-        }
+        WriteU32Future { writer: self, n }
     }
 
     fn write_le_u64(&mut self, n: u64) -> WriteU64Future<Self>
     where
         Self: Unpin,
     {
-        WriteU64Future{
-            writer: self,
-            n,
-        }
+        WriteU64Future { writer: self, n }
     }
 }
 
@@ -177,7 +153,11 @@ write_number_future!(WriteU16Future, u16, 2, u16::to_le_bytes);
 write_number_future!(WriteU24Future, u32, 3, u24_to_le_bytes);
 
 fn u24_to_le_bytes(n: u32) -> [u8; 3] {
-    [(n & 0xff) as u8, ((n >> 8) & 0xff) as u8, ((n >> 16) & 0xff) as u8]
+    [
+        (n & 0xff) as u8,
+        ((n >> 8) & 0xff) as u8,
+        ((n >> 16) & 0xff) as u8,
+    ]
 }
 
 write_number_future!(WriteU32Future, u32, 4, u32::to_le_bytes);
@@ -203,7 +183,7 @@ mod tests {
         let bs = [1u8, 1];
         let mut reader = &bs[..];
         let n = reader.read_le_u16().await.unwrap();
-        assert_eq!(256+1, n);
+        assert_eq!(256 + 1, n);
     }
 
     #[smol_potat::test]
@@ -211,7 +191,7 @@ mod tests {
         let bs = [1u8, 1, 1, 0];
         let mut reader = &bs[..];
         let n = reader.read_le_u24().await.unwrap();
-        assert_eq!(256*256 + 256 + 1, n);
+        assert_eq!(256 * 256 + 256 + 1, n);
     }
 
     #[smol_potat::test]
@@ -219,7 +199,7 @@ mod tests {
         let bs = [1u8, 1, 0, 1];
         let mut reader = &bs[..];
         let n = reader.read_le_u32().await.unwrap();
-        assert_eq!(256*256*256 + 256 + 1, n);
+        assert_eq!(256 * 256 * 256 + 256 + 1, n);
     }
 
     #[smol_potat::test]
@@ -227,7 +207,10 @@ mod tests {
         let bs = [1u8, 1, 1, 1, 0, 0, 0, 1];
         let mut reader = &bs[..];
         let n = reader.read_le_u64().await.unwrap();
-        assert_eq!((1u64 << 56) + (1u64 << 24) + (1u64 << 16) + (1u64 << 8) + 1u64, n);
+        assert_eq!(
+            (1u64 << 56) + (1u64 << 24) + (1u64 << 16) + (1u64 << 8) + 1u64,
+            n
+        );
     }
 
     #[smol_potat::test]

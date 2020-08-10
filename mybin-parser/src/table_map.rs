@@ -4,7 +4,7 @@ use crate::util::{len_enc_int, streaming_le_u48};
 use nom::bytes::streaming::take;
 use nom::error::ParseError;
 use nom::multi::length_data;
-use nom::number::streaming::{le_u8, le_u16, le_u32};
+use nom::number::streaming::{le_u16, le_u32, le_u8};
 use nom::IResult;
 use serde_derive::*;
 use std::convert::TryFrom;
@@ -26,7 +26,8 @@ pub struct TableMapData<'a> {
 
 impl<'a> TableMapData<'a> {
     pub fn raw_table_map(&self) -> Result<RawTableMap<'a>, Error> {
-        let (_, rtm) = parse_raw_table_map(self.payload).map_err(|e| Error::from((self.payload, e)))?;
+        let (_, rtm) =
+            parse_raw_table_map(self.payload).map_err(|e| Error::from((self.payload, e)))?;
         Ok(rtm)
     }
 

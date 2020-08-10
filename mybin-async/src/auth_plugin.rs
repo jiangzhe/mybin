@@ -3,22 +3,20 @@ use crypto::digest::Digest;
 use crypto::sha1::Sha1;
 
 /// Auth plugin
-/// 
-/// this trait and impls refers to MySQL 5.1.49 
+///
+/// this trait and impls refers to MySQL 5.1.49
 /// JDBC implementation but simplified
 pub trait AuthPlugin {
-    
     const NAME: &'static str;
 
     /// set credentials
-    /// 
+    ///
     /// this method should be called before next() method
-    fn set_credential(&mut self, user: &str, password: &str);
-    
-    /// process authentication handshake data from server
-    /// amd optionally produce data to be sent to server
-    fn next(&mut self, input: &[u8], output: &mut Vec<u8>) -> Result<()>;
+    fn set_credential(&mut self, username: &str, password: &str);
 
+    /// process authentication handshake data from server
+    /// and optionally produce data to be sent to server
+    fn next(&mut self, input: &[u8], output: &mut Vec<u8>) -> Result<()>;
 }
 
 #[derive(Debug)]
@@ -28,15 +26,14 @@ pub struct MysqlNativePassword {
 
 impl MysqlNativePassword {
     pub fn new() -> Self {
-        MysqlNativePassword{password: vec![]}
+        MysqlNativePassword { password: vec![] }
     }
 }
 
 impl AuthPlugin for MysqlNativePassword {
-
     const NAME: &'static str = "mysql_native_password";
 
-    fn set_credential(&mut self, user: &str, password: &str) {
+    fn set_credential(&mut self, _username: &str, password: &str) {
         self.password = Vec::from(password.as_bytes());
     }
 
@@ -50,7 +47,6 @@ impl AuthPlugin for MysqlNativePassword {
         Ok(())
     }
 }
-
 
 fn scramble411(password: &[u8], seed: &[u8]) -> Result<Vec<u8>> {
     let mut hasher = Sha1::new();
@@ -76,7 +72,8 @@ fn scramble411(password: &[u8], seed: &[u8]) -> Result<Vec<u8>> {
         hasher.result(&mut out);
         out
     };
-    let rst = seed_hash.iter()
+    let rst = seed_hash
+        .iter()
         .zip(stage1.iter())
         .map(|(b1, b2)| b1 ^ b2)
         .collect();

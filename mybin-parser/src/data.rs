@@ -862,7 +862,6 @@ where
     Ok((input, (XidData { xid }, crc32)))
 }
 
-
 /// Data of IncidentEvent
 ///
 /// reference: https://dev.mysql.com/doc/internals/en/incident-event.html

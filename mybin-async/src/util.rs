@@ -7,26 +7,33 @@ macro_rules! read_number_future {
         }
         impl<R: AsyncRead + Unpin + ?Sized> Future for $struct_name<'_, R> {
             type Output = Result<$ty>;
-        
+
             fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
                 let mut reader = Pin::new(&mut self.reader);
                 let mut read = 0;
                 let mut bs = vec![0u8; $len];
                 loop {
                     match ready!(reader.as_mut().poll_read(cx, &mut bs[read..])) {
-                        Ok(0) => return Poll::Ready(Err(Error::InputIncomplete(Vec::from(&bs[..read]), Needed::Size($len - read)))),
-                        Ok(n) => if read + n == $len {
-                            return Poll::Ready(Ok($fname(&bs[..])));
-                        } else {
-                            read += n;
+                        Ok(0) => {
+                            return Poll::Ready(Err(Error::InputIncomplete(
+                                Vec::from(&bs[..read]),
+                                Needed::Size($len - read),
+                            )))
+                        }
+                        Ok(n) => {
+                            if read + n == $len {
+                                return Poll::Ready(Ok($fname(&bs[..])));
+                            } else {
+                                read += n;
+                            }
                         }
                         Err(ref e) if e.kind() == ErrorKind::Interrupted => (),
-                        Err(e) => return Poll::Ready(Err(Error::from(e)))
+                        Err(e) => return Poll::Ready(Err(Error::from(e))),
                     }
                 }
             }
         }
-    }
+    };
 }
 
 #[macro_export]
@@ -48,10 +55,12 @@ macro_rules! write_number_future {
                 loop {
                     match ready!(reader.as_mut().poll_write(cx, &ns)) {
                         Ok(0) => return Poll::Ready(Err(Error::OutputUnavailable)),
-                        Ok(n) => if write + n == $len {
-                            return Poll::Ready(Ok(()))
-                        } else {
-                            write += n;
+                        Ok(n) => {
+                            if write + n == $len {
+                                return Poll::Ready(Ok(()));
+                            } else {
+                                write += n;
+                            }
                         }
                         Err(ref e) if e.kind() == ErrorKind::Interrupted => (),
                         Err(e) => return Poll::Ready(Err(Error::from(e))),
@@ -59,5 +68,5 @@ macro_rules! write_number_future {
                 }
             }
         }
-    }
+    };
 }
