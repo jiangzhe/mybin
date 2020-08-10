@@ -14,3 +14,4 @@ pub mod user_var;
 pub mod gtid;
 pub mod packet;
 pub mod handshake;
+pub mod flag;

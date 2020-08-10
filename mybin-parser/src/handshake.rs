@@ -4,7 +4,8 @@ use nom::error::ParseError;
 use nom::number::streaming::{le_u8, le_u16, le_u32};
 use nom::bytes::streaming::{take, take_till};
 use crate::error::Error;
-use bitflags::bitflags;
+use crate::util::LenEncInt;
+use crate::flag::*;
 
 /// used for placeholder for optional part in payload
 const EMPTY_BYTE_ARRAY: [u8;0] = [];
@@ -78,90 +79,6 @@ where
     }))
 }
 
-bitflags! {
-    pub struct CapabilityFlags: u32 {
-        const LONG_PASSWORD     = 0x0000_0001;
-        const FOUND_ROWS        = 0x0000_0002;
-        const LONG_FLAG         = 0x0000_0004;
-        const CONNECT_WITH_DB   = 0x0000_0008;
-        const NO_SCHEMA         = 0x0000_0010;
-        const COMPRESS          = 0x0000_0020;
-        const ODBC              = 0x0000_0040;
-        const LOCAL_FILES       = 0x0000_0080;
-        const IGNORE_SPACE      = 0x0000_0100;
-        const PROTOCOL_41       = 0x0000_0200;
-        const INTERACTIVE       = 0x0000_0400;
-        const SSL               = 0x0000_0800;
-        const IGNORE_SIGPIPE    = 0x0000_1000;
-        const TRANSACTIONS      = 0x0000_2000;
-        const RESERVED          = 0x0000_4000;
-        const SECURE_CONNECTION = 0x0000_8000;
-        const MULTI_STATEMENTS  = 0x0001_0000;
-        const MULTI_RESULTS     = 0x0002_0000;
-        const PS_MULTI_RESULTS  = 0x0004_0000;
-        const PLUGIN_AUTH       = 0x0008_0000;
-        const CONNECT_ATTRS     = 0x0010_0000;
-        const PLUGIN_AUTH_LENENC_CLIENT_DATA = 0x0020_0000;
-        const CAN_HANDLE_EXPIRED_PASSWORDS = 0x0040_0000;
-        const SESSION_TRACK     = 0x0080_0000;
-        const DEPRECATE_EOF     = 0x0100_0000;
-        const SSL_VERITY_SERVER_CERT = 0x4000_0000;
-        const REMEMBER_OPTIONS  = 0x8000_0000;
-    }
-}
-
-impl Default for CapabilityFlags {
-    fn default() -> Self {
-        Self::empty()
-        | CapabilityFlags::LONG_PASSWORD
-        | CapabilityFlags::FOUND_ROWS
-        | CapabilityFlags::LONG_FLAG
-        // | CapabilityFlags::CONNECT_WITH_DB
-        // | CapabilityFlags::NO_SCHEMA
-        // | CapabilityFlags::COMPRESS
-        // | CapabilityFlags::ODBC 
-        // | CapabilityFlags::LOCAL_FILES
-        // | CapabilityFlags::IGNORE_SPACE
-        | CapabilityFlags::PROTOCOL_41
-        // | CapabilityFlags::INTERACTIVE 
-        // | CapabilityFlags::SSL 
-        // | CapabilityFlags::IGNORE_SIGPIPE 
-        | CapabilityFlags::TRANSACTIONS 
-        | CapabilityFlags::RESERVED 
-        // | CapabilityFlags::SECURE_CONNECTION 
-        // | CapabilityFlags::MULTI_STATEMENTS 
-        | CapabilityFlags::MULTI_RESULTS 
-        | CapabilityFlags::PS_MULTI_RESULTS 
-        | CapabilityFlags::PLUGIN_AUTH 
-        | CapabilityFlags::CONNECT_ATTRS 
-        | CapabilityFlags::PLUGIN_AUTH_LENENC_CLIENT_DATA 
-        // | CapabilityFlags::CAN_HANDLE_EXPIRED_PASSWORDS 
-        | CapabilityFlags::SESSION_TRACK 
-        | CapabilityFlags::DEPRECATE_EOF 
-        // | CapabilityFlags::SSL_VERITY_SERVER_CERT
-        // | CapabilityFlags::REMEMBER_OPTIONS
-    }
-}
-
-bitflags! {
-    pub struct StatusFlags: u16 {
-        const STATUS_IN_TRANS           = 0x0001;
-        const STATUS_AUTOCOMMIT         = 0x0002;
-        const MORE_RESULTS_EXISTS       = 0x0008;
-        const STATUS_NO_GOOD_INDEX_USED = 0x0010;
-        const STATUS_NO_INDEX_USED      = 0x0020;
-        const STATUS_CURSOR_EXISTS      = 0x0040;
-        const STATUS_LAST_ROW_SENT      = 0x0080;
-        const STATUS_DB_DROPPED         = 0x0100;
-        const STATUS_NO_BACKSLASH_ESCAPES = 0x0200;
-        const STATUS_METADATA_CHANGED   = 0x0400;
-        const QUERY_WAS_SLOW            = 0x0800;
-        const PS_OUT_PARAMS             = 0x1000;
-        const STATUS_IN_TRANS_READONLY  = 0x2000;
-        const SESSION_STATE_CHANGED     = 0x4000;
-    }
-}
-
 /// handshake response of client protocol 41
 /// 
 /// reference: https://dev.mysql.com/doc/internals/en/connection-phase-packets.html
@@ -169,19 +86,82 @@ bitflags! {
 /// MySQL server to finish handshake process
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HandshakeClientResponse41 {
-    pub capability_flags: u32,
+    pub capability_flags: CapabilityFlags,
     pub max_packet_size: u32,
     pub character_set: u8,
     // 23 bytes of 0x00, reserved
     pub username: String,
     // vary according to capability flags and auth setting
     pub auth_response: Vec<u8>,
-    // exists if db is specified
-    pub database: Option<String>,
-    // exists if plugin auth
-    pub auth_plugin_name: Option<String>,
+    // not empty if db is specified
+    pub database: String,
+    // not empty if plugin auth
+    pub auth_plugin_name: String,
     // connect attributes
     pub connect_attrs: Vec<ConnectAttr>,
+}
+
+impl HandshakeClientResponse41 {
+    /// generate response bytes to send to server
+    pub fn to_bytes(self) -> Vec<u8> {
+        let mut rst = Vec::new();
+        // capability falgs 0:4
+        rst.extend(&self.capability_flags.bits().to_le_bytes()[..]);
+        // max packet size 4:8
+        rst.extend(&self.max_packet_size.to_le_bytes()[..]);
+        // character set 8:9
+        rst.push(self.character_set);
+        // reserved 23 bytes 9:32
+        rst.extend(std::iter::repeat(0u8).take(23));
+        // null-terminated username
+        rst.extend(self.username.as_bytes());
+        rst.push(0);
+        // len-encoded auth response
+        let auth_response_len = LenEncInt::from(self.auth_response.len() as u64);
+        rst.extend(auth_response_len.to_bytes());
+        // null-terminated database if connect with db
+        if self.capability_flags.contains(CapabilityFlags::CONNECT_WITH_DB) {
+            rst.extend(self.database.as_bytes());
+            rst.push(0);
+        }
+        // null-terminated plugin name
+        if self.capability_flags.contains(CapabilityFlags::PLUGIN_AUTH) {
+            rst.extend(self.auth_plugin_name.as_bytes());
+            rst.push(0);
+        }
+        if self.capability_flags.contains(CapabilityFlags::CONNECT_ATTRS) {
+            let mut lb = Vec::new();
+            for attr in &self.connect_attrs {
+                let klen = LenEncInt::from(attr.key.len() as u64);
+                lb.extend(klen.to_bytes());
+                lb.extend(attr.key.as_bytes());
+                let vlen = LenEncInt::from(attr.value.len() as u64);
+                lb.extend(vlen.to_bytes());
+                lb.extend(attr.value.as_bytes());
+            }
+            // use len-enc-int here
+            let lblen = LenEncInt::from(lb.len() as u64);
+            rst.extend(lblen.to_bytes());
+            rst.extend(lb);
+        }
+        rst
+    }
+}
+
+impl Default for HandshakeClientResponse41 {
+    fn default() -> Self {
+        HandshakeClientResponse41{
+            capability_flags: CapabilityFlags::default(),
+            max_packet_size: 1024 * 1024 * 1024,
+            // by default use utf-8
+            character_set: 33,
+            username: String::new(),
+            auth_response: Vec::new(),
+            database: String::new(),
+            auth_plugin_name: String::new(),
+            connect_attrs: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -189,12 +169,6 @@ pub struct ConnectAttr {
     pub key: String,
     pub value: String,
 }
-
-impl HandshakeClientResponse41 {
-
-}
-
-
 
 #[cfg(test)]
 mod tests {

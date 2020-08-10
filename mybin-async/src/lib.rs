@@ -3,6 +3,7 @@ mod number;
 mod util;
 mod bytes;
 mod conn;
+mod auth_plugin;
 
 pub use error::*;
 pub use number::*;

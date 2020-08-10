@@ -1,3 +1,2 @@
-mybin-parser/target
-mybin-async/target
+target/
 Cargo.lock

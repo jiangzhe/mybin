@@ -36,6 +36,33 @@ impl LenEncInt {
             _ => None,
         }
     }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        match self {
+            LenEncInt::Null => vec![0xfb],
+            LenEncInt::Err => vec![0xff],
+            LenEncInt::Len1(n) => vec![*n],
+            LenEncInt::Len3(n) => {
+                let mut vec = Vec::with_capacity(3);
+                vec.push(0xfc);
+                vec.extend_from_slice(&n.to_le_bytes());
+                vec
+            }
+            LenEncInt::Len4(n) => {
+                let mut vec = Vec::with_capacity(4);
+                vec.push(0xfd);
+                // only extend 3 bytes
+                vec.extend_from_slice(&n.to_le_bytes()[..3]);
+                vec
+            }
+            LenEncInt::Len9(n) => {
+                let mut vec = Vec::with_capacity(9);
+                vec.push(0xfe);
+                vec.extend_from_slice(&n.to_le_bytes());
+                vec
+            }
+        }
+    }
 }
 
 /// https://dev.mysql.com/doc/internals/en/integer.html#packet-Protocol::LengthEncodedInteger
@@ -60,35 +87,6 @@ where
         }
         0xff => Ok((input, LenEncInt::Err)),
         _ => Ok((input, LenEncInt::Len1(len))),
-    }
-}
-
-impl From<LenEncInt> for Vec<u8> {
-    fn from(src: LenEncInt) -> Self {
-        match src {
-            LenEncInt::Null => vec![0xfb],
-            LenEncInt::Err => vec![0xff],
-            LenEncInt::Len1(n) => vec![n],
-            LenEncInt::Len3(n) => {
-                let mut vec = Vec::with_capacity(3);
-                vec.push(0xfc);
-                vec.extend_from_slice(&n.to_le_bytes());
-                vec
-            }
-            LenEncInt::Len4(n) => {
-                let mut vec = Vec::with_capacity(4);
-                vec.push(0xfd);
-                // only extend 3 bytes
-                vec.extend_from_slice(&n.to_le_bytes()[..3]);
-                vec
-            }
-            LenEncInt::Len9(n) => {
-                let mut vec = Vec::with_capacity(9);
-                vec.push(0xfe);
-                vec.extend_from_slice(&n.to_le_bytes());
-                vec
-            }
-        }
     }
 }
 
@@ -178,13 +176,13 @@ where
 /// encode int into length-encoded-int
 pub fn encode_int(src: u64) -> Vec<u8> {
     let len: LenEncInt = src.into();
-    len.into()
+    len.to_bytes()
 }
 
 /// encode string into length-encoded-string
 pub fn encode_string(src: &str) -> Vec<u8> {
     let len: LenEncInt = (src.len() as u64).into();
-    let mut bs: Vec<u8> = len.into();
+    let mut bs: Vec<u8> = len.to_bytes();
     bs.extend_from_slice(src.as_bytes());
     bs
 }
@@ -228,7 +226,7 @@ mod tests {
         let n = 10u8;
         let encoded: LenEncInt = n.into();
         assert_eq!(LenEncInt::Len1(n), encoded);
-        let bs: Vec<u8> = encoded.clone().into();
+        let bs: Vec<u8> = encoded.to_bytes();
         assert_eq!(vec![n], bs);
         assert_eq!(encoded, len_enc_int::<VerboseError<_>>(&bs).unwrap().1);
     }
@@ -238,14 +236,14 @@ mod tests {
         let n = 0xfd_u16;
         let encoded: LenEncInt = n.into();
         assert_eq!(LenEncInt::Len3(n), encoded);
-        let bs: Vec<u8> = encoded.clone().into();
+        let bs: Vec<u8> = encoded.to_bytes();
         assert_eq!(vec![0xfc, 0xfd, 0x00], bs);
         assert_eq!(encoded, len_enc_int::<VerboseError<_>>(&bs).unwrap().1);
 
         let n = 0x1d05_u16;
         let encoded: LenEncInt = n.into();
         assert_eq!(LenEncInt::Len3(n), encoded);
-        let bs: Vec<u8> = encoded.clone().into();
+        let bs: Vec<u8> = encoded.to_bytes();
         assert_eq!(vec![0xfc, 0x05, 0x1d], bs);
         assert_eq!(encoded, len_enc_int::<VerboseError<_>>(&bs).unwrap().1);
     }
@@ -255,7 +253,7 @@ mod tests {
         let n = 0xa2b2c2_u32;
         let encoded: LenEncInt = n.into();
         assert_eq!(LenEncInt::Len4(n), encoded);
-        let bs: Vec<u8> = encoded.clone().into();
+        let bs: Vec<u8> = encoded.to_bytes();
         assert_eq!(vec![0xfd, 0xc2, 0xb2, 0xa2], bs);
         assert_eq!(encoded, len_enc_int::<VerboseError<_>>(&bs).unwrap().1);
     }
@@ -265,7 +263,7 @@ mod tests {
         let n = 0x010203040a0b0c0d_u64;
         let encoded: LenEncInt = n.into();
         assert_eq!(LenEncInt::Len9(n), encoded);
-        let bs: Vec<u8> = encoded.clone().into();
+        let bs: Vec<u8> = encoded.to_bytes();
         assert_eq!(vec![0xfe, 0x0d, 0x0c, 0x0b, 0x0a, 0x04, 0x03, 0x02, 0x01], bs);
         assert_eq!(encoded, len_enc_int::<VerboseError<_>>(&bs).unwrap().1);
     }
