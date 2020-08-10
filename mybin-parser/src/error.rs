@@ -3,16 +3,18 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum Error {
-    #[error("invalid code")]
+    #[error("invalid column type code {0}")]
     InvalidColumnTypeCode(u32),
-    #[error("inconsistent checksum")]
+    #[error("inconsistent checksum {0} != {1}")]
     InconsistentChecksum(u32, u32),
     #[error("incomplete input: {0:?}")]
     Incomplete(nom::Needed),
     #[error("parse error: {0}")]
     ParseErr(String),
-    #[error("utf8 error")]
+    #[error("utf8 error: {0}")]
     Utf8Error(#[from] std::string::FromUtf8Error),
+    #[error("invalid packet code {0}")]
+    InvalidPacketCode(u8),
 }
 
 type InputAndNomError<'a> = (&'a [u8], nom::Err<VerboseError<&'a [u8]>>);
@@ -25,12 +27,6 @@ impl<'a> From<InputAndNomError<'a>> for Error {
         }
     }
 }
-
-// impl From<std::string::FromUtf8Error> for Error {
-//     fn from(err: std::string::FromUtf8Error) -> Error {
-//         Error::FromUtf8Error(err)
-//     }
-// }
 
 /// convert VerboseError to displayable format
 /// reference: https://docs.rs/nom/5.1.2/src/nom/error.rs.html#136-229

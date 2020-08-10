@@ -12,6 +12,8 @@ pub enum Error {
     OutputUnavailable,
     #[error("parse error: {0}")]
     ParseError(#[from] mybin_parser::error::Error),
+    #[error("packet error: {0:?}")]
+    PacketError(String),
 }
 
 #[derive(Debug, Clone)]
