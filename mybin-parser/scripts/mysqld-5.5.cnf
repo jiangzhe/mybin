@@ -1,0 +1,13 @@
+[mysqld]
+skip-host-cache
+skip-name-resolve
+datadir         = /var/lib/mysql
+#log-error      = /var/log/mysql/error.log
+# By default we only accept connections from localhost
+#bind-address   = 127.0.0.1
+# Disabling symbolic-links is recommended to prevent assorted security risks
+symbolic-links=0
+# binlog settings
+server-id       = 1
+log-bin         = mysql-bin
+binlog-format   = ROW

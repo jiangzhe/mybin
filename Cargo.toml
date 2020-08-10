@@ -1,0 +1,12 @@
+[package]
+name = "mybin"
+version = "0.1.0"
+authors = ["Zhe Jiang <nju.jiangzhe@gmail.com>"]
+edition = "2018"
+keywords = ["mysql", "binlog", "nom", "smol"]
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/jiangzhe/mybin"
+
+[workspace]
+members = ["mybin-parser", "mybin-async", "mybin-cmd"]

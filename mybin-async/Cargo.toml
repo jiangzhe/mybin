@@ -1,0 +1,18 @@
+[package]
+name = "mybin-async"
+version = "0.1.0"
+authors = ["Zhe Jiang <nju.jiangzhe@gmail.com>"]
+edition = "2018"
+workspace = ".."
+
+[dependencies]
+smol = "0.3.3"
+bytes = "0.5.6"
+thiserror = "1.0.20"
+smol-potat = "0.5.0"
+async-net = "0.1.2"
+mybin-parser = { version = "0.1.0", path = "../mybin-parser" }
+serde = "1.0"
+serde_derive = "1.0"
+log = "0.4"
+rust-crypto = "0.2"

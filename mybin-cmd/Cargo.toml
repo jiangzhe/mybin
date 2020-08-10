@@ -1,0 +1,8 @@
+[package]
+name = "mybin-cmd"
+version = "0.1.0"
+authors = ["Zhe Jiang <nju.jiangzhe@gmail.com>"]
+edition = "2018"
+workspace = ".."
+
+[dependencies]
