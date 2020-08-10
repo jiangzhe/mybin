@@ -247,7 +247,7 @@ mod tests {
         assert_eq!(vec![0xfc, 0x05, 0x1d], bs);
         assert_eq!(encoded, len_enc_int::<VerboseError<_>>(&bs).unwrap().1);
     }
-    
+
     #[test]
     fn test_len_enc_int_4() {
         let n = 0xa2b2c2_u32;
@@ -264,7 +264,10 @@ mod tests {
         let encoded: LenEncInt = n.into();
         assert_eq!(LenEncInt::Len9(n), encoded);
         let bs: Vec<u8> = encoded.to_bytes();
-        assert_eq!(vec![0xfe, 0x0d, 0x0c, 0x0b, 0x0a, 0x04, 0x03, 0x02, 0x01], bs);
+        assert_eq!(
+            vec![0xfe, 0x0d, 0x0c, 0x0b, 0x0a, 0x04, 0x03, 0x02, 0x01],
+            bs
+        );
         assert_eq!(encoded, len_enc_int::<VerboseError<_>>(&bs).unwrap().1);
     }
 

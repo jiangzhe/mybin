@@ -1,12 +1,12 @@
 //! gtid related events and parsing logic
 use crate::error::Error;
+use linked_hash_map::LinkedHashMap;
 use nom::bytes::streaming::take;
-use nom::error::ParseError;
 use nom::error::ErrorKind;
-use nom::number::streaming::{le_u8, le_u32, le_u64, le_u128};
+use nom::error::ParseError;
+use nom::number::streaming::{le_u128, le_u32, le_u64, le_u8};
 use nom::IResult;
 use serde_derive::*;
-use linked_hash_map::LinkedHashMap;
 use std::convert::TryFrom;
 
 /// Data of GtidEvent
@@ -98,8 +98,8 @@ impl<'a> PreviousGtidsData<'a> {
 }
 
 /// parse previous gtids data
-/// 
-/// seems layout introduction on mysql dev website is wrong, 
+///
+/// seems layout introduction on mysql dev website is wrong,
 /// so follow source code: https://github.com/mysql/mysql-server/blob/5.7/sql/rpl_gtid_set.cc#L1469
 pub(crate) fn parse_previous_gtids_data<'a, E>(
     input: &'a [u8],
@@ -112,12 +112,12 @@ where
 {
     debug_assert_eq!(0, post_header_len);
     if checksum {
-        let (input, payload) = take(len-4)(input)?;
+        let (input, payload) = take(len - 4)(input)?;
         let (input, crc32) = le_u32(input)?;
-        Ok((input, (PreviousGtidsData{payload}, crc32)))
+        Ok((input, (PreviousGtidsData { payload }, crc32)))
     } else {
         let (input, payload) = take(len)(input)?;
-        Ok((input, (PreviousGtidsData{payload}, 0)))
+        Ok((input, (PreviousGtidsData { payload }, 0)))
     }
 }
 
@@ -136,7 +136,7 @@ pub struct GtidRange {
 pub struct GtidInterval {
     pub start: u64,
     // inclusive
-    pub end: u64, 
+    pub end: u64,
 }
 
 /// parse GtidSet from byte array
@@ -149,7 +149,7 @@ impl<'a> TryFrom<&'a [u8]> for GtidSet {
 }
 
 /// parse gtid set from payload of PreviousGtidsLogEvent
-/// 
+///
 /// reference: https://github.com/mysql/mysql-server/blob/5.7/sql/rpl_gtid_set.cc#L1469
 pub fn parse_gtid_set<'a, E>(input: &'a [u8]) -> IResult<&'a [u8], GtidSet, E>
 where
@@ -164,7 +164,7 @@ where
         sids.insert(gtid_range.sid, gtid_range);
         input = in1;
     }
-    Ok((input, GtidSet{sids}))
+    Ok((input, GtidSet { sids }))
 }
 
 pub fn parse_gtid_range<'a, E>(input: &'a [u8]) -> IResult<&'a [u8], GtidRange, E>
@@ -183,8 +183,11 @@ where
         }
         last = end;
         // here we use inclusive end
-        intervals.push(GtidInterval{start, end: end-1});
+        intervals.push(GtidInterval {
+            start,
+            end: end - 1,
+        });
         input = in1;
     }
-    Ok((input, GtidRange{sid, intervals}))
+    Ok((input, GtidRange { sid, intervals }))
 }

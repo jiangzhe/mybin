@@ -2,12 +2,12 @@ use crate::checksum::Checksum;
 use crate::data::*;
 use crate::error::{fmt_nom_err, Error};
 use crate::event::*;
+use crate::gtid::*;
 use crate::header::*;
-use crate::table_map::*;
-use crate::user_var::*;
 use crate::rows_v1::*;
 use crate::rows_v2::*;
-use crate::gtid::*;
+use crate::table_map::*;
+use crate::user_var::*;
 use nom::bytes::streaming::{tag, take};
 use nom::combinator::{cut, verify};
 use nom::error::convert_error;
@@ -55,7 +55,6 @@ pub struct ParserV4 {
 }
 
 impl ParserV4 {
-
     /// create new parser by given post header lengths and checksum flag
     pub fn new(post_header_lengths: Vec<u8>, checksum: bool) -> Self {
         ParserV4 {
@@ -874,8 +873,7 @@ where
 // length on UnknownEvent(code=0),
 // we need to push 0 at first position
 fn post_header_lengths_from_raw(raw_lengths: &[u8]) -> Vec<u8> {
-    let mut post_header_lengths: Vec<u8> =
-    Vec::with_capacity(raw_lengths.len() + 1);
+    let mut post_header_lengths: Vec<u8> = Vec::with_capacity(raw_lengths.len() + 1);
     post_header_lengths.push(0);
     post_header_lengths.extend_from_slice(raw_lengths);
     post_header_lengths

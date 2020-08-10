@@ -50,24 +50,22 @@ impl Default for CapabilityFlags {
         // | CapabilityFlags::INTERACTIVE 
         // | CapabilityFlags::SSL 
         // | CapabilityFlags::IGNORE_SIGPIPE 
-        | CapabilityFlags::TRANSACTIONS 
-        | CapabilityFlags::RESERVED 
+        | CapabilityFlags::TRANSACTIONS
+        | CapabilityFlags::RESERVED
         // | CapabilityFlags::SECURE_CONNECTION 
         // | CapabilityFlags::MULTI_STATEMENTS 
-        | CapabilityFlags::MULTI_RESULTS 
-        | CapabilityFlags::PS_MULTI_RESULTS 
-        | CapabilityFlags::PLUGIN_AUTH 
-        | CapabilityFlags::CONNECT_ATTRS 
-        | CapabilityFlags::PLUGIN_AUTH_LENENC_CLIENT_DATA 
+        | CapabilityFlags::MULTI_RESULTS
+        | CapabilityFlags::PS_MULTI_RESULTS
+        | CapabilityFlags::PLUGIN_AUTH
+        | CapabilityFlags::CONNECT_ATTRS
+        | CapabilityFlags::PLUGIN_AUTH_LENENC_CLIENT_DATA
         // | CapabilityFlags::CAN_HANDLE_EXPIRED_PASSWORDS 
-        | CapabilityFlags::SESSION_TRACK 
-        | CapabilityFlags::DEPRECATE_EOF 
+        | CapabilityFlags::SESSION_TRACK
+        | CapabilityFlags::DEPRECATE_EOF
         // | CapabilityFlags::SSL_VERITY_SERVER_CERT
         // | CapabilityFlags::REMEMBER_OPTIONS
     }
 }
-
-
 
 bitflags! {
     #[derive(Serialize, Deserialize)]

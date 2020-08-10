@@ -1,11 +1,10 @@
 //! meaningful data structures and parsing logic of RowsEventV1
-use serde_derive::*;
-use nom::IResult;
+use crate::util::streaming_le_u48;
+use nom::bytes::streaming::take;
 use nom::error::ParseError;
 use nom::number::streaming::{le_u16, le_u32};
-use nom::bytes::streaming::take;
-use crate::util::streaming_le_u48;
-
+use nom::IResult;
+use serde_derive::*;
 
 /// Data of DeleteRowsEventV1, UpdateRowsEventV1, WriteRowsEventV1
 ///

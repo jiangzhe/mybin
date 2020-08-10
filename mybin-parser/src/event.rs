@@ -1,10 +1,10 @@
 use crate::data::*;
+use crate::gtid::{GtidData, PreviousGtidsData};
 use crate::header::{parse_event_header, EventHeader, EventHeaderV1};
-use crate::table_map::TableMapData;
 use crate::rows_v1::RowsDataV1;
 use crate::rows_v2::RowsDataV2;
+use crate::table_map::TableMapData;
 use crate::user_var::UserVarData;
-use crate::gtid::{GtidData, PreviousGtidsData};
 use nom::bytes::streaming::take;
 use nom::error::ParseError;
 use nom::number::streaming::{le_u32, le_u8};

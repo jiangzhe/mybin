@@ -1,18 +1,17 @@
+use crate::error::{Error, Needed, Result};
 use smol::io::AsyncRead;
 use smol::ready;
-use crate::error::{Result, Error, Needed};
 use std::future::Future;
+use std::io::ErrorKind;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use std::io::ErrorKind;
 
 pub trait AsyncReadBytes: AsyncRead {
-
-    fn take_out<'a>(&'a mut self, total: usize, out: &'a mut Vec<u8>) -> TakeOutFuture<'a, Self> 
+    fn take_out<'a>(&'a mut self, total: usize, out: &'a mut Vec<u8>) -> TakeOutFuture<'a, Self>
     where
         Self: Unpin,
     {
-        TakeOutFuture{
+        TakeOutFuture {
             reader: self,
             total,
             out,
@@ -23,7 +22,7 @@ pub trait AsyncReadBytes: AsyncRead {
     where
         Self: Unpin,
     {
-        TakeFuture{
+        TakeFuture {
             reader: self,
             total,
         }
@@ -33,7 +32,7 @@ pub trait AsyncReadBytes: AsyncRead {
     where
         Self: Unpin,
     {
-        TakeUntilFuture{
+        TakeUntilFuture {
             reader: self,
             b,
             include,
@@ -54,11 +53,7 @@ impl<R: AsyncRead + Unpin + ?Sized> Future for TakeOutFuture<'_, R> {
     type Output = Result<()>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let Self {
-            reader,
-            total,
-            out,
-        } = &mut *self;
+        let Self { reader, total, out } = &mut *self;
         if *total == 0 {
             return Poll::Ready(Ok(()));
         }
@@ -82,16 +77,18 @@ fn take_out_internal<'a, R: AsyncRead + Unpin + ?Sized>(
         }
     }
     let len = out.len();
-    let mut g = Guard{
-        out,
-        len,
-    };
+    let mut g = Guard { out, len };
     let mut read = 0;
     g.out.resize(g.len + required, 0);
     let mut reader = Pin::new(reader);
     loop {
         match ready!(reader.as_mut().poll_read(cx, &mut g.out[g.len..])) {
-            Ok(0) => return Poll::Ready(Err(Error::InputIncomplete(vec![], Needed::Size(required - read)))),
+            Ok(0) => {
+                return Poll::Ready(Err(Error::InputIncomplete(
+                    vec![],
+                    Needed::Size(required - read),
+                )))
+            }
             Ok(n) if read + n == required => {
                 g.len += n;
                 return Poll::Ready(Ok(()));
@@ -116,17 +113,16 @@ impl<R: AsyncRead + Unpin + ?Sized> Future for TakeFuture<'_, R> {
     type Output = Result<Vec<u8>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-         let Self {
-            reader,
-            total,
-        } = &mut *self;
+        let Self { reader, total } = &mut *self;
         if *total == 0 {
             return Poll::Ready(Ok(Vec::new()));
         }
         let mut out = Vec::new();
         match ready!(take_out_internal(reader, cx, *total, &mut out)) {
             Ok(..) => Poll::Ready(Ok(out)),
-            Err(Error::InputIncomplete(_, needed)) => Poll::Ready(Err(Error::InputIncomplete(out, needed))),
+            Err(Error::InputIncomplete(_, needed)) => {
+                Poll::Ready(Err(Error::InputIncomplete(out, needed)))
+            }
             Err(e) => Poll::Ready(Err(e)),
         }
     }
@@ -143,11 +139,7 @@ impl<R: AsyncRead + Unpin + ?Sized> Future for TakeUntilFuture<'_, R> {
     type Output = Result<Vec<u8>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let Self {
-            reader,
-            b,
-            include,
-        } = &mut *self;
+        let Self { reader, b, include } = &mut *self;
         take_until_internal(reader, cx, *b, *include)
     }
 }
@@ -185,7 +177,7 @@ mod tests {
 
     #[smol_potat::test]
     async fn test_take_out_0() {
-        let bs = [1u8,2,3,4,5];
+        let bs = [1u8, 2, 3, 4, 5];
         let mut reader = &bs[..];
         let mut out = vec![];
         let _ = reader.take_out(0, &mut out).await.unwrap();
@@ -194,7 +186,7 @@ mod tests {
 
     #[smol_potat::test]
     async fn test_take_out_3() {
-        let bs = [1u8,2,3,4,5];
+        let bs = [1u8, 2, 3, 4, 5];
         let mut reader = &bs[..];
         let mut out = vec![];
         let _ = reader.take_out(3, &mut out).await.unwrap();
@@ -203,7 +195,7 @@ mod tests {
 
     #[smol_potat::test]
     async fn test_take_out_6() {
-        let bs = [1u8,2,3,4,5];
+        let bs = [1u8, 2, 3, 4, 5];
         let mut reader = &bs[..];
         let mut out = vec![];
         let rst = reader.take_out(6, &mut out).await;
@@ -214,7 +206,7 @@ mod tests {
 
     #[smol_potat::test]
     async fn test_take_0() {
-        let bs = [1u8,2,3,4,5];
+        let bs = [1u8, 2, 3, 4, 5];
         let mut reader = &bs[..];
         let out = reader.take(0).await.unwrap();
         assert_eq!(Vec::<u8>::new(), out);
@@ -222,7 +214,7 @@ mod tests {
 
     #[smol_potat::test]
     async fn test_take_3() {
-        let bs = [1u8,2,3,4,5];
+        let bs = [1u8, 2, 3, 4, 5];
         let mut reader = &bs[..];
         let out = reader.take(3).await.unwrap();
         assert_eq!(vec![1u8, 2, 3], out);
@@ -230,7 +222,7 @@ mod tests {
 
     #[smol_potat::test]
     async fn test_take_6() {
-        let bs = [1u8,2,3,4,5];
+        let bs = [1u8, 2, 3, 4, 5];
         let mut reader = &bs[..];
         let rst = reader.take(6).await;
         dbg!(&rst);
@@ -239,7 +231,7 @@ mod tests {
 
     #[smol_potat::test]
     async fn test_take_until_3_inclusive() {
-        let bs = [1u8,2,3,4,5];
+        let bs = [1u8, 2, 3, 4, 5];
         let mut reader = &bs[..];
         let rs = reader.take_until(3, true).await.unwrap();
         assert_eq!(vec![1u8, 2, 3], rs);
@@ -247,7 +239,7 @@ mod tests {
 
     #[smol_potat::test]
     async fn test_take_until_3_exclusive() {
-        let bs = [1u8,2,3,4,5];
+        let bs = [1u8, 2, 3, 4, 5];
         let mut reader = &bs[..];
         let rs = reader.take_until(3, false).await.unwrap();
         assert_eq!(vec![1u8, 2], rs);
@@ -255,7 +247,7 @@ mod tests {
 
     #[smol_potat::test]
     async fn test_take_until_6() {
-        let bs = [1u8,2,3,4,5];
+        let bs = [1u8, 2, 3, 4, 5];
         let mut reader = &bs[..];
         let rs = reader.take_until(3, false).await.unwrap();
         assert_eq!(vec![1u8, 2], rs);
