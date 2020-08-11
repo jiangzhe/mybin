@@ -121,8 +121,18 @@ impl HandshakeClientResponse41 {
         rst.extend(self.username.as_bytes());
         rst.push(0);
         // len-encoded auth response
-        let auth_response_len = LenEncInt::from(self.auth_response.len() as u64);
-        rst.extend(auth_response_len.to_bytes());
+        if self.capability_flags.contains(CapabilityFlags::PLUGIN_AUTH_LENENC_CLIENT_DATA) {
+            let auth_response_len = LenEncInt::from(self.auth_response.len() as u64);
+            rst.extend(auth_response_len.to_bytes());
+            rst.extend(&self.auth_response[..]);
+        } else if self.capability_flags.contains(CapabilityFlags::SECURE_CONNECTION) {
+            rst.push(self.auth_response.len() as u8);
+            rst.extend(&self.auth_response[..]);
+        } else {
+            rst.extend(&self.auth_response[..]);
+            rst.push(0);
+        }
+        
         // null-terminated database if connect with db
         if self
             .capability_flags
@@ -178,6 +188,31 @@ impl Default for HandshakeClientResponse41 {
 pub struct ConnectAttr {
     pub key: String,
     pub value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthSwitchRequest<'a> {
+    pub header: u8,
+    // null terminated string
+    pub plugin_name: &'a [u8],
+    // EOF terminated string
+    pub auth_plugin_data: &'a [u8],
+}
+
+pub fn parse_auth_switch_request<'a, E>(input: &'a [u8]) -> IResult<&'a [u8], AuthSwitchRequest<'a>, E>
+where 
+    E: ParseError<&'a [u8]>,
+{
+    let (input, header) = le_u8(input)?;
+    debug_assert_eq!(0xfe, header);
+    let (input, plugin_name) = take_till(|b| b == 0x00)(input)?;
+    let (input, _) = take(1usize)(input)?;
+    let (input, auth_plugin_data) = take(input.len())(input)?;
+    Ok((input, AuthSwitchRequest{
+        header,
+        plugin_name,
+        auth_plugin_data,
+    }))
 }
 
 #[cfg(test)]

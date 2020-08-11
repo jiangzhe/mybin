@@ -1,6 +1,7 @@
 use crate::error::Error;
 use crate::flag::*;
 use crate::util::{len_enc_int, len_enc_str};
+use crate::handshake::{AuthSwitchRequest, parse_auth_switch_request};
 use nom::bytes::streaming::{take, take_till};
 use nom::error::ParseError;
 use nom::number::streaming::{le_u16, le_u24, le_u8};
@@ -48,12 +49,19 @@ pub enum Message<'a> {
     Eof(EofPacket),
 }
 
-
 pub fn parse_message<'a>(
     input: &'a [u8],
     cap_flags: &CapabilityFlags,
 ) -> Result<Message<'a>, Error> {
     parse_message_internal(input, cap_flags, true)
+}
+
+/// handshake message
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum HandshakeMessage<'a> {
+    Ok(#[serde(borrow)] OkPacket<'a>),
+    Err(#[serde(borrow)] ErrPacket<'a>),
+    Switch(#[serde(borrow)] AuthSwitchRequest<'a>),
 }
 
 /// special handle handshake message
@@ -63,8 +71,27 @@ pub fn parse_message<'a>(
 pub fn parse_handshake_message<'a>(
     input: &'a [u8],
     cap_flags: &CapabilityFlags,
-) -> Result<Message<'a>, Error> {
-    parse_message_internal(input, cap_flags, false)
+) -> Result<HandshakeMessage<'a>, Error> {
+    if input.is_empty() {
+        return Err(Error::Incomplete(nom::Needed::Unknown));
+    }
+    match input[0] {
+        0x00 => {
+            let (_, ok) = parse_ok_packet(input, cap_flags).map_err(|e| Error::from((input, e)))?;
+            Ok(HandshakeMessage::Ok(ok))
+        }
+        0xff => {
+            let (_, err) =
+                parse_err_packet(input, cap_flags, false).map_err(|e| Error::from((input, e)))?;
+            Ok(HandshakeMessage::Err(err))
+        }
+        0xfe => {
+            let (_, switch) =
+                parse_auth_switch_request(input).map_err(|e| Error::from((input, e)))?;
+            Ok(HandshakeMessage::Switch(switch))
+        }
+        c => Err(Error::InvalidPacketCode(c)),
+    }
 }
 
 fn parse_message_internal<'a>(
@@ -146,8 +173,8 @@ where
         let (input, info) = len_enc_str(input)?;
         (input, info.as_bytes().expect("invalid info"))
     } else {
-        let (input, info) = take_till(|b| b == 0x00)(input)?;
-        let (input, _) = take(1usize)(input)?;
+        // EOF terminated string
+        let (input, info) = take(input.len())(input)?;
         (input, info)
     };
     let (input, session_state_changes) = if cap_flags.contains(CapabilityFlags::SESSION_TRACK)
