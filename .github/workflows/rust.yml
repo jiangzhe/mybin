@@ -26,3 +26,5 @@ jobs:
       run: cargo tarpaulin --all-features --workspace --timeout 120 --out Xml
     - name: Upload to codecov.io
       uses: codecov/codecov-action@v1.0.2
+      with:
+        token: ${{secrets.CODECOV_TOKEN}}
