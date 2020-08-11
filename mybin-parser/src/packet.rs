@@ -48,9 +48,29 @@ pub enum Message<'a> {
     Eof(EofPacket),
 }
 
+
 pub fn parse_message<'a>(
     input: &'a [u8],
     cap_flags: &CapabilityFlags,
+) -> Result<Message<'a>, Error> {
+    parse_message_internal(input, cap_flags, true)
+}
+
+/// special handle handshake message
+/// because err packet does not contain
+/// sql state
+/// reference: https://dev.mysql.com/doc/internals/en/connection-phase.html
+pub fn parse_handshake_message<'a>(
+    input: &'a [u8],
+    cap_flags: &CapabilityFlags,
+) -> Result<Message<'a>, Error> {
+    parse_message_internal(input, cap_flags, false)
+}
+
+fn parse_message_internal<'a>(
+    input: &'a [u8],
+    cap_flags: &CapabilityFlags,
+    sql: bool,
 ) -> Result<Message<'a>, Error> {
     if input.is_empty() {
         return Err(Error::Incomplete(nom::Needed::Unknown));
@@ -62,7 +82,7 @@ pub fn parse_message<'a>(
         }
         0xff => {
             let (_, err) =
-                parse_err_packet(input, cap_flags).map_err(|e| Error::from((input, e)))?;
+                parse_err_packet(input, cap_flags, sql).map_err(|e| Error::from((input, e)))?;
             Ok(Message::Err(err))
         }
         0xfe => {
@@ -175,6 +195,7 @@ pub struct ErrPacket<'a> {
 pub fn parse_err_packet<'a, E>(
     input: &'a [u8],
     cap_flags: &CapabilityFlags,
+    sql: bool,
 ) -> IResult<&'a [u8], ErrPacket<'a>, E>
 where
     E: ParseError<&'a [u8]>,
@@ -182,7 +203,7 @@ where
     let (input, header) = le_u8(input)?;
     debug_assert_eq!(0xff, header);
     let (input, error_code) = le_u16(input)?;
-    let (input, sql_state_marker, sql_state) = if cap_flags.contains(CapabilityFlags::PROTOCOL_41) {
+    let (input, sql_state_marker, sql_state) = if sql && cap_flags.contains(CapabilityFlags::PROTOCOL_41) {
         let (input, sql_state_marker) = le_u8(input)?;
         let (input, sql_state) = take(5usize)(input)?;
         (input, sql_state_marker, sql_state)
