@@ -3,9 +3,9 @@ use crate::bytes::AsyncReadBytes;
 use crate::error::{Error, Result};
 use crate::number::{AsyncReadNumber, AsyncWriteNumber};
 use async_net::TcpStream;
-use mybin_parser::flag::CapabilityFlags;
+use mybin_parser::flag::{CapabilityFlags, StatusFlags};
 use mybin_parser::handshake::{initial_handshake, HandshakeClientResponse41};
-use mybin_parser::packet::{parse_handshake_message, Message};
+use mybin_parser::packet::{parse_handshake_message, HandshakeMessage};
 use serde_derive::*;
 use smol::io::AsyncWriteExt;
 use std::net::{SocketAddr, ToSocketAddrs};
@@ -16,6 +16,7 @@ pub struct Conn {
     stream: TcpStream,
     cap_flags: CapabilityFlags,
     pkt_nr: u8,
+    server_status: StatusFlags,
 }
 
 #[allow(dead_code)]
@@ -37,6 +38,7 @@ impl Conn {
             stream,
             cap_flags: CapabilityFlags::empty(),
             pkt_nr: 0,
+            server_status: StatusFlags::empty(),
         })
     }
 
@@ -50,8 +52,11 @@ impl Conn {
             "protocol version: {}, server version: {}, connection_id: {}",
             handshake.protocol_version,
             String::from_utf8_lossy(handshake.server_version),
-            handshake.connection_id
+            handshake.connection_id,
         );
+        log::debug!("auth_plugin={}, auth_data_1={:?}, auth_data_2={:?}", 
+            String::from_utf8_lossy(handshake.auth_plugin_name), 
+            handshake.auth_plugin_data_1, handshake.auth_plugin_data_2);
         let mut seed = vec![];
         seed.extend(handshake.auth_plugin_data_1);
         seed.extend(handshake.auth_plugin_data_2);
@@ -68,10 +73,8 @@ impl Conn {
         // disable ssl currently
         self.cap_flags.remove(CapabilityFlags::SSL);
         // by default use mysql_native_password auth_plugin
-        let mut ap = MysqlNativePassword::new();
-        ap.set_credential(&opts.username, &opts.password);
-        let mut auth_response = vec![];
-        ap.next(&seed, &mut auth_response)?;
+        let (auth_plugin_name, auth_response) = 
+            generate_auth_response(&opts.username, &opts.password, &seed)?;
 
         if !opts.database.is_empty() {
             self.cap_flags.insert(CapabilityFlags::CONNECT_WITH_DB);
@@ -82,27 +85,36 @@ impl Conn {
             username: opts.username,
             auth_response,
             database: opts.database,
-            auth_plugin_name: "mysql_native_password".to_owned(),
+            auth_plugin_name,
             ..Default::default()
         };
+        log::debug!("send packet: username={}, database={}, capability_flags={:?}",
+            client_resp.username, client_resp.database, client_resp.capability_flags);
+        log::debug!("auth_plugin={}, auth_response={:?}", 
+            client_resp.auth_plugin_name, client_resp.auth_response);
         self.send_msg(&client_resp.to_bytes()).await?;
         let cap_flags = self.cap_flags.clone();
         let msg = self.recv_msg().await?;
         // todo: handle auth switch request
         match parse_handshake_message(&msg, &cap_flags)? {
-            Message::Ok(_) => {
+            HandshakeMessage::Ok(ok) => {
                 log::debug!("handshake succeeds");
+                self.server_status = ok.status_flags;
                 // reset packet number for command phase
                 self.reset_pkt_nr();
-            },
-            Message::Err(err) => {
+            }
+            HandshakeMessage::Err(err) => {
                 return Err(Error::PacketError(format!(
                     "error_code: {}, error_message: {}",
                     err.error_code,
                     String::from_utf8_lossy(err.error_message)
                 )))
             }
-            Message::Eof(_) => return Err(Error::PacketError("unexpected EOF".to_owned())),
+            HandshakeMessage::Switch(switch) => {
+                log::debug!("switch auth_plugin={}, auth_data={:?}", 
+                    String::from_utf8_lossy(switch.plugin_name), switch.auth_plugin_data);
+                unimplemented!();
+            }
         }
         Ok(())
     }
@@ -159,7 +171,28 @@ impl Conn {
     pub fn reset_pkt_nr(&mut self) {
         self.pkt_nr = 0;
     }
+
+    pub async fn close(&mut self) {
+        match self.stream.close().await {
+            Ok(_) => log::debug!("closed connection to {}", self.socket_addr),
+            Err(e) => log::debug!("error on closing connection to {}: {}", self.socket_addr, e),
+        }
+    }
 }
+
+fn generate_auth_response(username: &str, password: &str, seed: &[u8]) -> Result<(String, Vec<u8>)> {
+    let mut seed = seed;
+    if let Some(0x00) = seed.last() {
+        // remove trailing 0x00 byte
+        seed = &seed[..seed.len()-1];
+    }
+    let mut ap = MysqlNativePassword::new();
+    ap.set_credential(username, password);
+    let mut auth_response = vec![];
+    ap.next(&seed, &mut auth_response)?;
+    Ok(("mysql_native_password".to_owned(), auth_response))
+}
+
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnOpts {
@@ -172,13 +205,15 @@ pub struct ConnOpts {
 mod tests {
     use super::*;
 
-    #[smol_potat::test]
-    async fn test_real_conn() {
-        let mut conn = Conn::connect("127.0.0.1:13306").await.unwrap();
-        conn.handshake(ConnOpts{
-            username: "root".to_owned(),
-            password: "password".to_owned(),
-            database: "".to_owned(),
-        }).await.unwrap();
-    }
+    // #[smol_potat::test]
+    // async fn test_real_conn() {
+    //     env_logger::init();
+
+    //     let mut conn = Conn::connect("127.0.0.1:13306").await.unwrap();
+    //     conn.handshake(ConnOpts{
+    //         username: "root".to_owned(),
+    //         password: "password".to_owned(),
+    //         database: "".to_owned(),
+    //     }).await.unwrap();
+    // }
 }
