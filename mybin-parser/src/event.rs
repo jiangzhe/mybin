@@ -277,63 +277,64 @@ pub type AnonymousGtidEvent = RawEvent<GtidData>;
 
 pub type PreviousGtidsEvent<'a> = RawEvent<PreviousGtidsData<'a>>;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Event<'a> {
     // 1
-    StartEventV1(StartEventV3<'a>),
+    StartEventV1(#[serde(borrow)] StartEventV3<'a>),
     // 2
-    QueryEvent(QueryEvent<'a>),
+    QueryEvent(#[serde(borrow)] QueryEvent<'a>),
     // 3
     StopEvent(StopEvent),
     // 4
-    RotateEvent(RotateEvent<'a>),
+    RotateEvent(#[serde(borrow)] RotateEvent<'a>),
     // 5
     IntvarEvent(IntvarEvent),
     // 6
-    LoadEvent(LoadEvent<'a>),
+    LoadEvent(#[serde(borrow)] LoadEvent<'a>),
     // 8
-    CreateFileEvent(CreateFileEvent<'a>),
+    CreateFileEvent(#[serde(borrow)] CreateFileEvent<'a>),
     // 9
-    AppendBlockEvent(AppendBlockEvent<'a>),
+    AppendBlockEvent(#[serde(borrow)] AppendBlockEvent<'a>),
     // 10
     ExecLoadEvent(ExecLoadEvent),
     // 11
     DeleteFileEvent(DeleteFileEvent),
     // 12
-    NewLoadEvent(NewLoadEvent<'a>),
+    NewLoadEvent(#[serde(borrow)] NewLoadEvent<'a>),
     // 13
     RandEvent(RandEvent),
     // 14
-    UserVarEvent(UserVarEvent<'a>),
+    UserVarEvent(#[serde(borrow)] UserVarEvent<'a>),
     // 15
-    FormatDescriptionEvent(FormatDescriptionEvent<'a>),
+    FormatDescriptionEvent(#[serde(borrow)] FormatDescriptionEvent<'a>),
     // 16
     XidEvent(XidEvent),
     // 17
-    BeginLoadQueryEvent(BeginLoadQueryEvent<'a>),
+    BeginLoadQueryEvent(#[serde(borrow)] BeginLoadQueryEvent<'a>),
     // 18
-    ExecuteLoadQueryEvent(ExecuteLoadQueryEvent<'a>),
+    ExecuteLoadQueryEvent(#[serde(borrow)] ExecuteLoadQueryEvent<'a>),
     // 19
-    TableMapEvent(TableMapEvent<'a>),
+    TableMapEvent(#[serde(borrow)] TableMapEvent<'a>),
     // 23
-    WriteRowsEventV1(WriteRowsEventV1<'a>),
+    WriteRowsEventV1(#[serde(borrow)] WriteRowsEventV1<'a>),
     // 24
-    UpdateRowsEventV1(UpdateRowsEventV1<'a>),
+    UpdateRowsEventV1(#[serde(borrow)] UpdateRowsEventV1<'a>),
     // 25
-    DeleteRowsEventV1(DeleteRowsEventV1<'a>),
+    DeleteRowsEventV1(#[serde(borrow)] DeleteRowsEventV1<'a>),
     // 26
-    IncidentEvent(IncidentEvent<'a>),
+    IncidentEvent(#[serde(borrow)] IncidentEvent<'a>),
     // 27
     HeartbeatEvent(HeartbeatEvent),
     // 30
-    WriteRowsEventV2(WriteRowsEventV2<'a>),
+    WriteRowsEventV2(#[serde(borrow)] WriteRowsEventV2<'a>),
     // 31
-    UpdateRowsEventV2(UpdateRowsEventV2<'a>),
+    UpdateRowsEventV2(#[serde(borrow)] UpdateRowsEventV2<'a>),
     // 32
-    DeleteRowsEventV2(DeleteRowsEventV2<'a>),
+    DeleteRowsEventV2(#[serde(borrow)] DeleteRowsEventV2<'a>),
     // 33
     GtidEvent(GtidEvent),
     // 34
     AnonymousGtidEvent(AnonymousGtidEvent),
     // 35
-    PreviousGtidsEvent(PreviousGtidsEvent<'a>),
+    PreviousGtidsEvent(#[serde(borrow)] PreviousGtidsEvent<'a>),
 }

@@ -290,6 +290,19 @@ where
     ))
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ColCntPacket(u64);
+
+pub fn parse_col_cnt_packet<'a, E>(
+    input: &'a [u8],
+) -> IResult<&'a [u8], ColCntPacket, E>
+where
+    E: ParseError<&'a [u8]>,
+{
+    let (input, cnt) = len_enc_int(input)?;
+    Ok((input, ColCntPacket(cnt.to_u64().expect("invalid field count"))))
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -303,5 +316,40 @@ mod tests {
         let (input, pkt) = parse_packet::<VerboseError<_>>(packet_data).unwrap();
         assert!(input.is_empty());
         dbg!(pkt);
+    }
+
+    #[test]
+    fn test_err_packet() {
+        let input: Vec<u8> = vec![
+            255, 212, 4, 35, 72, 89, 48, 48, 48, 83, 108, 97, 
+            118, 101, 32, 99, 97, 110, 32, 110, 111, 116, 32, 
+            104, 97, 110, 100, 108, 101, 32, 114, 101, 112, 108, 
+            105, 99, 97, 116, 105, 111, 110, 32, 101, 118, 101, 
+            110, 116, 115, 32, 119, 105, 116, 104, 32, 116, 104, 
+            101, 32, 99, 104, 101, 99, 107, 115, 117, 109, 32, 
+            116, 104, 97, 116, 32, 109, 97, 115, 116, 101, 114, 
+            32, 105, 115, 32, 99, 111, 110, 102, 105, 103, 117, 
+            114, 101, 100, 32, 116, 111, 32, 108, 111, 103, 59, 
+            32, 116, 104, 101, 32, 102, 105, 114, 115, 116, 32, 
+            101, 118, 101, 110, 116, 32, 39, 109, 121, 115, 113, 
+            108, 45, 98, 105, 110, 46, 48, 48, 48, 48, 48, 49, 39, 
+            32, 97, 116, 32, 52, 44, 32, 116, 104, 101, 32, 108, 
+            97, 115, 116, 32, 101, 118, 101, 110, 116, 32, 114, 
+            101, 97, 100, 32, 102, 114, 111, 109, 32, 39, 46, 47, 
+            109, 121, 115, 113, 108, 45, 98, 105, 110, 46, 48, 48, 
+            48, 48, 48, 49, 39, 32, 97, 116, 32, 49, 50, 51, 44, 
+            32, 116, 104, 101, 32, 108, 97, 115, 116, 32, 98, 
+            121, 116, 101, 32, 114, 101, 97, 100, 32, 102, 114, 
+            111, 109, 32, 39, 46, 47, 109, 121, 115, 113, 108, 45, 
+            98, 105, 110, 46, 48, 48, 48, 48, 48, 49, 39, 32, 97, 
+            116, 32, 49, 50, 51, 46
+        ];
+        let (input, pkt) = parse_err_packet::<VerboseError<_>>(&input, &CapabilityFlags::PROTOCOL_41, true).unwrap();
+        dbg!(input);
+        // dbg!(pkt);
+        println!("{}", pkt.error_code);
+        println!("{:?}", pkt.sql_state_marker);
+        println!("{}", String::from_utf8_lossy(pkt.sql_state));
+        println!("{}", String::from_utf8_lossy(pkt.error_message));
     }
 }

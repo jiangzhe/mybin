@@ -3,7 +3,8 @@ mod bytes;
 mod conn;
 mod error;
 mod number;
-mod cmd;
+mod binlog_stream;
+mod recv_msg;
 mod util;
 
 pub use crate::bytes::*;

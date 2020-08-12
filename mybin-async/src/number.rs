@@ -12,51 +12,49 @@ pub trait AsyncReadNumber: AsyncRead {
     where
         Self: Unpin,
     {
-        ReadU8Future { reader: self }
+        ReadU8Future(self)
     }
 
     fn read_le_u16(&mut self) -> ReadLeU16Future<Self>
     where
         Self: Unpin,
     {
-        ReadLeU16Future { reader: self }
+        ReadLeU16Future(self)
     }
 
     fn read_le_u24(&mut self) -> ReadLeU24Future<Self>
     where
         Self: Unpin,
     {
-        ReadLeU24Future { reader: self }
+        ReadLeU24Future(self)
     }
 
     fn read_le_u32(&mut self) -> ReadLeU32Future<Self>
     where
         Self: Unpin,
     {
-        ReadLeU32Future { reader: self }
+        ReadLeU32Future(self)
     }
 
     fn read_le_u64(&mut self) -> ReadLeU64Future<Self>
     where
         Self: Unpin,
     {
-        ReadLeU64Future { reader: self }
+        ReadLeU64Future(self)
     }
 }
 
 impl<R: AsyncRead + ?Sized> AsyncReadNumber for R {}
 
 #[must_use = "futures do nothing unless you `.await` or poll them"]
-pub struct ReadU8Future<'a, R: Unpin + ?Sized> {
-    reader: &'a mut R,
-}
+pub struct ReadU8Future<'a, R: Unpin + ?Sized>(pub &'a mut R);
 
 impl<R: AsyncRead + Unpin + ?Sized> Future for ReadU8Future<'_, R> {
     type Output = Result<u8>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut b = 0;
-        let mut reader = Pin::new(&mut self.reader);
+        let mut reader = Pin::new(&mut self.0);
         loop {
             match ready!(reader.as_mut().poll_read(cx, std::slice::from_mut(&mut b))) {
                 Ok(0) => return Poll::Ready(Err(Error::InputIncomplete(vec![], Needed::Size(1)))),
