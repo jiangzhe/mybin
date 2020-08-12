@@ -3,6 +3,7 @@ mod bytes;
 mod conn;
 mod error;
 mod number;
+mod cmd;
 mod util;
 
 pub use crate::bytes::*;

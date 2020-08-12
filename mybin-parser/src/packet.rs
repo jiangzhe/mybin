@@ -49,6 +49,7 @@ pub enum Message<'a> {
     Eof(EofPacket),
 }
 
+
 pub fn parse_message<'a>(
     input: &'a [u8],
     cap_flags: &CapabilityFlags,
