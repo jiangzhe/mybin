@@ -9,4 +9,4 @@ readme = "README.md"
 repository = "https://github.com/jiangzhe/mybin"
 
 [workspace]
-members = ["mybin-parser", "mybin-async", "mybin-cmd"]
+members = ["mybin-parser", "mybin-async", "mybin-cmd", "bytes-parser"]

@@ -15,3 +15,4 @@ pub mod rows_v2;
 pub mod table_map;
 pub mod user_var;
 pub mod util;
+pub mod bytes;

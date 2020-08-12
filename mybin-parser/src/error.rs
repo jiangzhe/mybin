@@ -1,6 +1,8 @@
 use nom::error::{ParseError, VerboseError, VerboseErrorKind};
 use thiserror::Error;
 
+pub type Result<T> = std::result::Result<T, Error>;
+
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("invalid column type code {0}")]

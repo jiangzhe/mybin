@@ -1,6 +1,6 @@
 //! defines structure and metadata for mysql columns
 
-use crate::error::Error;
+use crate::error::{Result, Error};
 use crate::util::bitmap_index;
 use serde_derive::*;
 use std::convert::TryFrom;
@@ -53,7 +53,7 @@ pub struct ColumnTypeCode(pub u8);
 impl TryFrom<u8> for ColumnType {
     type Error = Error;
 
-    fn try_from(code: u8) -> Result<Self, Self::Error> {
+    fn try_from(code: u8) -> Result<Self> {
         let ct = match code {
             0x00 => ColumnType::Decimal,
             0x01 => ColumnType::Tiny,
@@ -94,7 +94,7 @@ impl TryFrom<u8> for ColumnType {
 
 impl TryFrom<ColumnTypeCode> for ColumnType {
     type Error = Error;
-    fn try_from(code: ColumnTypeCode) -> Result<Self, Self::Error> {
+    fn try_from(code: ColumnTypeCode) -> Result<Self> {
         ColumnType::try_from(code.0)
     }
 }
@@ -233,7 +233,7 @@ pub fn parse_col_metas<'a>(
     col_defs: &'a [u8],
     col_meta_defs: &'a [u8],
     null_bitmap: &'a [u8],
-) -> Result<Vec<ColumnMetadata>, Error> {
+) -> Result<Vec<ColumnMetadata>> {
     debug_assert_eq!(col_cnt, col_defs.len());
     debug_assert_eq!((col_cnt + 7) >> 3, null_bitmap.len());
     let mut result = Vec::with_capacity(col_cnt);
@@ -371,4 +371,40 @@ pub enum ColumnValue {
     VarString(Vec<u8>),
     String(Vec<u8>),
     Geometry(Vec<u8>),
+}
+
+
+/// Column definition
+/// 
+/// reference: https://dev.mysql.com/doc/internals/en/com-query-response.html
+pub struct ColumnDefinition<'a> {
+    // len-enc-str
+    pub catalog: &'a [u8],
+    // len-enc-str
+    pub schema: &'a [u8],
+    // len-enc-str
+    pub table: &'a [u8],
+    // len-enc-str
+    pub org_table: &'a [u8],
+    // len-enc-str
+    pub name: &'a [u8],
+    // len-enc-str
+    pub org_name: &'a [u8],
+    // len-enc-int, always 0x0c
+    pub next_field: u8,
+    pub charset: u16,
+    pub col_len: u32,
+    pub col_type: u8,
+    pub flags: u16,
+    pub decimals: u8,
+    // 2-byte filler
+    // len-enc-str, if COM_FIELD_LIST
+    pub default_values: &'a [u8],
+}
+
+fn parse_column_definition<'a>(input: &'a [u8]) -> Result<ColumnDefinition<'a>> {
+    
+
+
+    todo!()
 }
