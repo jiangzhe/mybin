@@ -51,14 +51,14 @@ impl AuthPlugin for MysqlNativePassword {
 fn scramble411(password: &[u8], seed: &[u8]) -> Result<Vec<u8>> {
     let mut hasher = Sha1::new();
     let stage1 = {
-        let mut out = vec![0u8;20];
+        let mut out = vec![0u8; 20];
         hasher.input(password);
         hasher.result(&mut out);
         out
     };
     hasher.reset();
     let stage2 = {
-        let mut out = vec![0u8;20];
+        let mut out = vec![0u8; 20];
         hasher.input(&stage1);
         hasher.result(&mut out);
         out
@@ -66,7 +66,7 @@ fn scramble411(password: &[u8], seed: &[u8]) -> Result<Vec<u8>> {
     hasher.reset();
 
     let seed_hash = {
-        let mut out = vec![0u8;20];
+        let mut out = vec![0u8; 20];
         hasher.input(seed);
         hasher.input(&stage2);
         hasher.result(&mut out);
@@ -82,7 +82,6 @@ fn scramble411(password: &[u8], seed: &[u8]) -> Result<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     #[test]
     fn test_sha1() {

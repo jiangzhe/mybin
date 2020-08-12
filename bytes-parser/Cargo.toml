@@ -1,0 +1,14 @@
+[package]
+name = "bytes-parser"
+version = "0.1.0"
+authors = ["Zhe Jiang <nju.jiangzhe@gmail.com>"]
+edition = "2018"
+workspace = ".."
+
+[dependencies]
+thiserror = "1.0"
+futures = "0.3"
+
+[dev-dependencies]
+smol-potat = "0.5.0"
+smol = "0.3.3"
