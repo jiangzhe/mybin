@@ -5,9 +5,10 @@ use crate::number::{AsyncReadNumber, AsyncWriteNumber};
 use crate::recv_msg::{RecvMsg, RecvMsgFuture};
 use crate::binlog_stream::BinlogStream;
 use async_net::TcpStream;
-use mybin_parser::flag::{CapabilityFlags, StatusFlags};
-use mybin_parser::handshake::{initial_handshake, HandshakeClientResponse41};
-use mybin_parser::packet::{parse_handshake_message, HandshakeMessage};
+use bytes_parser::{ReadFrom, ReadWithContext, WriteTo};
+use mybin_core::flag::{CapabilityFlags, StatusFlags};
+use mybin_core::handshake::{HandshakeClientResponse41, InitialHandshake};
+use mybin_core::packet::HandshakeMessage;
 use serde_derive::*;
 use smol::io::AsyncWriteExt;
 use std::net::{SocketAddr, ToSocketAddrs};
@@ -20,6 +21,8 @@ pub struct Conn {
     cap_flags: CapabilityFlags,
     pkt_nr: u8,
     server_status: StatusFlags,
+    read_buf: Vec<u8>,
+    write_buf: Vec<u8>,
 }
 
 #[allow(dead_code)]
@@ -42,6 +45,8 @@ impl Conn {
             cap_flags: CapabilityFlags::empty(),
             pkt_nr: 0,
             server_status: StatusFlags::empty(),
+            read_buf: Vec::with_capacity(1024 * 8),
+            write_buf: Vec::with_capacity(1024 * 8),
         })
     }
 
@@ -50,7 +55,7 @@ impl Conn {
     /// this method will change the connect capability flags
     pub async fn handshake(&mut self, opts: ConnOpts) -> Result<()> {
         let msg = self.recv_msg().await?;
-        let handshake = initial_handshake(&msg)?;
+        let (_, handshake): (_, InitialHandshake) = msg.read_from(0)?;
         log::debug!(
             "protocol version: {}, server version: {}, connection_id: {}",
             handshake.protocol_version,
@@ -91,15 +96,11 @@ impl Conn {
             auth_plugin_name,
             ..Default::default()
         };
-        log::debug!("send packet: username={}, database={}, capability_flags={:?}",
-            client_resp.username, client_resp.database, client_resp.capability_flags);
-        log::debug!("auth_plugin={}, auth_response={:?}", 
-            client_resp.auth_plugin_name, client_resp.auth_response);
-        self.send_msg(&client_resp.to_bytes()).await?;
+        self.send_msg(client_resp).await?;
         let cap_flags = self.cap_flags.clone();
         let msg = self.recv_msg().await?;
         // todo: handle auth switch request
-        match parse_handshake_message(&msg, &cap_flags)? {
+        match msg.read_with_ctx(0, &cap_flags)?.1 {
             HandshakeMessage::Ok(ok) => {
                 log::debug!("handshake succeeds");
                 self.server_status = ok.status_flags;
@@ -114,8 +115,11 @@ impl Conn {
                 )))
             }
             HandshakeMessage::Switch(switch) => {
-                log::debug!("switch auth_plugin={}, auth_data={:?}", 
-                    String::from_utf8_lossy(switch.plugin_name), switch.auth_plugin_data);
+                log::debug!(
+                    "switch auth_plugin={}, auth_data={:?}",
+                    String::from_utf8_lossy(switch.plugin_name),
+                    switch.auth_plugin_data
+                );
                 unimplemented!();
             }
         }
@@ -125,32 +129,49 @@ impl Conn {
     /// receive message from MySQL server
     ///
     /// this method will concat mutliple packets if payload too large.
-    pub async fn recv_msg(&mut self) -> Result<Vec<u8>> {
-        use std::pin::Pin;
-        let mut out = Vec::new();
-        let mut recv_msg_fut = RecvMsgFuture::new(&mut self.stream, &mut out);
-        let mut recv_msg_fut = Pin::new(&mut recv_msg_fut);
+    pub async fn recv_msg(&mut self) -> Result<&[u8]> {
+        // let mut out = Vec::new();
+        self.read_buf.clear();
         loop {
-            let msg = recv_msg_fut.as_mut().await?;
-            log::debug!("receive packet: payload_len={}, seq_id={}", msg.payload_len, msg.seq_id);
-            if msg.seq_id != self.pkt_nr {
-                return Err(Error::PacketError(format!("Get server packet out of order: {} != {}", msg.seq_id, self.pkt_nr)));
+            let payload_len = self.stream.read_le_u24().await?;
+            let seq_id = self.stream.read_u8().await?;
+            log::debug!(
+                "receive packet: payload_len={}, seq_id={}",
+                payload_len,
+                seq_id
+            );
+            if seq_id != self.pkt_nr {
+                return Err(Error::PacketError(format!(
+                    "Get server packet out of order: {} != {}",
+                    seq_id, self.pkt_nr
+                )));
             }
             self.pkt_nr += 1;
-            if msg.payload_len < 0xffffff {
+            self.stream
+                .take_out(payload_len as usize, &mut self.read_buf)
+                .await?;
+            // read multiple packets if payload larger than or equal to 2^24-1
+            // https://dev.mysql.com/doc/internals/en/sending-more-than-16mbyte.html
+            if payload_len < 0xffffff {
                 break;
             }
         }
-        Ok(out)
+        Ok(&self.read_buf)
     }
 
     /// send message to MySQL server
     ///
     /// this method will split message into multiple packets if payload too large.
-    pub async fn send_msg(&mut self, msg: &[u8]) -> Result<()> {
+    pub async fn send_msg<'a, T>(&mut self, msg: T) -> Result<()>
+    where
+        Vec<u8>: WriteTo<'a, T>,
+        T: 'a,
+    {
+        self.write_buf.clear();
+        self.write_buf.write_to(msg)?;
         let mut chunk_size = 0;
         // let mut seq_id = 0;
-        for chunk in msg.chunks(0xffffff) {
+        for chunk in self.write_buf.chunks(0xffffff) {
             chunk_size = chunk.len();
             self.stream.write_le_u24(chunk_size as u32).await?;
             self.stream.write_u8(self.pkt_nr).await?;
@@ -173,7 +194,7 @@ impl Conn {
     }
 
     /// reset packet number to 0
-    /// 
+    ///
     /// this method should be called before each command sent
     pub fn reset_pkt_nr(&mut self) {
         self.pkt_nr = 0;
@@ -203,28 +224,15 @@ pub struct ConnOpts {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    // use super::*;
 
-    #[smol_potat::test]
-    async fn test_real_conn() {
-        use mybin_cmd::ComBinlogDump;
-        env_logger::init();
-
-        let mut conn = Conn::connect("127.0.0.1:13306").await.unwrap();
-        conn.handshake(ConnOpts{
-            username: "root".to_owned(),
-            password: "password".to_owned(),
-            database: "".to_owned(),
-        }).await.unwrap();
-
-        let dump_cmd = ComBinlogDump::new("mysql-bin.000003", 4, 998, true);
-        conn.send_msg(&dump_cmd.to_bytes()).await.unwrap();
-
-        let msg = conn.recv_msg().await.unwrap();
-        println!("first={:?}", msg);
-        println!("first.len()={}", msg.len());
-        let msg = conn.recv_msg().await.unwrap();
-        println!("second={:?}", msg);
-        println!("second.len()={}", msg.len());
-    }
+    // #[smol_potat::test]
+    // async fn test_real_conn() {
+    //     let mut conn = Conn::connect("127.0.0.1:13306").await.unwrap();
+    //     conn.handshake(ConnOpts{
+    //         username: "root".to_owned(),
+    //         password: "password".to_owned(),
+    //         database: "".to_owned(),
+    //     }).await.unwrap();
+    // }
 }

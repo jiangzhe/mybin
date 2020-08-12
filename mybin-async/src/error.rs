@@ -11,11 +11,9 @@ pub enum Error {
     #[error("unavailable output")]
     OutputUnavailable,
     #[error("parse error: {0}")]
-    ParseError(#[from] mybin_parser::error::Error),
+    ParseError(#[from] bytes_parser::error::Error),
     #[error("packet error: {0}")]
     PacketError(String),
-    #[error("command error: {0}")]
-    CommandError(#[from] mybin_cmd::Error),
 }
 
 #[derive(Debug, Clone)]
