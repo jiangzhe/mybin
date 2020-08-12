@@ -14,6 +14,8 @@ pub enum Error {
     ParseError(#[from] mybin_parser::error::Error),
     #[error("packet error: {0}")]
     PacketError(String),
+    #[error("invalid command code: {0}")]
+    InvalidCommandCode(u8),
 }
 
 #[derive(Debug, Clone)]
