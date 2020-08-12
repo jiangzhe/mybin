@@ -1,7 +1,12 @@
-mod binlog_dump;
 
+mod error;
+mod binlog_dump;
+mod query;
+
+pub use crate::error::{Result, Error};
+pub use crate::binlog_dump::*;
+pub use crate::query::*;
 use serde_derive::*;
-use crate::error::{Result, Error};
 use std::convert::TryFrom;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -120,4 +125,3 @@ impl TryFrom<u8> for Command {
         Ok(cmd)
     }
 }
-

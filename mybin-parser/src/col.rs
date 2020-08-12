@@ -372,3 +372,30 @@ pub enum ColumnValue {
     String(Vec<u8>),
     Geometry(Vec<u8>),
 }
+
+
+// todo
+pub struct ColumnDefnition<'a> {
+    // len-enc-str
+    pub catalog: &'a [u8],
+    // len-enc-str
+    pub schema: &'a [u8],
+    // len-enc-str
+    pub table: &'a [u8],
+    // len-enc-str
+    pub org_table: &'a [u8],
+    // len-enc-str
+    pub name: &'a [u8],
+    // len-enc-str
+    pub org_name: &'a [u8],
+    // len-enc-int, always 0x0c
+    pub next_field: u8,
+    pub charset: u16,
+    pub col_len: u32,
+    pub col_type: u8,
+    pub flags: u16,
+    pub decimals: u8,
+    // 2-byte filler
+    // len-enc-str, if COM_FIELD_LIST
+    pub default_values: &'a [u8],
+}

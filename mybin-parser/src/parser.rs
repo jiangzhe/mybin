@@ -55,8 +55,25 @@ pub struct ParserV4 {
 }
 
 impl ParserV4 {
+    // event post header lengths of mysql 5.7.30
+    const POST_HEADER_LENGTHS_5_7: [u8;39] = [
+         0, 56, 13, 0,  8,  0, 18,  0,
+         4,  4,  4, 4, 18,  0,  0, 95,
+         0,  4, 26, 8,  0,  0,  0,  8,
+         8,  8,  2, 0,  0,  0, 10, 10,
+        10, 42, 42, 0, 18, 52,  0,
+    ];
+
     /// create new parser by given post header lengths and checksum flag
     pub fn new(post_header_lengths: Vec<u8>, checksum: bool) -> Self {
+        ParserV4 {
+            post_header_lengths,
+            checksum,
+        }
+    }
+
+    pub fn new_5_7(checksum: bool) -> Self {
+        let post_header_lengths = Vec::from(&Self::POST_HEADER_LENGTHS_5_7[..]);
         ParserV4 {
             post_header_lengths,
             checksum,
@@ -1553,6 +1570,36 @@ mod tests {
                 input = pv4.checksum_event(&mut chk, input)?;
             }
         }
+        Ok(())
+    }
+
+    #[test]
+    fn test_net_stream_1() -> TResult {
+        let net_stream: Vec<u8> = vec![
+            0, 0, 0, 0, 0, 4, 1, 0, 0, 0, 43, 0, 0, 0, 0, 0, 
+            0, 0, 32, 0, 4, 0, 0, 0, 0, 0, 0, 0, 109, 121, 115, 
+            113, 108, 45, 98, 105, 110, 46, 48, 48, 48, 48, 48, 49
+        ];
+        // the stream contains continuous events, with preceding 0x00 byte
+        // of each event
+        let pv4 = ParserV4::new_5_7(false);
+        let (_, ev) = pv4.parse_rotate_event::<VerboseError<_>>(&net_stream[1..]).unwrap();
+        dbg!(&ev);
+        println!("{}", String::from_utf8_lossy(ev.data.next_binlog_filename));
+        Ok(())
+    }
+
+    #[test]
+    fn test_net_stream_2() -> TResult {
+        let net_stream: Vec<u8> = vec![
+            0, 0, 0, 0, 0, 4, 1, 0, 0, 0, 43, 0, 0, 0, 0, 
+            0, 0, 0, 32, 0, 4, 0, 0, 0, 0, 0, 0, 0, 109, 
+            121, 115, 113, 108, 45, 98, 105, 110, 46, 48, 
+            48, 48, 48, 48, 50
+        ];
+        let pv4 = ParserV4::new_5_7(true);
+        let ev = pv4.parse_event(&net_stream[1..])?;
+        dbg!(ev);
         Ok(())
     }
 

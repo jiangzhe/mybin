@@ -44,9 +44,9 @@ impl<R: AsyncRead> AsyncReadBytes for R {}
 
 #[must_use = "futures do nothing unless you `.await` or poll them"]
 pub struct TakeOutFuture<'a, T: Unpin + ?Sized> {
-    reader: &'a mut T,
-    total: usize,
-    out: &'a mut Vec<u8>,
+    pub reader: &'a mut T,
+    pub total: usize,
+    pub out: &'a mut Vec<u8>,
 }
 
 impl<R: AsyncRead + Unpin + ?Sized> Future for TakeOutFuture<'_, R> {

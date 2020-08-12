@@ -2,6 +2,8 @@ use crate::auth_plugin::{AuthPlugin, MysqlNativePassword};
 use crate::bytes::AsyncReadBytes;
 use crate::error::{Error, Result};
 use crate::number::{AsyncReadNumber, AsyncWriteNumber};
+use crate::recv_msg::{RecvMsg, RecvMsgFuture};
+use crate::binlog_stream::BinlogStream;
 use async_net::TcpStream;
 use mybin_parser::flag::{CapabilityFlags, StatusFlags};
 use mybin_parser::handshake::{initial_handshake, HandshakeClientResponse41};
@@ -10,10 +12,11 @@ use serde_derive::*;
 use smol::io::AsyncWriteExt;
 use std::net::{SocketAddr, ToSocketAddrs};
 
+
 #[derive(Debug)]
 pub struct Conn {
     socket_addr: SocketAddr,
-    stream: TcpStream,
+    pub(crate) stream: TcpStream,
     cap_flags: CapabilityFlags,
     pkt_nr: u8,
     server_status: StatusFlags,
@@ -123,19 +126,18 @@ impl Conn {
     ///
     /// this method will concat mutliple packets if payload too large.
     pub async fn recv_msg(&mut self) -> Result<Vec<u8>> {
+        use std::pin::Pin;
         let mut out = Vec::new();
+        let mut recv_msg_fut = RecvMsgFuture::new(&mut self.stream, &mut out);
+        let mut recv_msg_fut = Pin::new(&mut recv_msg_fut);
         loop {
-            let payload_len = self.stream.read_le_u24().await?;
-            let seq_id = self.stream.read_u8().await?;
-            log::debug!("receive packet: payload_len={}, seq_id={}", payload_len, seq_id);
-            if seq_id != self.pkt_nr {
-                return Err(Error::PacketError(format!("Get server packet out of order: {} != {}", seq_id, self.pkt_nr)));
+            let msg = recv_msg_fut.as_mut().await?;
+            log::debug!("receive packet: payload_len={}, seq_id={}", msg.payload_len, msg.seq_id);
+            if msg.seq_id != self.pkt_nr {
+                return Err(Error::PacketError(format!("Get server packet out of order: {} != {}", msg.seq_id, self.pkt_nr)));
             }
             self.pkt_nr += 1;
-            self.stream.take_out(payload_len as usize, &mut out).await?;
-            // read multiple packets if payload larger than or equal to 2^24-1
-            // https://dev.mysql.com/doc/internals/en/sending-more-than-16mbyte.html
-            if payload_len < 0xffffff {
+            if msg.payload_len < 0xffffff {
                 break;
             }
         }
@@ -165,18 +167,16 @@ impl Conn {
         Ok(())
     }
 
+    /// consume the connection and return the binlog stream
+    pub async fn request_binlog_stream(mut self) -> Result<BinlogStream> {
+        todo!()
+    }
+
     /// reset packet number to 0
     /// 
     /// this method should be called before each command sent
     pub fn reset_pkt_nr(&mut self) {
         self.pkt_nr = 0;
-    }
-
-    pub async fn close(&mut self) {
-        match self.stream.close().await {
-            Ok(_) => log::debug!("closed connection to {}", self.socket_addr),
-            Err(e) => log::debug!("error on closing connection to {}: {}", self.socket_addr, e),
-        }
     }
 }
 
@@ -205,15 +205,26 @@ pub struct ConnOpts {
 mod tests {
     use super::*;
 
-    // #[smol_potat::test]
-    // async fn test_real_conn() {
-    //     env_logger::init();
+    #[smol_potat::test]
+    async fn test_real_conn() {
+        use mybin_cmd::ComBinlogDump;
+        env_logger::init();
 
-    //     let mut conn = Conn::connect("127.0.0.1:13306").await.unwrap();
-    //     conn.handshake(ConnOpts{
-    //         username: "root".to_owned(),
-    //         password: "password".to_owned(),
-    //         database: "".to_owned(),
-    //     }).await.unwrap();
-    // }
+        let mut conn = Conn::connect("127.0.0.1:13306").await.unwrap();
+        conn.handshake(ConnOpts{
+            username: "root".to_owned(),
+            password: "password".to_owned(),
+            database: "".to_owned(),
+        }).await.unwrap();
+
+        let dump_cmd = ComBinlogDump::new("mysql-bin.000003", 4, 998, true);
+        conn.send_msg(&dump_cmd.to_bytes()).await.unwrap();
+
+        let msg = conn.recv_msg().await.unwrap();
+        println!("first={:?}", msg);
+        println!("first.len()={}", msg.len());
+        let msg = conn.recv_msg().await.unwrap();
+        println!("second={:?}", msg);
+        println!("second.len()={}", msg.len());
+    }
 }
