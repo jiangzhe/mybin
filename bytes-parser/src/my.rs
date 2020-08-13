@@ -7,7 +7,7 @@ pub trait ReadMyEncoding {
     // read a MySQL length encoded integer
     fn read_len_enc_int(&self, offset: usize) -> Result<(usize, LenEncInt)>;
 
-    fn read_len_enc_str(&self, offset: usize) -> Result<(usize, LenEncStr)>;
+    fn read_len_enc_str<'a>(&'a self, offset: usize) -> Result<(usize, LenEncStr<'a>)>;
 }
 
 impl ReadMyEncoding for [u8] {
@@ -41,7 +41,14 @@ impl ReadMyEncoding for [u8] {
         match lei {
             LenEncInt::Err => Ok((offset, LenEncStr::Err)),
             LenEncInt::Null => Ok((offset, LenEncStr::Null)),
-            _ => todo!(),
+            _ => {
+                let len = lei.to_u64().unwrap() as usize;
+                let end = offset + len;
+                if self.len() < end {
+                    return Err(Error::InputIncomplete(Needed::Size(end - self.len())));
+                }
+                Ok((end, LenEncStr::Ref(&self[offset..end])))
+            }
         }
     }
 }
@@ -55,6 +62,28 @@ pub enum LenEncInt {
     Len3(u16),
     Len4(u32),
     Len9(u64),
+}
+
+impl LenEncInt {
+    pub fn to_u64(&self) -> Option<u64> {
+        match self {
+            LenEncInt::Len1(n) => Some(*n as u64),
+            LenEncInt::Len3(n) => Some(*n as u64),
+            LenEncInt::Len4(n) => Some(*n as u64),
+            LenEncInt::Len9(n) => Some(*n as u64),
+            _ => None,
+        }
+    }
+
+    pub fn to_u32(&self) -> Option<u32> {
+        match self {
+            LenEncInt::Len1(n) => Some(*n as u32),
+            LenEncInt::Len3(n) => Some(*n as u32),
+            LenEncInt::Len4(n) => Some(*n as u32),
+            LenEncInt::Len9(n) => Some(*n as u32),
+            _ => None,
+        }
+    }
 }
 
 impl ToBytes for LenEncInt {
@@ -112,10 +141,29 @@ impl<'a> LenEncStr<'a> {
         }
     }
 
-    pub fn as_bytes(&self) -> Option<&[u8]> {
+    pub fn into_ref(self) -> Option<&'a [u8]> {
         match self {
             LenEncStr::Ref(r) => Some(r),
-            LenEncStr::Owned(o) => Some(&o[..]),
+            _ => None,
+        }
+    }
+
+    pub fn into_owned(self) -> Option<Vec<u8>> {
+        match self {
+            LenEncStr::Owned(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    /// convert either ref or owned bytes into Vec<u8>
+    pub fn into_inner_bytes(self) -> Option<Vec<u8>> {
+        match self {
+            LenEncStr::Owned(v) => Some(v),
+            LenEncStr::Ref(r) => {
+                let mut bs = Vec::with_capacity(r.len());
+                bs.extend(r);
+                Some(bs)
+            }
             _ => None,
         }
     }
@@ -272,6 +320,11 @@ mod tests {
     fn test_len_enc_str() {
         // read
         let bs = Vec::from(&b"\x05hello"[..]);
-        
+        let (_, les) = bs.read_len_enc_str(0).unwrap();
+        assert_eq!(b"hello", les.to_utf8_string().unwrap().as_bytes());
+        // write
+        let mut encoded = Vec::new();
+        encoded.write_to_bytes(les).unwrap();
+        assert_eq!(bs, encoded);
     }
 }

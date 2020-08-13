@@ -6,3 +6,6 @@ edition = "2018"
 workspace = ".."
 
 [dependencies]
+bitflags = "1.2.1"
+thiserror = "1.0"
+bytes-parser = { version = "0.1.0", path = "../bytes-parser" }

@@ -10,6 +10,8 @@ pub enum Error {
     OutputUnavailable,
     #[error("IO error: {0}")]
     IO(#[from] std::io::Error),
+    #[error("constraint error: {0}")]
+    ConstraintError(String),
 }
 
 #[derive(Debug)]
