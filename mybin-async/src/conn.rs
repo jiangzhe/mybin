@@ -172,13 +172,13 @@ pub struct ConnOpts {
 mod tests {
     use super::*;
 
-    #[smol_potat::test]
-    async fn test_real_conn() {
-        let mut conn = Conn::connect("127.0.0.1:13306").await.unwrap();
-        conn.handshake(ConnOpts{
-            username: "root".to_owned(),
-            password: "password".to_owned(),
-            database: "".to_owned(),
-        }).await.unwrap();
-    }
+    // #[smol_potat::test]
+    // async fn test_real_conn() {
+    //     let mut conn = Conn::connect("127.0.0.1:13306").await.unwrap();
+    //     conn.handshake(ConnOpts{
+    //         username: "root".to_owned(),
+    //         password: "password".to_owned(),
+    //         database: "".to_owned(),
+    //     }).await.unwrap();
+    // }
 }

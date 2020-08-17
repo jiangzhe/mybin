@@ -1,4 +1,3 @@
-pub mod checksum;
 pub mod col;
 pub mod data;
 pub mod error;
@@ -15,4 +14,3 @@ pub mod rows_v2;
 pub mod table_map;
 pub mod user_var;
 pub mod util;
-pub mod bytes;

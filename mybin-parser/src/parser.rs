@@ -1,4 +1,3 @@
-use crate::checksum::Checksum;
 use crate::data::*;
 use crate::error::{fmt_nom_err, Error};
 use crate::event::*;
@@ -1535,26 +1534,26 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_checksum_all_files() -> TResult {
-        let mut chk = Checksum::new();
-        let files = vec![
-            BINLOG_5_7_30,
-            BINLOG_QUERY_EVENT,
-            BINLOG_ROTATE_EVENT,
-            BINLOG_ROWS_EVENT_V1,
-            BINLOG_ROWS_EVENT_V2,
-            BINLOG_BEGIN_LOAD_QUERY_EVENT,
-            BINLOG_RAND_EVENT,
-        ];
-        for f in files {
-            let (mut input, pv4) = ParserV4::from_binlog_file::<VerboseError<_>>(f)?;
-            while !input.is_empty() {
-                input = pv4.checksum_event(&mut chk, input)?;
-            }
-        }
-        Ok(())
-    }
+    // #[test]
+    // fn test_checksum_all_files() -> TResult {
+    //     let mut chk = Checksum::new();
+    //     let files = vec![
+    //         BINLOG_5_7_30,
+    //         BINLOG_QUERY_EVENT,
+    //         BINLOG_ROTATE_EVENT,
+    //         BINLOG_ROWS_EVENT_V1,
+    //         BINLOG_ROWS_EVENT_V2,
+    //         BINLOG_BEGIN_LOAD_QUERY_EVENT,
+    //         BINLOG_RAND_EVENT,
+    //     ];
+    //     for f in files {
+    //         let (mut input, pv4) = ParserV4::from_binlog_file::<VerboseError<_>>(f)?;
+    //         while !input.is_empty() {
+    //             input = pv4.checksum_event(&mut chk, input)?;
+    //         }
+    //     }
+    //     Ok(())
+    // }
 
     fn post_header_length(event: &FormatDescriptionEvent, event_type: LogEventType) -> u8 {
         let idx = LogEventTypeCode::from(event_type).0 as usize - 1;

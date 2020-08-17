@@ -1,7 +1,7 @@
-use crate::error::Error;
 use crate::flag::*;
-use bytes_parser::error::{Result as PResult, Error as PError, Needed};
-use bytes_parser::bytes::{ReadAs, ReadWithContext, ReadBytes};
+use bytes_parser::error::{Result, Error, Needed};
+use bytes_parser::{ReadAs, ReadWithContext};
+use bytes_parser::bytes::ReadBytes;
 use bytes_parser::number::ReadNumber;
 use bytes_parser::my::ReadMyEncoding;
 use bytes_parser::EMPTY_BYTE_ARRAY;
@@ -17,7 +17,7 @@ pub struct Packet<'a> {
 }
 
 impl<'a> ReadAs<'a, Packet<'a>> for [u8] {
-    fn read_as(&'a self, offset: usize) -> PResult<(usize, Packet<'a>)> {
+    fn read_as(&'a self, offset: usize) -> Result<(usize, Packet<'a>)> {
         let (offset, payload_len) = self.read_le_u24(offset)?;
         let (offset, seq_id) = self.read_u8(offset)?;
         let (offset, payload) = self.take_len(offset, payload_len as usize)?;
@@ -40,16 +40,16 @@ pub enum Message<'a> {
 impl<'a, 'c> ReadWithContext<'a, 'c, Message<'a>> for [u8] {
     type Context = &'c CapabilityFlags;
 
-    fn read_with_ctx(&'a self, offset: usize, cap_flags: Self::Context) -> PResult<(usize, Message)> {
+    fn read_with_ctx(&'a self, offset: usize, cap_flags: Self::Context) -> Result<(usize, Message)> {
         parse_message(self, offset, cap_flags, true)
     }
 }
 
 fn parse_message<'a, 'c>(input: &'a [u8], offset: usize, 
-    cap_flags: &'c CapabilityFlags, sql: bool) -> PResult<(usize, Message<'a>)> 
+    cap_flags: &'c CapabilityFlags, sql: bool) -> Result<(usize, Message<'a>)> 
 {
     if input.len() <= offset {
-        return Err(PError::InputIncomplete(Needed::Unknown));
+        return Err(Error::InputIncomplete(Needed::Unknown));
     }
     match input[0] {
         0x00 => {
@@ -64,7 +64,7 @@ fn parse_message<'a, 'c>(input: &'a [u8], offset: usize,
             let (offset, eof) = input.read_with_ctx(offset, cap_flags)?;
             Ok((offset, Message::Eof(eof)))
         }
-        c => Err(PError::ConstraintError(format!("invalid packet code {}", c))),
+        c => Err(Error::ConstraintError(format!("invalid packet code {}", c))),
     }
 }
 
@@ -92,7 +92,7 @@ pub struct OkPacket<'a> {
 impl<'a, 'c> ReadWithContext<'a, 'c, OkPacket<'a>> for [u8] {
     type Context = &'c CapabilityFlags;
 
-    fn read_with_ctx(&'a self, offset: usize, cap_flags: &'c CapabilityFlags) -> PResult<(usize, OkPacket<'a>)> {
+    fn read_with_ctx(&'a self, offset: usize, cap_flags: &'c CapabilityFlags) -> Result<(usize, OkPacket<'a>)> {
         let (offset, header) = self.read_u8(offset)?;
         debug_assert_eq!(0x00, header);
         let (offset, affected_rows) = self.read_len_enc_int(offset)?;
@@ -167,7 +167,7 @@ pub struct ErrPacket<'a> {
 impl<'a, 'c> ReadWithContext<'a, 'c, ErrPacket<'a>> for [u8] {
     type Context = (&'c CapabilityFlags, bool);
 
-    fn read_with_ctx(&'a self, offset: usize, (cap_flags, sql): Self::Context) -> PResult<(usize, ErrPacket<'a>)> {
+    fn read_with_ctx(&'a self, offset: usize, (cap_flags, sql): Self::Context) -> Result<(usize, ErrPacket<'a>)> {
         let (offset, header) = self.read_u8(offset)?;
         debug_assert_eq!(0xff, header);
         let (offset, error_code) = self.read_le_u16(offset)?;
@@ -207,7 +207,7 @@ pub struct EofPacket {
 impl<'a, 'c> ReadWithContext<'a, 'c, EofPacket> for [u8] {
     type Context = &'c CapabilityFlags;
 
-    fn read_with_ctx(&self, offset: usize, cap_flags: Self::Context) -> PResult<(usize, EofPacket)> {
+    fn read_with_ctx(&self, offset: usize, cap_flags: Self::Context) -> Result<(usize, EofPacket)> {
         let (offset, header) = self.read_u8(offset)?;
         debug_assert_eq!(0xfe, header);
         let (offset, warnings, status_flags) = if cap_flags.contains(CapabilityFlags::PROTOCOL_41) {
@@ -235,10 +235,11 @@ mod tests {
     const packet_data: &[u8] = include_bytes!("../data/packet.dat");
 
     use super::*;
+    use bytes_parser::ReadAs;
 
     #[test]
     fn test_packet() {
-        let (offset, pkt) = packet_data.read_as(0).unwrap();
+        let (offset, pkt): (_, Packet<'_>) = packet_data.read_as(0).unwrap();
         assert_eq!(packet_data.len(), offset);
         dbg!(pkt);
     }

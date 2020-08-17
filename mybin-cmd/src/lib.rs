@@ -4,6 +4,10 @@ mod binlog_dump;
 mod query;
 mod packet;
 mod flag;
+mod checksum;
+mod event;
+mod util;
+mod col;
 
 pub use crate::error::{Result, Error};
 pub use crate::binlog_dump::*;

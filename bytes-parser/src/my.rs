@@ -1,6 +1,6 @@
 use crate::error::{Result, Error, Needed};
 use crate::number::ReadNumber;
-use crate::bytes::ToBytes;
+use crate::ToBytes;
 
 /// read MySQL encoded types
 pub trait ReadMyEncoding {
@@ -233,7 +233,7 @@ impl From<u32> for LenEncInt {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bytes::*;
+    use crate::*;
 
     #[test]
     fn test_len_enc_int_1() {
