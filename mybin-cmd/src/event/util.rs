@@ -28,7 +28,7 @@ macro_rules! raw_owned_event {
                     header.data_len()
                 };
                 let (offset, data) = self[..data_len as usize].read_as(offset)?;
-                debug_assert_eq!(offset, data_len);
+                debug_assert_eq!(offset, data_len as usize);
                 let (offset, crc32) = if checksum {
                     self.read_le_u32(offset)?
                 } else {
@@ -68,7 +68,7 @@ macro_rules! raw_borrowed_event {
                     header.data_len()
                 };
                 let (offset, data) = self[..data_len as usize].read_as(offset)?;
-                debug_assert_eq!(offset, data_len);
+                debug_assert_eq!(offset, data_len as usize);
                 let (offset, crc32) = if checksum {
                     self.read_le_u32(offset)?
                 } else {

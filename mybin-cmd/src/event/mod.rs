@@ -4,12 +4,30 @@ mod rows_v1;
 mod rows_v2;
 mod query;
 mod fde;
+mod user_var;
+mod table_map;
+mod rotate;
+mod intvar;
+mod load;
+mod rand;
+mod xid;
+mod incident;
 mod util;
 
 // use crate::data::*;
 use crate::{raw_owned_event, raw_borrowed_event, raw_empty_event};
-use gtid::{GtidData, PreviousGtidsData};
 use header::{EventHeader, EventHeaderV1};
+use fde::{StartData, FormatDescriptionData};
+use query::QueryData;
+use rotate::RotateData;
+use intvar::IntvarData;
+use gtid::{GtidData, PreviousGtidsData};
+use user_var::UserVarData;
+use load::*;
+use rand::RandData;
+use xid::XidData;
+use incident::IncidentData;
+use table_map::TableMapData;
 use rows_v1::RowsDataV1;
 use rows_v2::RowsDataV2;
 // use crate::table_map::TableMapData;
@@ -199,6 +217,8 @@ impl ReadAs<'_, EventLength> for [u8] {
 }
 
 /// v1 event with payload
+/// 
+/// not implemented
 #[derive(Debug, Clone)]
 pub struct RawEventV1<D> {
     pub header: EventHeaderV1,
@@ -213,47 +233,45 @@ pub struct RawEvent<D> {
     pub crc32: u32,
 }
 
-pub type StartEventV1<'a> = RawEventV1<StartData<'a>>;
+raw_borrowed_event!(StartEventV3, StartData);
 
-pub type StartEventV3<'a> = RawEvent<StartData<'a>>;
+raw_borrowed_event!(FormatDescriptionEvent, FormatDescriptionData);
 
-pub type FormatDescriptionEvent<'a> = RawEvent<FormatDescriptionData<'a>>;
-
-pub type QueryEvent<'a> = RawEvent<QueryData<'a>>;
+raw_borrowed_event!(QueryEvent, QueryData);
 
 raw_empty_event!(StopEvent);
 
-pub type RotateEvent<'a> = RawEvent<RotateData<'a>>;
+raw_borrowed_event!(RotateEvent, RotateData);
 
-pub type IntvarEvent = RawEvent<IntvarData>;
+raw_owned_event!(IntvarEvent, IntvarData);
 
-pub type LoadEvent<'a> = RawEvent<LoadData<'a>>;
+raw_borrowed_event!(LoadEvent, LoadData);
 
-pub type CreateFileEvent<'a> = RawEvent<CreateFileData<'a>>;
+raw_borrowed_event!(CreateFileEvent, CreateFileData);
 
-pub type AppendBlockEvent<'a> = RawEvent<AppendBlockData<'a>>;
+raw_borrowed_event!(AppendBlockEvent, AppendBlockData);
 
-pub type ExecLoadEvent = RawEvent<ExecLoadData>;
+raw_owned_event!(ExecLoadEvent, ExecLoadData);
 
-pub type DeleteFileEvent = RawEvent<DeleteFileData>;
+raw_owned_event!(DeleteFileEvent, DeleteFileData);
 
-pub type NewLoadEvent<'a> = RawEvent<NewLoadData<'a>>;
+raw_borrowed_event!(NewLoadEvent, NewLoadData);
 
-pub type BeginLoadQueryEvent<'a> = RawEvent<BeginLoadQueryData<'a>>;
+raw_borrowed_event!(BeginLoadQueryEvent, BeginLoadQueryData);
 
-pub type ExecuteLoadQueryEvent<'a> = RawEvent<ExecuteLoadQueryData<'a>>;
+raw_borrowed_event!(ExecuteLoadQueryEvent, ExecuteLoadQueryData);
 
-pub type RandEvent = RawEvent<RandData>;
+raw_owned_event!(RandEvent, RandData);
 
-pub type XidEvent = RawEvent<XidData>;
+raw_owned_event!(XidEvent, XidData);
 
-pub type UserVarEvent<'a> = RawEvent<UserVarData<'a>>;
+raw_borrowed_event!(UserVarEvent, UserVarData);
 
-pub type IncidentEvent<'a> = RawEvent<IncidentData<'a>>;
+raw_borrowed_event!(IncidentEvent, IncidentData);
 
 raw_empty_event!(HeartbeatEvent);
 
-pub type TableMapEvent<'a> = RawEvent<TableMapData<'a>>;
+raw_borrowed_event!(TableMapEvent, TableMapData);
 
 raw_borrowed_event!(WriteRowsEventV1, RowsDataV1);
 
@@ -275,7 +293,7 @@ raw_borrowed_event!(PreviousGtidsEvent, PreviousGtidsData);
 
 pub enum Event<'a> {
     // 1
-    StartEventV1(StartEventV3<'a>),
+    // StartEventV3(StartEventV3<'a>),
     // 2
     QueryEvent(QueryEvent<'a>),
     // 3

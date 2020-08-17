@@ -8,8 +8,9 @@ pub enum Error {
     InvalidCommandCode(u8),
     #[error("invalid column type code: {0}")]
     InvalidColumnTypeCode(u32),
-    // #[error("invalid gtid range: start={0}, end={1}, last={2}")]
-    // InvalidGtidRange(u64, u64, u64),
+    #[error("utf8 error: {0}")]
+    Utf8Error(#[from] std::string::FromUtf8Error),
     #[error("parse error: {0}")]
     ParseError(#[from] bytes_parser::error::Error),
+
 }

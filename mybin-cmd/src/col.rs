@@ -388,6 +388,7 @@ impl<'c> ReadWithContext<'_, 'c, ColumnValue> for [u8] {
                     LenEncStr::Null => (offset, ColumnValue::Null),
                     LenEncStr::Err => return Err(Error::ConstraintError("error column value".to_owned())),
                     LenEncStr::Ref(s) => (offset, ColumnValue::Decimal(Vec::from(s))),
+                    LenEncStr::Owned(s) => (offset, ColumnValue::Decimal(s)),
                 }
             }
             ColumnMetadata::Tiny { .. } => {
@@ -565,6 +566,7 @@ impl<'c> ReadWithContext<'_, 'c, ColumnValue> for [u8] {
                     LenEncStr::Null => (offset, ColumnValue::Null),
                     LenEncStr::Err => return Err(Error::ConstraintError("error decimal".to_owned())),
                     LenEncStr::Ref(s) => (offset, ColumnValue::Varchar(Vec::from(s))),
+                    LenEncStr::Owned(s) => (offset, ColumnValue::Varchar(s)),
                 }
             }
             ColumnMetadata::Bit { .. } => {
@@ -573,6 +575,7 @@ impl<'c> ReadWithContext<'_, 'c, ColumnValue> for [u8] {
                     LenEncStr::Null => (offset, ColumnValue::Null),
                     LenEncStr::Err => return Err(Error::ConstraintError("error bit".to_owned())),
                     LenEncStr::Ref(s) => (offset, ColumnValue::Bit(Vec::from(s))),
+                    LenEncStr::Owned(s) => (offset, ColumnValue::Bit(s)),
                 }
             }
             // Timestamp2,
@@ -585,6 +588,7 @@ impl<'c> ReadWithContext<'_, 'c, ColumnValue> for [u8] {
                     LenEncStr::Null => (offset, ColumnValue::Null),
                     LenEncStr::Err => return Err(Error::ConstraintError("error newdecimal".to_owned())),
                     LenEncStr::Ref(s) => (offset, ColumnValue::NewDecimal(Vec::from(s))),
+                    LenEncStr::Owned(s) => (offset, ColumnValue::NewDecimal(s)),
                 }
             }
             // Enum,
@@ -598,6 +602,7 @@ impl<'c> ReadWithContext<'_, 'c, ColumnValue> for [u8] {
                     LenEncStr::Null => (offset, ColumnValue::Null),
                     LenEncStr::Err => return Err(Error::ConstraintError("error newdecimal".to_owned())),
                     LenEncStr::Ref(s) => (offset, ColumnValue::Blob(Vec::from(s))),
+                    LenEncStr::Owned(s) => (offset, ColumnValue::Blob(s)),
                 }
             }
             ColumnMetadata::VarString { .. } => {
@@ -606,6 +611,7 @@ impl<'c> ReadWithContext<'_, 'c, ColumnValue> for [u8] {
                     LenEncStr::Null => (offset, ColumnValue::Null),
                     LenEncStr::Err => return Err(Error::ConstraintError("error newdecimal".to_owned())),
                     LenEncStr::Ref(s) => (offset, ColumnValue::VarString(Vec::from(s))),
+                    LenEncStr::Owned(s) => (offset, ColumnValue::VarString(s)),
                 }
             }
             ColumnMetadata::String { .. } => {
@@ -614,6 +620,7 @@ impl<'c> ReadWithContext<'_, 'c, ColumnValue> for [u8] {
                     LenEncStr::Null => (offset, ColumnValue::Null),
                     LenEncStr::Err => return Err(Error::ConstraintError("error newdecimal".to_owned())),
                     LenEncStr::Ref(s) => (offset, ColumnValue::String(Vec::from(s))),
+                    LenEncStr::Owned(s) => (offset, ColumnValue::String(s)),
                 }
             }
             ColumnMetadata::Geometry { .. } => {
@@ -622,6 +629,7 @@ impl<'c> ReadWithContext<'_, 'c, ColumnValue> for [u8] {
                     LenEncStr::Null => (offset, ColumnValue::Null),
                     LenEncStr::Err => return Err(Error::ConstraintError("error newdecimal".to_owned())),
                     LenEncStr::Ref(s) => (offset, ColumnValue::Geometry(Vec::from(s))),
+                    LenEncStr::Owned(s) => (offset, ColumnValue::Geometry(s)),
                 }
             }
         };
