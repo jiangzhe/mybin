@@ -212,7 +212,7 @@ impl<'c> ReadWithContext<'_, 'c, Row> for [u8] {
     fn read_with_ctx(&self, offset: usize, (n_cols, col_bm, col_metas): Self::Context) -> Result<(usize, Row)> {
         debug_assert_eq!(n_cols, col_metas.len());
         let mut cols = Vec::with_capacity(n_cols);
-        let mut offset = 0;
+        let mut offset = offset;
         for i in 0..n_cols {
             if bitmap_index(col_bm, i) {
                 let (os1, col_val) = self.read_with_ctx(offset, &col_metas[i])?;

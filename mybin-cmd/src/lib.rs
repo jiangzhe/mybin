@@ -5,7 +5,7 @@ mod query;
 mod packet;
 mod flag;
 mod checksum;
-mod event;
+mod binlog;
 mod util;
 mod col;
 mod handshake;

@@ -3,7 +3,7 @@ use bytes_parser::ReadFrom;
 use bytes_parser::number::ReadNumber;
 use bytes_parser::bytes::ReadBytes;
 use bytes_parser::error::{Error, Result};
-
+use bitflags::bitflags;
 
 /// Data of QueryEvent
 ///
@@ -205,156 +205,48 @@ impl ReadFrom<'_, QueryStatusVars> for [u8] {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct Flags2Code(pub u32);
-
-impl Flags2Code {
-    pub fn auto_is_null(self) -> bool {
-        (self.0 & 0x00004000) == 0x00004000
-    }
-
-    pub fn not_autocommit(self) -> bool {
-        (self.0 & 0x00080000) == 0x00080000
-    }
-
-    pub fn no_foreign_key_checks(self) -> bool {
-        (self.0 & 0x04000000) == 0x04000000
-    }
-
-    pub fn relaxed_unique_checks(self) -> bool {
-        (self.0 & 0x08000000) == 0x08000000
+bitflags! {
+    pub struct Flags2Code: u32 {
+        const AUTO_IS_NULL      = 0x0000_4000;
+        const NOT_AUTOCOMMIT    = 0x0008_0000;
+        const NO_FOREIGN_KEY_CHECKS = 0x0400_0000;
+        const RELAXED_UNIQUE_CHECKS = 0x0800_0000;
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct SqlModeCode(pub u64);
-
-impl SqlModeCode {
-    pub fn real_as_float(self) -> bool {
-        (self.0 & 0x00000001) == 0x00000001
-    }
-
-    pub fn pipes_as_concat(self) -> bool {
-        (self.0 & 0x00000002) == 0x00000002
-    }
-
-    pub fn ansi_quotes(self) -> bool {
-        (self.0 & 0x00000004) == 0x00000004
-    }
-
-    pub fn ignore_space(self) -> bool {
-        (self.0 & 0x00000008) == 0x00000008
-    }
-
-    pub fn not_used(self) -> bool {
-        (self.0 & 0x00000010) == 0x00000010
-    }
-
-    pub fn only_full_group_by(self) -> bool {
-        (self.0 & 0x00000020) == 0x00000020
-    }
-
-    pub fn no_unsigned_subtraction(self) -> bool {
-        (self.0 & 0x00000040) == 0x00000040
-    }
-
-    pub fn no_dir_in_create(self) -> bool {
-        (self.0 & 0x00000080) == 0x00000080
-    }
-
-    pub fn postgresql(self) -> bool {
-        (self.0 & 0x00000100) == 0x00000100
-    }
-
-    pub fn oracle(self) -> bool {
-        (self.0 & 0x00000200) == 0x00000200
-    }
-
-    pub fn mssql(self) -> bool {
-        (self.0 & 0x00000400) == 0x00000400
-    }
-
-    pub fn db2(self) -> bool {
-        (self.0 & 0x00000800) == 0x00000800
-    }
-
-    pub fn maxdb(self) -> bool {
-        (self.0 & 0x00001000) == 0x00001000
-    }
-
-    pub fn no_key_options(self) -> bool {
-        (self.0 & 0x00002000) == 0x00002000
-    }
-
-    pub fn no_table_options(self) -> bool {
-        (self.0 & 0x00004000) == 0x00004000
-    }
-
-    pub fn no_field_options(self) -> bool {
-        (self.0 & 0x00008000) == 0x00008000
-    }
-
-    pub fn mysql323(self) -> bool {
-        (self.0 & 0x00010000) == 0x00010000
-    }
-
-    pub fn mysql40(self) -> bool {
-        (self.0 & 0x00020000) == 0x00020000
-    }
-
-    pub fn ansi(self) -> bool {
-        (self.0 & 0x00040000) == 0x00040000
-    }
-
-    pub fn no_auto_value_on_zero(self) -> bool {
-        (self.0 & 0x00080000) == 0x00080000
-    }
-
-    pub fn no_backslash_escapes(self) -> bool {
-        (self.0 & 0x00100000) == 0x00100000
-    }
-
-    pub fn strict_trans_tables(self) -> bool {
-        (self.0 & 0x00200000) == 0x00200000
-    }
-
-    pub fn strict_all_tables(self) -> bool {
-        (self.0 & 0x00400000) == 0x00400000
-    }
-
-    pub fn no_zero_in_date(self) -> bool {
-        (self.0 & 0x00800000) == 0x00800000
-    }
-
-    pub fn no_zero_date(self) -> bool {
-        (self.0 & 0x01000000) == 0x01000000
-    }
-
-    pub fn invalid_dates(self) -> bool {
-        (self.0 & 0x02000000) == 0x02000000
-    }
-
-    pub fn error_for_division_by_zero(self) -> bool {
-        (self.0 & 0x04000000) == 0x04000000
-    }
-
-    pub fn tranditional(self) -> bool {
-        (self.0 & 0x08000000) == 0x08000000
-    }
-
-    pub fn no_auto_create_user(self) -> bool {
-        (self.0 & 0x10000000) == 0x10000000
-    }
-
-    pub fn high_not_precedence(self) -> bool {
-        (self.0 & 0x20000000) == 0x20000000
-    }
-
-    pub fn no_engine_substitution(self) -> bool {
-        (self.0 & 0x40000000) == 0x40000000
-    }
-
-    pub fn pad_char_to_full_length(self) -> bool {
-        (self.0 & 0x80000000) == 0x80000000
+bitflags! {
+    pub struct SqlModeCode: u64 {
+        const REAL_AS_FLOAT     = 0x0000_0001;
+        const PIPES_AS_CONCAT   = 0x0000_0002;
+        const ANSI_QUOTES       = 0x0000_0004;
+        const IGNORE_SPACE      = 0x0000_0008;
+        const NOT_USED          = 0x0000_0010;
+        const ONLY_FULL_GROUP_BY    = 0x0000_0020;
+        const NO_UNSIGNED_SUBTRACTION   = 0x0000_0040;
+        const NO_DIR_IN_CREATE  = 0x0000_0080;
+        const POSTGRESQL        = 0x0000_0100;
+        const ORACLE            = 0x0000_0200;
+        const MSSQL             = 0x0000_0400;
+        const DB2               = 0x0000_0800;
+        const MAXDB             = 0x0000_1000;
+        const NO_KEY_OPTIONS    = 0x0000_2000;
+        const NO_TABLE_OPTIONS  = 0x0000_4000;
+        const NO_FIELD_OPTIONS  = 0x0000_8000;
+        const MYSQL323          = 0x0001_0000;
+        const MYSQL40           = 0x0002_0000;
+        const ANSI              = 0x0004_0000;
+        const NO_AUTO_VALUE_ON_ZERO = 0x0008_0000;
+        const NO_BACKSLASH_ESCAPES  = 0x0010_0000;
+        const STRICT_TRANS_TABLES   = 0x0020_0000;
+        const STRICT_ALL_TABLES = 0x0040_0000;
+        const NO_ZERO_IN_DATE   = 0x0080_0000;
+        const NO_ZERO_DATE      = 0x0100_0000;
+        const INVALID_DATES     = 0x0200_0000;
+        const ERROR_FOR_DIVISION_BY_ZERO    = 0x0400_0000;
+        const TRANDITIONAL      = 0x0800_0000;
+        const NO_AUTO_CREATE_USER   = 0x1000_0000;
+        const HIGH_NOT_PRECEDENCE   = 0x2000_0000;
+        const NO_ENGINE_SUBSTITUTION    = 0x4000_0000;
+        const PAD_CHAR_TO_FULL_LENGTH   = 0x8000_0000;
     }
 }

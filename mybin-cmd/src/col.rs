@@ -419,14 +419,14 @@ impl<'c> ReadWithContext<'_, 'c, ColumnValue> for [u8] {
                 match len {
                     0 => (offset, ColumnValue::Null),
                     7 => {
-                        let (input, year) = self.read_le_u16(offset)?;
-                        let (input, month) = self.read_u8(offset)?;
-                        let (input, day) = self.read_u8(offset)?;
-                        let (input, hour) = self.read_u8(offset)?;
-                        let (input, minute) = self.read_u8(offset)?;
-                        let (input, second) = self.read_u8(offset)?;
+                        let (offset, year) = self.read_le_u16(offset)?;
+                        let (offset, month) = self.read_u8(offset)?;
+                        let (offset, day) = self.read_u8(offset)?;
+                        let (offset, hour) = self.read_u8(offset)?;
+                        let (offset, minute) = self.read_u8(offset)?;
+                        let (offset, second) = self.read_u8(offset)?;
                         (
-                            input,
+                            offset,
                             ColumnValue::Timestamp {
                                 year,
                                 month,
@@ -663,8 +663,4 @@ pub struct ColumnDefinition<'a> {
     // 2-byte filler
     // len-enc-str, if COM_FIELD_LIST
     pub default_values: &'a [u8],
-}
-
-fn parse_column_definition<'a>(input: &'a [u8]) -> Result<ColumnDefinition<'a>> {
-    todo!()
 }

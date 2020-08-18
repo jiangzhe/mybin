@@ -13,9 +13,9 @@ mod rand;
 mod xid;
 mod incident;
 mod util;
+mod parser;
 
-// use crate::data::*;
-use crate::{raw_owned_event, raw_borrowed_event, raw_empty_event};
+use crate::raw_event;
 use header::{EventHeader, EventHeaderV1};
 use fde::{StartData, FormatDescriptionData};
 use query::QueryData;
@@ -30,8 +30,6 @@ use incident::IncidentData;
 use table_map::TableMapData;
 use rows_v1::RowsDataV1;
 use rows_v2::RowsDataV2;
-// use crate::table_map::TableMapData;
-// use crate::user_var::UserVarData;
 use bytes_parser::{ReadFrom, ReadWithContext};
 use bytes_parser::bytes::ReadBytes;
 use bytes_parser::number::ReadNumber;
@@ -233,63 +231,82 @@ pub struct RawEvent<D> {
     pub crc32: u32,
 }
 
-raw_borrowed_event!(StartEventV3, StartData);
+raw_event!(StartEventV3, StartData, 'a);
 
-raw_borrowed_event!(FormatDescriptionEvent, FormatDescriptionData);
+pub struct FormatDescriptionEvent<'a>(FormatDescriptionData<'a>);
 
-raw_borrowed_event!(QueryEvent, QueryData);
+impl<'a> std::ops::Deref for FormatDescriptionEvent<'a> {
+    type Target = FormatDescriptionData<'a>;
 
-raw_empty_event!(StopEvent);
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
-raw_borrowed_event!(RotateEvent, RotateData);
+/// implements FormatDescriptionEvent because we need to retrieve
+/// checksum flag from this event
+impl<'a> ReadFrom<'a, FormatDescriptionEvent<'a>> for [u8] {
+    fn read_from(&'a self, offset: usize) -> Result<(usize, FormatDescriptionEvent<'a>)> {
+        let (offset, header): (_, EventHeader) = self.read_from(offset)?;
+        let (offset, data) = self.take_len(offset, header.data_len() as usize)?;
+        let (_, fde) = data.read_from(0)?;
+        Ok((offset, fde))
+    }
+}
 
-raw_owned_event!(IntvarEvent, IntvarData);
+raw_event!(QueryEvent, QueryData, 'a);
 
-raw_borrowed_event!(LoadEvent, LoadData);
+raw_event!(StopEvent);
 
-raw_borrowed_event!(CreateFileEvent, CreateFileData);
+raw_event!(RotateEvent, RotateData, 'a);
 
-raw_borrowed_event!(AppendBlockEvent, AppendBlockData);
+raw_event!(IntvarEvent, IntvarData);
 
-raw_owned_event!(ExecLoadEvent, ExecLoadData);
+raw_event!(LoadEvent, LoadData, 'a);
 
-raw_owned_event!(DeleteFileEvent, DeleteFileData);
+raw_event!(CreateFileEvent, CreateFileData, 'a);
 
-raw_borrowed_event!(NewLoadEvent, NewLoadData);
+raw_event!(AppendBlockEvent, AppendBlockData, 'a);
 
-raw_borrowed_event!(BeginLoadQueryEvent, BeginLoadQueryData);
+raw_event!(ExecLoadEvent, ExecLoadData);
 
-raw_borrowed_event!(ExecuteLoadQueryEvent, ExecuteLoadQueryData);
+raw_event!(DeleteFileEvent, DeleteFileData);
 
-raw_owned_event!(RandEvent, RandData);
+raw_event!(NewLoadEvent, NewLoadData, 'a);
 
-raw_owned_event!(XidEvent, XidData);
+raw_event!(BeginLoadQueryEvent, BeginLoadQueryData, 'a);
 
-raw_borrowed_event!(UserVarEvent, UserVarData);
+raw_event!(ExecuteLoadQueryEvent, ExecuteLoadQueryData, 'a);
 
-raw_borrowed_event!(IncidentEvent, IncidentData);
+raw_event!(RandEvent, RandData);
 
-raw_empty_event!(HeartbeatEvent);
+raw_event!(XidEvent, XidData);
 
-raw_borrowed_event!(TableMapEvent, TableMapData);
+raw_event!(UserVarEvent, UserVarData, 'a);
 
-raw_borrowed_event!(WriteRowsEventV1, RowsDataV1);
+raw_event!(IncidentEvent, IncidentData, 'a);
 
-raw_borrowed_event!(UpdateRowsEventV1, RowsDataV1);
+raw_event!(HeartbeatEvent);
 
-raw_borrowed_event!(DeleteRowsEventV1, RowsDataV1);
+raw_event!(TableMapEvent, TableMapData, 'a);
 
-raw_borrowed_event!(WriteRowsEventV2, RowsDataV2);
+raw_event!(WriteRowsEventV1, RowsDataV1, 'a);
 
-raw_borrowed_event!(UpdateRowsEventV2, RowsDataV2);
+raw_event!(UpdateRowsEventV1, RowsDataV1, 'a);
 
-raw_borrowed_event!(DeleteRowsEventV2, RowsDataV2);
+raw_event!(DeleteRowsEventV1, RowsDataV1, 'a);
 
-raw_owned_event!(GtidEvent, GtidData);
+raw_event!(WriteRowsEventV2, RowsDataV2, 'a);
 
-raw_owned_event!(AnonymousGtidEvent, GtidData);
+raw_event!(UpdateRowsEventV2, RowsDataV2, 'a);
 
-raw_borrowed_event!(PreviousGtidsEvent, PreviousGtidsData);
+raw_event!(DeleteRowsEventV2, RowsDataV2, 'a);
+
+raw_event!(GtidEvent, GtidData);
+
+raw_event!(AnonymousGtidEvent, GtidData);
+
+raw_event!(PreviousGtidsEvent, PreviousGtidsData, 'a);
 
 pub enum Event<'a> {
     // 1
@@ -351,3 +368,4 @@ pub enum Event<'a> {
     // 35
     PreviousGtidsEvent(PreviousGtidsEvent<'a>),
 }
+
