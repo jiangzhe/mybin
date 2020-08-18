@@ -1,7 +1,7 @@
 use bytes_parser::error::Result;
 use bytes_parser::number::ReadNumber;
 use bytes_parser::bytes::ReadBytes;
-use bytes_parser::ReadAs;
+use bytes_parser::ReadFrom;
 
 /// Data of LoadEvent
 ///
@@ -29,8 +29,8 @@ pub struct LoadData<'a> {
     pub file_name: &'a [u8],
 }
 
-impl<'a> ReadAs<'a, LoadData<'a>> for [u8] {
-    fn read_as(&'a self, offset: usize) -> Result<(usize, LoadData<'a>)> {
+impl<'a> ReadFrom<'a, LoadData<'a>> for [u8] {
+    fn read_from(&'a self, offset: usize) -> Result<(usize, LoadData<'a>)> {
         let (offset, slave_proxy_id) = self.read_le_u32(offset)?;
         let (offset, exec_time) = self.read_le_u32(offset)?;
         let (offset, skip_lines) = self.read_le_u32(offset)?;
@@ -91,8 +91,8 @@ pub struct CreateFileData<'a> {
     pub block_data: &'a [u8],
 }
 
-impl<'a> ReadAs<'a, CreateFileData<'a>> for [u8] {
-    fn read_as(&'a self, offset: usize) -> Result<(usize, CreateFileData<'a>)> {
+impl<'a> ReadFrom<'a, CreateFileData<'a>> for [u8] {
+    fn read_from(&'a self, offset: usize) -> Result<(usize, CreateFileData<'a>)> {
         let (offset, file_id) = self.read_le_u32(offset)?;
         let (offset, bd) = self.take_len(offset, self.len() - offset)?;
         let (_, block_data) = bd.take_until(0, 0, false)?;
@@ -116,8 +116,8 @@ pub struct AppendBlockData<'a> {
     pub block_data: &'a [u8],
 }
 
-impl<'a> ReadAs<'a, AppendBlockData<'a>> for [u8] {
-    fn read_as(&'a self, offset: usize) -> Result<(usize, AppendBlockData<'a>)> {
+impl<'a> ReadFrom<'a, AppendBlockData<'a>> for [u8] {
+    fn read_from(&'a self, offset: usize) -> Result<(usize, AppendBlockData<'a>)> {
         let (offset, file_id) = self.read_le_u32(offset)?;
         let (offset, bd) = self.take_len(offset, self.len() - offset)?;
         let (_, block_data) = bd.take_until(0, 0, false)?;
@@ -139,8 +139,8 @@ pub struct ExecLoadData {
     pub file_id: u32,
 }
 
-impl ReadAs<'_, ExecLoadData> for [u8] {
-    fn read_as(&self, offset: usize) -> Result<(usize, ExecLoadData)> {
+impl ReadFrom<'_, ExecLoadData> for [u8] {
+    fn read_from(&self, offset: usize) -> Result<(usize, ExecLoadData)> {
         let (offset, file_id) = self.read_le_u32(offset)?;
         debug_assert_eq!(self.len(), offset);
         Ok((offset, ExecLoadData { file_id }))
@@ -155,8 +155,8 @@ pub struct DeleteFileData {
     pub file_id: u32,
 }
 
-impl ReadAs<'_, DeleteFileData> for [u8] {
-    fn read_as(&self, offset: usize) -> Result<(usize, DeleteFileData)> {
+impl ReadFrom<'_, DeleteFileData> for [u8] {
+    fn read_from(&self, offset: usize) -> Result<(usize, DeleteFileData)> {
         let (offset, file_id) = self.read_le_u32(offset)?;
         debug_assert_eq!(self.len(), offset);
         Ok((offset, DeleteFileData { file_id }))
@@ -193,8 +193,8 @@ pub struct NewLoadData<'a> {
     pub file_name: &'a [u8],
 }
 
-impl<'a> ReadAs<'a, NewLoadData<'a>> for [u8] {
-    fn read_as(&'a self, offset: usize) -> Result<(usize, NewLoadData<'a>)> {
+impl<'a> ReadFrom<'a, NewLoadData<'a>> for [u8] {
+    fn read_from(&'a self, offset: usize) -> Result<(usize, NewLoadData<'a>)> {
         let (offset, slave_proxy_id) = self.read_le_u32(offset)?;
         let (offset, exec_time) = self.read_le_u32(offset)?;
         let (offset, skip_lines) = self.read_le_u32(offset)?;
@@ -222,10 +222,10 @@ impl<'a> ReadAs<'a, NewLoadData<'a>> for [u8] {
         let (offset, sn) = self.take_len(offset, schema_len as usize + 1)?;
         let (_, schema_name) = sn.take_until(0, 0, false)?;
 
-        let (input, fn_in) = self.take_len(offset, self.len() - offset)?;
+        let (offset, fn_in) = self.take_len(offset, self.len() - offset)?;
         let (_, file_name) = fn_in.take_until(0, 0, false)?;
         Ok((
-            input,
+            offset,
             NewLoadData {
                 slave_proxy_id,
                 exec_time,
@@ -264,8 +264,8 @@ pub struct BeginLoadQueryData<'a> {
     pub block_data: &'a [u8],
 }
 
-impl<'a> ReadAs<'a, BeginLoadQueryData<'a>> for [u8] {
-    fn read_as(&'a self, offset: usize) -> Result<(usize, BeginLoadQueryData<'a>)> {
+impl<'a> ReadFrom<'a, BeginLoadQueryData<'a>> for [u8] {
+    fn read_from(&'a self, offset: usize) -> Result<(usize, BeginLoadQueryData<'a>)> {
         let (offset, file_id) = self.read_le_u32(offset)?;
         let (offset, block_data) = self.take_len(offset, self.len() - offset)?;
         Ok((
@@ -300,8 +300,8 @@ pub struct ExecuteLoadQueryData<'a> {
     pub payload: &'a [u8],
 }
 
-impl<'a> ReadAs<'a, ExecuteLoadQueryData<'a>> for [u8] {
-    fn read_as(&'a self, offset: usize) -> Result<(usize, ExecuteLoadQueryData<'a>)> {
+impl<'a> ReadFrom<'a, ExecuteLoadQueryData<'a>> for [u8] {
+    fn read_from(&'a self, offset: usize) -> Result<(usize, ExecuteLoadQueryData<'a>)> {
         let (offset, slave_proxy_id) = self.read_le_u32(offset)?;
         let (offset, execution_time) = self.read_le_u32(offset)?;
         let (offset, schema_length) = self.read_u8(offset)?;
@@ -311,9 +311,9 @@ impl<'a> ReadAs<'a, ExecuteLoadQueryData<'a>> for [u8] {
         let (offset, start_pos) = self.read_le_u32(offset)?;
         let (offset, end_pos) = self.read_le_u32(offset)?;
         let (offset, dup_handling_flags) = self.read_u8(offset)?;
-        let (input, payload) = self.take_len(offset, self.len() - offset)?;
+        let (offset, payload) = self.take_len(offset, self.len() - offset)?;
         Ok((
-            input,
+            offset,
             ExecuteLoadQueryData {
                 slave_proxy_id,
                 execution_time,

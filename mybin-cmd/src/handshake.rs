@@ -1,10 +1,10 @@
 use crate::flag::*;
 use bytes_parser::my::LenEncInt;
-use bytes_parser::ReadAs;
+use bytes_parser::ReadFrom;
 use bytes_parser::number::ReadNumber;
 use bytes_parser::bytes::ReadBytes;
 use bytes_parser::error::Result;
-use bytes_parser::ToBytes;
+use bytes_parser::WriteTo;
 
 /// used for placeholder for optional part in payload
 const EMPTY_BYTE_ARRAY: [u8; 0] = [];
@@ -27,9 +27,9 @@ pub struct InitialHandshake<'a> {
     pub auth_plugin_name: &'a [u8],
 }
 
-impl<'a> ReadAs<'a, InitialHandshake<'a>> for [u8] {
-    fn read_as(&'a self, offset: usize) -> Result<(usize, InitialHandshake<'a>)> {
-        let (input, protocol_version) = self.read_u8(offset)?;
+impl<'a> ReadFrom<'a, InitialHandshake<'a>> for [u8] {
+    fn read_from(&'a self, offset: usize) -> Result<(usize, InitialHandshake<'a>)> {
+        let (offset, protocol_version) = self.read_u8(offset)?;
         let (offset, server_version) = self.take_until(offset, 0, false)?;
         let (offset, _) = self.take_len(offset, 1)?;
         let (offset, connection_id) = self.read_le_u32(offset)?;
@@ -97,56 +97,59 @@ pub struct HandshakeClientResponse41 {
     pub connect_attrs: Vec<ConnectAttr>,
 }
 
-impl ToBytes for HandshakeClientResponse41 {
+impl WriteTo<'_, HandshakeClientResponse41> for Vec<u8> {
     /// generate response bytes to send to server
-    fn to_bytes(&self) -> Vec<u8> {
-        let mut rst = Vec::new();
+    fn write_to(&mut self, val: HandshakeClientResponse41) -> Result<usize> {
+        use bytes_parser::number::WriteNumber;
+        let mut len = 0;
         // capability falgs 0:4
-        rst.extend(&self.capability_flags.bits().to_le_bytes()[..]);
+        len += self.write_le_u32(val.capability_flags.bits())?;
         // max packet size 4:8
-        rst.extend(&self.max_packet_size.to_le_bytes()[..]);
+        len += self.write_le_u32(val.max_packet_size)?;
         // character set 8:9
-        rst.push(self.character_set);
+        len += self.write_u8(val.character_set)?;
         // reserved 23 bytes 9:32
-        rst.extend(std::iter::repeat(0u8).take(23));
+        self.extend(std::iter::repeat(0u8).take(23));
+        len += 23;
         // null-terminated username
-        rst.extend(self.username.as_bytes());
-        rst.push(0);
+        len += self.write_to(&val.username.as_bytes())?;
+        len += self.write_u8(0)?;
         // len-encoded auth response
-        let auth_response_len = LenEncInt::from(self.auth_response.len() as u64);
-        rst.extend(auth_response_len.to_bytes());
+        let auth_response_len = LenEncInt::from(val.auth_response.len() as u64);
+        len += self.write_to(auth_response_len)?;
+        len += self.write_to(&val.auth_response)?;
         // null-terminated database if connect with db
-        if self
+        if val
             .capability_flags
             .contains(CapabilityFlags::CONNECT_WITH_DB)
         {
-            rst.extend(self.database.as_bytes());
-            rst.push(0);
+            len += self.write_to(&val.database.as_bytes())?;
+            len += self.write_u8(0)?;
         }
         // null-terminated plugin name
-        if self.capability_flags.contains(CapabilityFlags::PLUGIN_AUTH) {
-            rst.extend(self.auth_plugin_name.as_bytes());
-            rst.push(0);
+        if val.capability_flags.contains(CapabilityFlags::PLUGIN_AUTH) {
+            len += self.write_to(&val.auth_plugin_name.as_bytes())?;
+            len += self.write_u8(0)?;
         }
-        if self
+        if val
             .capability_flags
             .contains(CapabilityFlags::CONNECT_ATTRS)
         {
             let mut lb = Vec::new();
-            for attr in &self.connect_attrs {
+            for attr in &val.connect_attrs {
                 let klen = LenEncInt::from(attr.key.len() as u64);
-                lb.extend(klen.to_bytes());
-                lb.extend(attr.key.as_bytes());
+                lb.write_to(klen)?;
+                lb.write_to(&attr.key.as_bytes())?;
                 let vlen = LenEncInt::from(attr.value.len() as u64);
-                lb.extend(vlen.to_bytes());
-                lb.extend(attr.value.as_bytes());
+                lb.write_to(vlen)?;
+                lb.write_to(&attr.value.as_bytes())?;
             }
             // use len-enc-int here
             let lblen = LenEncInt::from(lb.len() as u64);
-            rst.extend(lblen.to_bytes());
-            rst.extend(lb);
+            len += self.write_to(lblen)?;
+            len += self.write_to(&lb)?;
         }
-        rst
+        Ok(len)
     }
 }
 
@@ -182,8 +185,8 @@ mod tests {
 
     #[test]
     fn test_read_handshake_packet() {
-        let (_, pkt): (_, Packet) = packet_data.read_as(0).unwrap();
-        let (offset, handshake): (_, InitialHandshake) = pkt.payload.read_as(0).unwrap();
+        let (_, pkt): (_, Packet) = packet_data.read_from(0).unwrap();
+        let (offset, handshake): (_, InitialHandshake) = pkt.payload.read_from(0).unwrap();
         assert_eq!(pkt.payload.len(), offset);
         dbg!(&handshake);
         println!(

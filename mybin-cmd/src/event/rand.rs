@@ -1,6 +1,6 @@
 use bytes_parser::error::Result;
 use bytes_parser::number::ReadNumber;
-use bytes_parser::ReadAs;
+use bytes_parser::ReadFrom;
 
 /// Data of RandEvent
 ///
@@ -11,8 +11,8 @@ pub struct RandData {
     pub seed2: u64,
 }
 
-impl ReadAs<'_, RandData> for [u8] {
-    fn read_as(&self, offset: usize) -> Result<(usize, RandData)> {
+impl ReadFrom<'_, RandData> for [u8] {
+    fn read_from(&self, offset: usize) -> Result<(usize, RandData)> {
         let (offset, seed1) = self.read_le_u64(offset)?;
         let (offset, seed2) = self.read_le_u64(offset)?;
         Ok((offset, RandData { seed1, seed2 }))

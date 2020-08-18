@@ -1,5 +1,5 @@
 use crate::col::*;
-use bytes_parser::ReadAs;
+use bytes_parser::ReadFrom;
 use bytes_parser::number::ReadNumber;
 use bytes_parser::bytes::ReadBytes;
 use bytes_parser::my::ReadMyEncoding;
@@ -22,11 +22,11 @@ pub struct TableMapData<'a> {
     pub payload: &'a [u8],
 }
 
-impl<'a> ReadAs<'a, TableMapData<'a>> for [u8] {
-    fn read_as(&'a self, offset: usize) -> Result<(usize, TableMapData<'a>)> {
+impl<'a> ReadFrom<'a, TableMapData<'a>> for [u8] {
+    fn read_from(&'a self, offset: usize) -> Result<(usize, TableMapData<'a>)> {
         let (offset, table_id) = self.read_le_u48(offset)?;
         let (offset, flags) = self.read_le_u16(offset)?;
-        let (input, payload) = self.take_len(offset, self.len() - offset as usize)?;
+        let (offset, payload) = self.take_len(offset, self.len() - offset as usize)?;
         Ok((
             offset,
             TableMapData {
@@ -40,7 +40,7 @@ impl<'a> ReadAs<'a, TableMapData<'a>> for [u8] {
 
 impl<'a> TableMapData<'a> {
     pub fn raw_table_map(&self) -> crate::error::Result<RawTableMap<'a>> {
-        let (_, rtm) = self.payload.read_as(0)?;
+        let (_, rtm) = self.payload.read_from(0)?;
         Ok(rtm)
     }
 
@@ -61,8 +61,8 @@ pub struct RawTableMap<'a> {
 }
 
 /// reference: https://github.com/mysql/mysql-server/blob/5.7/libbinlogevents/include/rows_event.h
-impl<'a> ReadAs<'a, RawTableMap<'a>> for [u8] {
-    fn read_as(&'a self, offset: usize) -> Result<(usize, RawTableMap<'a>)> {
+impl<'a> ReadFrom<'a, RawTableMap<'a>> for [u8] {
+    fn read_from(&'a self, offset: usize) -> Result<(usize, RawTableMap<'a>)> {
         let (offset, schema_name_len) = self.read_u8(offset)?;
         let (offset, schema_name) = self.take_len(offset, schema_name_len as usize)?;
         let (offset, _) = self.take_len(offset, 1)?;

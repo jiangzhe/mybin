@@ -2,7 +2,7 @@
 use bytes_parser::error::Result;
 use bytes_parser::number::ReadNumber;
 use bytes_parser::bytes::ReadBytes;
-use bytes_parser::ReadAs;
+use bytes_parser::ReadFrom;
 
 /// Data of DeleteRowsEventV1, UpdateRowsEventV1, WriteRowsEventV1
 ///
@@ -18,8 +18,8 @@ pub struct RowsDataV1<'a> {
     pub payload: &'a [u8],
 }
 
-impl<'a> ReadAs<'a, RowsDataV1<'a>> for [u8] {
-    fn read_as(&'a self, offset: usize) -> Result<(usize, RowsDataV1<'a>)> {
+impl<'a> ReadFrom<'a, RowsDataV1<'a>> for [u8] {
+    fn read_from(&'a self, offset: usize) -> Result<(usize, RowsDataV1<'a>)> {
         let (offset, table_id) = self.read_le_u48(offset)?;
         let (offset, flags) = self.read_le_u16(offset)?;
         let (offset, payload) = self.take_len(offset, self.len() - offset)?;

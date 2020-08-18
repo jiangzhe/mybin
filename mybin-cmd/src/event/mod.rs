@@ -32,7 +32,7 @@ use rows_v1::RowsDataV1;
 use rows_v2::RowsDataV2;
 // use crate::table_map::TableMapData;
 // use crate::user_var::UserVarData;
-use bytes_parser::{ReadAs, ReadWithContext};
+use bytes_parser::{ReadFrom, ReadWithContext};
 use bytes_parser::bytes::ReadBytes;
 use bytes_parser::number::ReadNumber;
 use bytes_parser::error::Result;
@@ -194,8 +194,8 @@ impl From<LogEventType> for LogEventTypeCode {
 /// fast event type parsing
 ///
 /// input must start at the beginning of an event
-impl ReadAs<'_, LogEventType> for [u8] {
-    fn read_as(&self, offset: usize) -> Result<(usize, LogEventType)> {
+impl ReadFrom<'_, LogEventType> for [u8] {
+    fn read_from(&self, offset: usize) -> Result<(usize, LogEventType)> {
         let (offset, _) = self.take_len(offset, 4)?;
         let (offset, type_code) = self.read_u8(offset)?;
         Ok((offset, LogEventType::from(type_code)))
@@ -208,8 +208,8 @@ pub struct EventLength(pub u32);
 /// fast event length parsing
 ///
 /// input must start at the beginning of an event
-impl ReadAs<'_, EventLength> for [u8] {
-    fn read_as(&self, offset: usize) -> Result<(usize, EventLength)> {
+impl ReadFrom<'_, EventLength> for [u8] {
+    fn read_from(&self, offset: usize) -> Result<(usize, EventLength)> {
         let (offset, _) = self.take_len(offset, 9)?;
         let (offset, event_length) = self.read_le_u32(offset)?;
         Ok((offset, EventLength(event_length)))

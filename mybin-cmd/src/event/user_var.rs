@@ -1,5 +1,5 @@
 use bytes_parser::error::Result;
-use bytes_parser::ReadAs;
+use bytes_parser::ReadFrom;
 use bytes_parser::number::ReadNumber;
 use bytes_parser::bytes::ReadBytes;
 
@@ -15,8 +15,8 @@ pub struct UserVarData<'a> {
     pub value: &'a [u8],
 }
 
-impl<'a> ReadAs<'a, UserVarData<'a>> for [u8] {
-    fn read_as(&'a self, offset: usize) -> Result<(usize, UserVarData<'a>)> {
+impl<'a> ReadFrom<'a, UserVarData<'a>> for [u8] {
+    fn read_from(&'a self, offset: usize) -> Result<(usize, UserVarData<'a>)> {
         let (offset, name_length) = self.read_le_u32(offset)?;
         let (offset, name) = self.take_len(offset, name_length as usize)?;
         let (offset, is_null) = self.read_u8(offset)?;
@@ -44,8 +44,8 @@ pub struct UserVarValue<'a> {
 }
 
 // todo: extract meaningful value from value byte arrary
-impl<'a> ReadAs<'a, UserVarValue<'a>> for [u8] {
-    fn read_as(&'a self, offset: usize) -> Result<(usize, UserVarValue<'a>)> {
+impl<'a> ReadFrom<'a, UserVarValue<'a>> for [u8] {
+    fn read_from(&'a self, offset: usize) -> Result<(usize, UserVarValue<'a>)> {
         let (offset, value_type) = self.read_u8(offset)?;
         let (offset, charset_num) = self.read_le_u32(offset)?;
         let (offset, value_len) = self.read_le_u32(offset)?;

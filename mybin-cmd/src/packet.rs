@@ -1,6 +1,6 @@
 use crate::flag::*;
 use bytes_parser::error::{Result, Error, Needed};
-use bytes_parser::{ReadAs, ReadWithContext};
+use bytes_parser::{ReadFrom, ReadWithContext};
 use bytes_parser::bytes::ReadBytes;
 use bytes_parser::number::ReadNumber;
 use bytes_parser::my::ReadMyEncoding;
@@ -16,8 +16,8 @@ pub struct Packet<'a> {
     pub payload: &'a [u8],
 }
 
-impl<'a> ReadAs<'a, Packet<'a>> for [u8] {
-    fn read_as(&'a self, offset: usize) -> Result<(usize, Packet<'a>)> {
+impl<'a> ReadFrom<'a, Packet<'a>> for [u8] {
+    fn read_from(&'a self, offset: usize) -> Result<(usize, Packet<'a>)> {
         let (offset, payload_len) = self.read_le_u24(offset)?;
         let (offset, seq_id) = self.read_u8(offset)?;
         let (offset, payload) = self.take_len(offset, payload_len as usize)?;
@@ -235,11 +235,11 @@ mod tests {
     const packet_data: &[u8] = include_bytes!("../data/packet.dat");
 
     use super::*;
-    use bytes_parser::ReadAs;
+    use bytes_parser::ReadFrom;
 
     #[test]
     fn test_packet() {
-        let (offset, pkt): (_, Packet<'_>) = packet_data.read_as(0).unwrap();
+        let (offset, pkt): (_, Packet<'_>) = packet_data.read_from(0).unwrap();
         assert_eq!(packet_data.len(), offset);
         dbg!(pkt);
     }

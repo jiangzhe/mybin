@@ -2,7 +2,7 @@
 use crate::col::{ColumnMetadata, ColumnValue};
 // use crate::error::Error;
 use crate::util::bitmap_index;
-use bytes_parser::{ReadAs, ReadWithContext};
+use bytes_parser::{ReadFrom, ReadWithContext};
 use bytes_parser::number::ReadNumber;
 use bytes_parser::bytes::ReadBytes;
 use bytes_parser::my::ReadMyEncoding;
@@ -53,14 +53,14 @@ impl<'a> RowsDataV2<'a> {
 
     fn raw_rows(&self, update: bool) -> Result<RawRowsV2<'a>> {
         // extra_data_len - 2 is the length of extra data
-        let (input, raw_rows) = self.payload.read_with_ctx(0, (self.extra_data_len - 2, update))?;
+        let (_, raw_rows) = self.payload.read_with_ctx(0, (self.extra_data_len - 2, update))?;
         Ok(raw_rows)
     }
 }
 
-impl<'a> ReadAs<'a, RowsDataV2<'a>> for [u8] {
+impl<'a> ReadFrom<'a, RowsDataV2<'a>> for [u8] {
     
-    fn read_as(&'a self, offset: usize) -> Result<(usize, RowsDataV2<'a>)> {
+    fn read_from(&'a self, offset: usize) -> Result<(usize, RowsDataV2<'a>)> {
         let (offset, table_id) = self.read_le_u48(offset)?;
         let (offset, flags) = self.read_le_u16(offset)?;
         let (offset, extra_data_len) = self.read_le_u16(offset)?;
@@ -241,15 +241,4 @@ mod tests {
         let bmx = bm1 ^ bm2;
         dbg!(bmx);
     }
-
-    // #[test]
-    // fn test_field_types() {
-    //     use nom::error::VerboseError;
-    //     let input: [u8; 4] = [0x33, 0x33, 0x23, 0x41];
-    //     let (_, v) = nom::number::streaming::le_f32::<VerboseError<_>>(&input).unwrap();
-    //     println!("{}", v);
-    //     let input: [u8; 8] = [0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x24, 0x40];
-    //     let (_, v) = nom::number::streaming::le_f64::<VerboseError<_>>(&input).unwrap();
-    //     println!("{}", v);
-    // }
 }

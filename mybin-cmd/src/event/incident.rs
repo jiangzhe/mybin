@@ -1,7 +1,7 @@
 use bytes_parser::error::Result;
 use bytes_parser::number::ReadNumber;
 use bytes_parser::bytes::ReadBytes;
-use bytes_parser::ReadAs;
+use bytes_parser::ReadFrom;
 
 /// Data of IncidentEvent
 ///
@@ -15,8 +15,8 @@ pub struct IncidentData<'a> {
     pub message: &'a [u8],
 }
 
-impl<'a> ReadAs<'a, IncidentData<'a>> for [u8] {
-    fn read_as(&'a self, offset: usize) -> Result<(usize, IncidentData<'a>)> {
+impl<'a> ReadFrom<'a, IncidentData<'a>> for [u8] {
+    fn read_from(&'a self, offset: usize) -> Result<(usize, IncidentData<'a>)> {
         let (offset, incident_type) = self.read_le_u16(offset)?;
         let (offset, message_length) = self.read_u8(offset)?;
         let (offset, message) = self.take_len(offset, message_length as usize)?;

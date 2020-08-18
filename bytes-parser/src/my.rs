@@ -1,6 +1,6 @@
 use crate::error::{Result, Error, Needed};
 use crate::number::ReadNumber;
-use crate::ToBytes;
+use crate::WriteTo;
 
 /// read MySQL encoded types
 pub trait ReadMyEncoding {
@@ -86,31 +86,41 @@ impl LenEncInt {
     }
 }
 
-impl ToBytes for LenEncInt {
-    fn to_bytes(&self) -> Vec<u8> {
-        match self {
-            LenEncInt::Null => vec![0xfb],
-            LenEncInt::Err => vec![0xff],
-            LenEncInt::Len1(n) => vec![*n],
+impl WriteTo<'_, LenEncInt> for Vec<u8> {
+    fn write_to(&mut self, val: LenEncInt) -> Result<usize> {
+        let len = match val {
+            LenEncInt::Null => {
+                self.push(0xfb);
+                1
+            },
+            LenEncInt::Err => {
+                self.push(0xff);
+                1
+            },
+            LenEncInt::Len1(n) => {
+                self.push(n);
+                1
+            },
             LenEncInt::Len3(n) => {
-                let mut bs = Vec::with_capacity(3);
-                bs.push(0xfc);
-                bs.extend(&n.to_le_bytes());
-                bs
+                self.reserve(3);
+                self.push(0xfc);
+                self.extend(&n.to_le_bytes());
+                3
             },
             LenEncInt::Len4(n) => {
-                let mut bs = Vec::with_capacity(3);
-                bs.push(0xfd);
-                bs.extend(&n.to_le_bytes()[..3]);
-                bs
+                self.reserve(4);
+                self.push(0xfd);
+                self.extend(&n.to_le_bytes()[..3]);
+                4
             },
             LenEncInt::Len9(n) => {
-                let mut bs = Vec::with_capacity(3);
-                bs.push(0xfe);
-                bs.extend(&n.to_le_bytes());
-                bs
+                self.reserve(9);
+                self.push(0xfe);
+                self.extend(&n.to_le_bytes());
+                9
             },
-        }
+        };
+        Ok(len)
     }
 }
 
@@ -169,27 +179,34 @@ impl<'a> LenEncStr<'a> {
     }
 }
 
-impl ToBytes for LenEncStr<'_> {
+impl<'a> WriteTo<'a, LenEncStr<'a>> for Vec<u8> {
 
-    fn to_bytes(&self) -> Vec<u8> {
-        match self {
-            LenEncStr::Null => vec![0xfb],
-            LenEncStr::Err => vec![0xff],
+    fn write_to(&mut self, val: LenEncStr) -> Result<usize> {
+        let len = match val {
+            LenEncStr::Null => {
+                self.push(0xfb);
+                1
+            },
+            LenEncStr::Err => {
+                self.push(0xff);
+                1
+            },
             LenEncStr::Ref(r) => {
                 let len = r.len() as u64;
                 let lei: LenEncInt = len.into();
-                let mut bs = lei.to_bytes();
-                bs.extend(&r[..]);
-                bs
+                let lei_len = self.write_to(lei)?;
+                self.extend(&r[..]);
+                lei_len + len as usize
             }
             LenEncStr::Owned(o) => {
                 let len = o.len() as u64;
                 let lei: LenEncInt = len.into();
-                let mut bs = lei.to_bytes();
-                bs.extend(&o[..]);
-                bs
+                let lei_len = self.write_to(lei)?;
+                self.extend(&o[..]);
+                lei_len + len as usize
             }
-        }
+        };
+        Ok(len)
     }
 }
 
@@ -243,7 +260,7 @@ mod tests {
         assert_eq!(LenEncInt::Len1(0x0a), lei);
         // write
         let mut encoded = Vec::new();
-        encoded.write_to_bytes(lei).unwrap();
+        encoded.write_to(lei).unwrap();
         assert_eq!(bs, encoded);
     }
 
@@ -255,7 +272,7 @@ mod tests {
         assert_eq!(LenEncInt::Len3(0xfd_u16), lei);
         // write
         let mut encoded = Vec::new();
-        encoded.write_to_bytes(lei).unwrap();
+        encoded.write_to(lei).unwrap();
         assert_eq!(bs, encoded);
 
         // read
@@ -264,7 +281,7 @@ mod tests {
         assert_eq!(LenEncInt::Len3(0x051d_u16), lei);
         // write
         let mut encoded = Vec::new();
-        encoded.write_to_bytes(lei).unwrap();
+        encoded.write_to(lei).unwrap();
         assert_eq!(bs, encoded);
     }
 
@@ -276,7 +293,7 @@ mod tests {
         assert_eq!(LenEncInt::Len4(0xa2b2c2_u32), lei);
         // write
         let mut encoded = Vec::new();
-        encoded.write_to_bytes(lei).unwrap();
+        encoded.write_to(lei).unwrap();
         assert_eq!(bs, encoded);
     }
 
@@ -288,7 +305,7 @@ mod tests {
         assert_eq!(LenEncInt::Len9(0x010203040a0b0c0d_u64), lei);
         // write
         let mut encoded = Vec::new();
-        encoded.write_to_bytes(lei).unwrap();
+        encoded.write_to(lei).unwrap();
         assert_eq!(bs, encoded);
     }
 
@@ -300,7 +317,7 @@ mod tests {
         assert_eq!(LenEncInt::Err, lei);
         // write
         let mut encoded = Vec::new();
-        encoded.write_to_bytes(lei).unwrap();
+        encoded.write_to(lei).unwrap();
         assert_eq!(bs, encoded);
     }
 
@@ -312,7 +329,7 @@ mod tests {
         assert_eq!(LenEncInt::Null, lei);
         // write
         let mut encoded = Vec::new();
-        encoded.write_to_bytes(lei).unwrap();
+        encoded.write_to(lei).unwrap();
         assert_eq!(bs, encoded);
     }
 
@@ -324,7 +341,7 @@ mod tests {
         assert_eq!(b"hello", les.to_utf8_string().unwrap().as_bytes());
         // write
         let mut encoded = Vec::new();
-        encoded.write_to_bytes(les).unwrap();
+        encoded.write_to(les).unwrap();
         assert_eq!(bs, encoded);
     }
 }

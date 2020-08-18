@@ -1,5 +1,5 @@
 //! meaningful data structures and parsing logic of QueryEvent
-use bytes_parser::ReadAs;
+use bytes_parser::ReadFrom;
 use bytes_parser::number::ReadNumber;
 use bytes_parser::bytes::ReadBytes;
 use bytes_parser::error::{Error, Result};
@@ -23,9 +23,9 @@ pub struct QueryData<'a> {
     pub query: &'a [u8],
 }
 
-impl<'a> ReadAs<'a, QueryData<'a>> for [u8] {
+impl<'a> ReadFrom<'a, QueryData<'a>> for [u8] {
     
-    fn read_as(&'a self, offset: usize) -> Result<(usize, QueryData<'a>)> {
+    fn read_from(&'a self, offset: usize) -> Result<(usize, QueryData<'a>)> {
         let (offset, slave_proxy_id) = self.read_le_u32(offset)?;
         let (offset, execution_time) = self.read_le_u32(offset)?;
         let (offset, schema_length) = self.read_u8(offset)?;
@@ -84,8 +84,8 @@ impl std::ops::Deref for QueryStatusVars {
     }
 }
 
-impl ReadAs<'_, QueryStatusVars> for [u8] {
-    fn read_as(&self, offset: usize) -> Result<(usize, QueryStatusVars)> {
+impl ReadFrom<'_, QueryStatusVars> for [u8] {
+    fn read_from(&self, offset: usize) -> Result<(usize, QueryStatusVars)> {
         let mut vars = Vec::new();
         let mut offset = offset;
         while offset < self.len() {

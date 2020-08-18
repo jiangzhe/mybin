@@ -1,5 +1,5 @@
 //! start event and format description event
-use bytes_parser::ReadAs;
+use bytes_parser::ReadFrom;
 use bytes_parser::number::ReadNumber;
 use bytes_parser::bytes::ReadBytes;
 use bytes_parser::Result;
@@ -15,8 +15,8 @@ pub struct StartData<'a> {
     pub create_timestamp: u32,
 }
 
-impl<'a> ReadAs<'a, StartData<'a>> for [u8] {
-    fn read_as(&'a self, offset: usize) -> Result<(usize, StartData<'a>)> {
+impl<'a> ReadFrom<'a, StartData<'a>> for [u8] {
+    fn read_from(&'a self, offset: usize) -> Result<(usize, StartData<'a>)> {
         let (offset, binlog_version) = self.read_le_u16(offset)?;
         let (offset, server_version) = self.take_len(offset, 50)?;
         // remove tail \x00
@@ -53,10 +53,10 @@ pub struct FormatDescriptionData<'a> {
 /// because FDE is the first event in binlog, we do not know its post header length,
 /// so we need the total data size as input argument,
 /// which can be calculated by event_length - 19
-impl<'a> ReadAs<'a, FormatDescriptionData<'a>> for [u8] {
+impl<'a> ReadFrom<'a, FormatDescriptionData<'a>> for [u8] {
 
-    fn read_as(&'a self, offset: usize) -> Result<(usize, FormatDescriptionData<'a>)> {
-        let (offset, StartData{binlog_version, server_version, create_timestamp}) = self.read_as(offset)?;
+    fn read_from(&'a self, offset: usize) -> Result<(usize, FormatDescriptionData<'a>)> {
+        let (offset, StartData{binlog_version, server_version, create_timestamp}) = self.read_from(offset)?;
         let (offset, header_length) = self.read_u8(offset)?;
         // 57(2+50+4+1) bytes consumed
         // actually there are several random-value bytes at end of the payload

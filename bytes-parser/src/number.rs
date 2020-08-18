@@ -162,57 +162,57 @@ impl ReadNumber for [u8] {
 pub trait WriteNumber {
 
     /// write single byte
-    fn write_u8(&mut self, n: u8) -> Result<()>;
+    fn write_u8(&mut self, n: u8) -> Result<usize>;
 
     /// write u16 as 2 bytes in little endian byte order
-    fn write_le_u16(&mut self, n: u16) -> Result<()>;
+    fn write_le_u16(&mut self, n: u16) -> Result<usize>;
 
     /// write u24 as 3 bytes in little endian byte order
-    fn write_le_u24(&mut self, n: u32) -> Result<()>;
+    fn write_le_u24(&mut self, n: u32) -> Result<usize>;
 
     /// write u32 as 4 bytes in little endian byte order
-    fn write_le_u32(&mut self, n: u32) -> Result<()>;
+    fn write_le_u32(&mut self, n: u32) -> Result<usize>;
 
     /// write u48 as 6 bytes in little endian byte order
-    fn write_le_u48(&mut self, n: u64) -> Result<()>;
+    fn write_le_u48(&mut self, n: u64) -> Result<usize>;
 
     /// write u64 as 8 bytes in little endian byte order
-    fn write_le_u64(&mut self, n: u64) -> Result<()>;
+    fn write_le_u64(&mut self, n: u64) -> Result<usize>;
 
 }
 
 impl WriteNumber for Vec<u8> {
 
-    fn write_u8(&mut self, n: u8) -> Result<()> {
+    fn write_u8(&mut self, n: u8) -> Result<usize> {
         self.push(n);
-        Ok(())
+        Ok(1)
     }
 
-    fn write_le_u16(&mut self, n: u16) -> Result<()> {
+    fn write_le_u16(&mut self, n: u16) -> Result<usize> {
         self.extend(&n.to_le_bytes());
-        Ok(())
+        Ok(2)
     }
 
-    fn write_le_u24(&mut self, n: u32) -> Result<()> {
+    fn write_le_u24(&mut self, n: u32) -> Result<usize> {
         debug_assert!(n <= 0xff_ffff);
         self.extend(&n.to_le_bytes()[..3]);
-        Ok(())
+        Ok(3)
     }
 
-    fn write_le_u32(&mut self, n: u32) -> Result<()> {
+    fn write_le_u32(&mut self, n: u32) -> Result<usize> {
         self.extend(&n.to_le_bytes());
-        Ok(())
+        Ok(4)
     }
 
-    fn write_le_u48(&mut self, n: u64) -> Result<()> {
+    fn write_le_u48(&mut self, n: u64) -> Result<usize> {
         debug_assert!(n <= 0xffff_ffff_ffffu64);
         self.extend(&n.to_le_bytes()[..6]);
-        Ok(())
+        Ok(6)
     }
 
-    fn write_le_u64(&mut self, n: u64) -> Result<()> {
+    fn write_le_u64(&mut self, n: u64) -> Result<usize> {
         self.extend(&n.to_le_bytes());
-        Ok(())
+        Ok(8)
     }
 }
 

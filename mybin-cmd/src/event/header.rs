@@ -1,5 +1,5 @@
 use super::LogEventTypeCode;
-use bytes_parser::ReadAs;
+use bytes_parser::ReadFrom;
 use bytes_parser::number::ReadNumber;
 use bytes_parser::error::Result;
 use bitflags::bitflags;
@@ -25,8 +25,8 @@ impl EventHeaderV1 {
 ///
 /// the header includes 4 fields:
 /// timestamp 0:4, type_code 4:1, server_id: 5:4, event_length: 9:4
-impl ReadAs<'_, EventHeaderV1> for [u8] {
-    fn read_as(&self, offset: usize) -> Result<(usize, EventHeaderV1)> {
+impl ReadFrom<'_, EventHeaderV1> for [u8] {
+    fn read_from(&self, offset: usize) -> Result<(usize, EventHeaderV1)> {
         let (offset, timestamp) = self.read_le_u32(offset)?;
         let (offset, type_code) = self.read_u8(offset)?;
         let (offset, server_id) = self.read_le_u32(offset)?;
@@ -73,9 +73,9 @@ impl EventHeader {
 /// thie common header includes 6 fields:
 /// timestamp 0:4, type_code 4:1, server_id: 5:4,
 /// event_length: 9:4, next_position: 13:4, flags 17:2
-impl ReadAs<'_, EventHeader> for [u8] {
-    fn read_as(&self, offset: usize) -> Result<(usize, EventHeader)> {
-        let (offset, EventHeaderV1{timestamp, type_code, server_id, event_len}) = self.read_as(offset)?;
+impl ReadFrom<'_, EventHeader> for [u8] {
+    fn read_from(&self, offset: usize) -> Result<(usize, EventHeader)> {
+        let (offset, EventHeaderV1{timestamp, type_code, server_id, event_len}) = self.read_from(offset)?;
         let (offset, next_pos) = self.read_le_u32(offset)?;
         let (offset, flags) = self.read_le_u16(offset)?;
         Ok((offset, EventHeader{

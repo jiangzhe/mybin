@@ -21,13 +21,13 @@ macro_rules! raw_owned_event {
             type Context = bool;
             
             fn read_with_ctx(&self, offset: usize, checksum: Self::Context) -> Result<(usize, $event_name)> {
-                let (offset, header): (_, $crate::event::header::EventHeader) = self.read_as(offset)?;
+                let (offset, header): (_, $crate::event::header::EventHeader) = self.read_from(offset)?;
                 let data_len = if checksum {
                     header.data_len() - 4
                 } else {
                     header.data_len()
                 };
-                let (offset, data) = self[..data_len as usize].read_as(offset)?;
+                let (offset, data) = self[..data_len as usize].read_from(offset)?;
                 debug_assert_eq!(offset, data_len as usize);
                 let (offset, crc32) = if checksum {
                     self.read_le_u32(offset)?
@@ -61,13 +61,13 @@ macro_rules! raw_borrowed_event {
             type Context = bool;
             
             fn read_with_ctx(&self, offset: usize, checksum: Self::Context) -> Result<(usize, $event_name)> {
-                let (offset, header): (_, $crate::event::header::EventHeader) = self.read_as(offset)?;
+                let (offset, header): (_, $crate::event::header::EventHeader) = self.read_from(offset)?;
                 let data_len = if checksum {
                     header.data_len() - 4
                 } else {
                     header.data_len()
                 };
-                let (offset, data) = self[..data_len as usize].read_as(offset)?;
+                let (offset, data) = self[..data_len as usize].read_from(offset)?;
                 debug_assert_eq!(offset, data_len as usize);
                 let (offset, crc32) = if checksum {
                     self.read_le_u32(offset)?
@@ -93,7 +93,7 @@ macro_rules! raw_empty_event {
             type Context = bool;
             
             fn read_with_ctx(&self, offset: usize, checksum: Self::Context) -> Result<(usize, $event_name)> {
-                let (offset, header): (_, $crate::event::header::EventHeader) = self.read_as(offset)?;
+                let (offset, header): (_, $crate::event::header::EventHeader) = self.read_from(offset)?;
                 let data_len = if checksum {
                     header.data_len() - 4
                 } else {

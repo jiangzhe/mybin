@@ -1,6 +1,6 @@
 //! gtid related events and parsing logic
 use linked_hash_map::LinkedHashMap;
-use bytes_parser::ReadAs;
+use bytes_parser::ReadFrom;
 use bytes_parser::bytes::ReadBytes;
 use bytes_parser::number::ReadNumber;
 use bytes_parser::error::{Result, Error};
@@ -21,13 +21,13 @@ pub struct GtidData {
     pub seq_num: u64,
 }
 
-impl ReadAs<'_, GtidData> for [u8] {
-    fn read_as(&self, offset: usize) -> Result<(usize, GtidData)> {
+impl ReadFrom<'_, GtidData> for [u8] {
+    fn read_from(&self, offset: usize) -> Result<(usize, GtidData)> {
         let (offset, gtid_flags) = self.read_u8(offset)?;
         let (offset, encoded_sid) = self.read_le_u128(offset)?;
         let (offset, encoded_gno) = self.read_le_u64(offset)?;
         // consumed 25 bytes now
-        let (offset, LogicalTs{ts_type, last_committed, seq_num}) = self.read_as(offset)?;
+        let (offset, LogicalTs{ts_type, last_committed, seq_num}) = self.read_from(offset)?;
         Ok((offset, GtidData{
             gtid_flags,
             encoded_sid,
@@ -46,8 +46,8 @@ struct LogicalTs {
     seq_num: u64,
 }
 
-impl ReadAs<'_, LogicalTs> for [u8] {
-    fn read_as(&self, offset: usize) -> Result<(usize, LogicalTs)> {
+impl ReadFrom<'_, LogicalTs> for [u8] {
+    fn read_from(&self, offset: usize) -> Result<(usize, LogicalTs)> {
         if self.len() - offset < 17 {
             return Ok((self.len(), LogicalTs{ts_type: 0, last_committed: 0, seq_num: 0}));
         }
@@ -68,7 +68,7 @@ pub struct PreviousGtidsData<'a> {
 
 impl<'a> PreviousGtidsData<'a> {
     pub fn gtid_set(&self) -> Result<GtidSet> {
-        let (_, gtid_set) = self.payload.read_as(0)?;
+        let (_, gtid_set) = self.payload.read_from(0)?;
         Ok(gtid_set)
     }
 }
@@ -77,8 +77,8 @@ impl<'a> PreviousGtidsData<'a> {
 ///
 /// seems layout introduction on mysql dev website is wrong,
 /// so follow source code: https://github.com/mysql/mysql-server/blob/5.7/sql/rpl_gtid_set.cc#L1469
-impl<'a> ReadAs<'a, PreviousGtidsData<'a>> for [u8] {
-    fn read_as(&'a self, offset: usize) -> Result<(usize, PreviousGtidsData<'a>)> {
+impl<'a> ReadFrom<'a, PreviousGtidsData<'a>> for [u8] {
+    fn read_from(&'a self, offset: usize) -> Result<(usize, PreviousGtidsData<'a>)> {
         let (offset, payload) = self.take_len(offset, self.len() - offset)?;
         Ok((offset, PreviousGtidsData{payload}))
     }
@@ -105,13 +105,13 @@ pub struct GtidInterval {
 /// parse gtid set from payload of PreviousGtidsLogEvent
 ///
 /// reference: https://github.com/mysql/mysql-server/blob/5.7/sql/rpl_gtid_set.cc#L1469
-impl ReadAs<'_, GtidSet> for [u8] {
-    fn read_as(&self, offset: usize) -> Result<(usize, GtidSet)> {
+impl ReadFrom<'_, GtidSet> for [u8] {
+    fn read_from(&self, offset: usize) -> Result<(usize, GtidSet)> {
         let (mut offset, n_sids) = self.read_le_u64(offset)?;
         let n_sids = n_sids as usize;
         let mut sids = LinkedHashMap::with_capacity(n_sids);
         for _ in 0..n_sids {
-            let (os1, gtid_range): (_, GtidRange) = self.read_as(offset)?;
+            let (os1, gtid_range): (_, GtidRange) = self.read_from(offset)?;
             // todo: may need to handle duplicate sids
             sids.insert(gtid_range.sid, gtid_range);
             offset = os1;
@@ -120,8 +120,8 @@ impl ReadAs<'_, GtidSet> for [u8] {
     }
 }
 
-impl ReadAs<'_, GtidRange> for [u8] {
-    fn read_as(&self, offset: usize) -> Result<(usize, GtidRange)> {
+impl ReadFrom<'_, GtidRange> for [u8] {
+    fn read_from(&self, offset: usize) -> Result<(usize, GtidRange)> {
         let (offset, sid) = self.read_le_u128(offset)?;
         let (mut offset, n_intervals) = self.read_le_u64(offset)?;
         let mut last = 0u64;
