@@ -6,6 +6,7 @@ use std::future::Future;
 use std::io::ErrorKind;
 use std::pin::Pin;
 use std::task::{Context, Poll};
+use bytes::Bytes;
 
 pub trait AsyncReadNumber: AsyncRead {
     fn read_u8(&mut self) -> ReadU8Future<Self>
@@ -57,7 +58,7 @@ impl<R: AsyncRead + Unpin + ?Sized> Future for ReadU8Future<'_, R> {
         let mut reader = Pin::new(&mut self.0);
         loop {
             match ready!(reader.as_mut().poll_read(cx, std::slice::from_mut(&mut b))) {
-                Ok(0) => return Poll::Ready(Err(Error::InputIncomplete(vec![], Needed::Size(1)))),
+                Ok(0) => return Poll::Ready(Err(Error::InputIncomplete(Bytes::new(), Needed::Size(1)))),
                 Ok(..) => return Poll::Ready(Ok(b)),
                 Err(ref e) if e.kind() == ErrorKind::Interrupted => (),
                 Err(e) => return Poll::Ready(Err(Error::from(e))),

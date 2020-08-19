@@ -14,8 +14,10 @@ pub enum Error {
     BinlogEventError(String),
     #[error("binlog checksum mismatch: expected={0}, actual={1}")]
     BinlogChecksumMismatch(u32, u32),
-    #[error("utf8 error: {0}")]
-    Utf8Error(#[from] std::string::FromUtf8Error),
+    #[error("utf8 string error: {0}")]
+    Utf8StringError(#[from] std::string::FromUtf8Error),
+    #[error("utf8 str error: {0}")]
+    Utf8StrError(#[from] std::str::Utf8Error),
     #[error("parse error: {0}")]
     ParseError(#[from] bytes_parser::error::Error),
 }

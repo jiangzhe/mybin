@@ -1,54 +1,50 @@
 //! meaningful data structures and parsing logic of QueryEvent
 use bitflags::bitflags;
-use bytes_parser::bytes::ReadBytes;
 use bytes_parser::error::{Error, Result};
-use bytes_parser::number::ReadNumber;
-use bytes_parser::ReadFrom;
+use bytes_parser::{ReadBytesExt, ReadFromBytes};
+use bytes::{Buf, Bytes};
 
 /// Data of QueryEvent
 ///
 /// reference: https://dev.mysql.com/doc/internals/en/query-event.html
 /// only support binlog v4 (with status_vars_length at end of post header)
 #[derive(Debug, Clone)]
-pub struct QueryData<'a> {
+pub struct QueryData {
     pub slave_proxy_id: u32,
-    pub execution_time: u32,
-    pub schema_length: u8,
+    pub exec_time: u32,
+    pub schema_len: u8,
     pub error_code: u16,
     // if binlog version >= 4
-    pub status_vars_length: u16,
+    pub status_vars_len: u16,
     // below is variable part
-    pub status_vars: &'a [u8],
-    pub schema: &'a [u8],
-    pub query: &'a [u8],
+    pub status_vars: Bytes,
+    pub schema: Bytes,
+    pub query: Bytes,
 }
 
-impl<'a> ReadFrom<'a, QueryData<'a>> for [u8] {
-    fn read_from(&'a self, offset: usize) -> Result<(usize, QueryData<'a>)> {
-        let (offset, slave_proxy_id) = self.read_le_u32(offset)?;
-        let (offset, execution_time) = self.read_le_u32(offset)?;
-        let (offset, schema_length) = self.read_u8(offset)?;
-        let (offset, error_code) = self.read_le_u16(offset)?;
-        let (offset, status_vars_length) = self.read_le_u16(offset)?;
+impl ReadFromBytes for QueryData {
+    fn read_from(input: &mut Bytes) -> Result<Self> {
+        let slave_proxy_id = input.read_le_u32()?;
+        let exec_time = input.read_le_u32()?;
+        let schema_len = input.read_u8()?;
+        let error_code = input.read_le_u16()?;
+        let status_vars_len = input.read_le_u16()?;
         // 13(4+4+1+2+2) bytes consumed
         // do not parse status_vars in this stage
-        let (offset, status_vars) = self.take_len(offset, status_vars_length as usize)?;
-        let (offset, schema) = self.take_len(offset, schema_length as usize)?;
-        let (offset, _) = self.take_len(offset, 1usize)?;
-        let (offset, query) = self.take_len(offset, self.len() - offset)?;
-        Ok((
-            offset,
-            QueryData {
-                slave_proxy_id,
-                execution_time,
-                schema_length,
-                error_code,
-                status_vars_length,
-                status_vars,
-                schema,
-                query,
-            },
-        ))
+        let status_vars = input.read_len(status_vars_len as usize)?;
+        let schema = input.read_len(schema_len as usize)?;
+        input.read_len(1)?;
+        let query = input.split_to(input.remaining());
+        Ok(QueryData {
+            slave_proxy_id,
+            exec_time,
+            schema_len,
+            error_code,
+            status_vars_len,
+            status_vars,
+            schema,
+            query,
+        })
     }
 }
 
@@ -56,18 +52,18 @@ impl<'a> ReadFrom<'a, QueryData<'a>> for [u8] {
 pub enum QueryStatusVar {
     Flags2Code(u32),
     SqlModeCode(u64),
-    Catalog(String),
+    Catalog(Bytes),
     AutoIncrement { inc: u16, offset: u16 },
     // https://dev.mysql.com/doc/refman/8.0/en/charset-connection.html
     CharsetCode { client: u16, conn: u16, server: u16 },
-    TimeZoneCode(String),
-    CatalogNzCode(String),
+    TimeZoneCode(Bytes),
+    CatalogNzCode(Bytes),
     LcTimeNamesCode(u16),
     CharsetDatabaseCode(u16),
     TableMapForUpdateCode(u64),
     MasterDataWrittenCode(u32),
-    Invokers { username: String, hostname: String },
-    UpdatedDbNames(Vec<String>),
+    Invokers { username: Bytes, hostname: Bytes },
+    UpdatedDbNames(Vec<Bytes>),
     // actually is 3-byte int, but Rust only has 4-byte int
     MicroSeconds(u32),
 }
@@ -83,120 +79,97 @@ impl std::ops::Deref for QueryStatusVars {
     }
 }
 
-impl ReadFrom<'_, QueryStatusVars> for [u8] {
-    fn read_from(&self, offset: usize) -> Result<(usize, QueryStatusVars)> {
+impl ReadFromBytes for QueryStatusVars {
+    fn read_from(input: &mut Bytes) -> Result<Self> {
         let mut vars = Vec::new();
-        let mut offset = offset;
-        while offset < self.len() {
-            let (os1, key) = self.read_u8(offset)?;
-            let (os1, var) = match key {
+        while input.has_remaining() {
+            let key = input.read_u8()?;
+            let var = match key {
                 0x00 => {
                     // 4 bytes
-                    let (os1, flags2code) = self.read_le_u32(os1)?;
-                    (os1, QueryStatusVar::Flags2Code(flags2code))
+                    QueryStatusVar::Flags2Code(input.read_le_u32()?)
                 }
                 0x01 => {
                     // 8 bytes
-                    let (os1, sqlmodecode) = self.read_le_u64(os1)?;
-                    (os1, QueryStatusVar::SqlModeCode(sqlmodecode))
+                    QueryStatusVar::SqlModeCode(input.read_le_u64()?)
                 }
                 0x02 => {
                     // 1 byte length + str + '\0'
-                    let (os1, len) = self.read_u8(os1)?;
-                    let (os1, s) = self.take_len(os1, len as usize)?;
-                    let (os1, _) = self.take_len(os1, 1)?;
-                    (
-                        os1,
-                        QueryStatusVar::Catalog(String::from_utf8_lossy(s).to_string()),
-                    )
+                    let len = input.read_u8()?;
+                    let s = input.read_len(len as usize)?;
+                    input.read_len(1)?;
+                    QueryStatusVar::Catalog(s)
                 }
                 0x03 => {
                     // 2 + 2
-                    let (os1, inc) = self.read_le_u16(os1)?;
-                    let (os1, offset) = self.read_le_u16(os1)?;
-                    (os1, QueryStatusVar::AutoIncrement { inc, offset })
+                    let inc = input.read_le_u16()?;
+                    let offset = input.read_le_u16()?;
+                    QueryStatusVar::AutoIncrement { inc, offset }
                 }
                 0x04 => {
                     // 2 + 2 + 2
-                    let (os1, client) = self.read_le_u16(os1)?;
-                    let (os1, conn) = self.read_le_u16(os1)?;
-                    let (os1, server) = self.read_le_u16(os1)?;
-                    (
-                        os1,
-                        QueryStatusVar::CharsetCode {
-                            client,
-                            conn,
-                            server,
-                        },
-                    )
+                    let client = input.read_le_u16()?;
+                    let conn = input.read_le_u16()?;
+                    let server = input.read_le_u16()?;
+                    QueryStatusVar::CharsetCode {
+                        client,
+                        conn,
+                        server,
+                    }
                 }
                 0x05 => {
                     // 1 + n
-                    let (os1, len) = self.read_u8(os1)?;
-                    let (os1, s) = self.take_len(os1, len as usize)?;
-                    (
-                        os1,
-                        QueryStatusVar::TimeZoneCode(String::from_utf8_lossy(s).to_string()),
-                    )
+                    let len = input.read_u8()?;
+                    let s = input.read_len(len as usize)?;
+                    QueryStatusVar::TimeZoneCode(s)
                 }
                 0x06 => {
                     // 1 + n
-                    let (os1, len) = self.read_u8(os1)?;
-                    let (os1, s) = self.take_len(os1, len as usize)?;
-                    (
-                        os1,
-                        QueryStatusVar::CatalogNzCode(String::from_utf8_lossy(s).to_string()),
-                    )
+                    let len = input.read_u8()?;
+                    let s = input.read_len(len as usize)?;
+                    QueryStatusVar::CatalogNzCode(s)
                 }
                 0x07 => {
                     // 2 bytes
-                    let (os1, code) = self.read_le_u16(os1)?;
-                    (os1, QueryStatusVar::LcTimeNamesCode(code))
+                    QueryStatusVar::LcTimeNamesCode(input.read_le_u16()?)
                 }
                 0x08 => {
                     // 2 bytes
-                    let (os1, code) = self.read_le_u16(os1)?;
-                    (os1, QueryStatusVar::CharsetDatabaseCode(code))
+                    QueryStatusVar::CharsetDatabaseCode(input.read_le_u16()?)
                 }
                 0x09 => {
                     // 8 bytes
-                    let (os1, code) = self.read_le_u64(os1)?;
-                    (os1, QueryStatusVar::TableMapForUpdateCode(code))
+                    QueryStatusVar::TableMapForUpdateCode(input.read_le_u64()?)
                 }
                 0x0a => {
                     // 4 bytes
-                    let (os1, code) = self.read_le_u32(os1)?;
-                    (os1, QueryStatusVar::MasterDataWrittenCode(code))
+                    QueryStatusVar::MasterDataWrittenCode(input.read_le_u32()?)
                 }
                 0x0b => {
                     // 1 + n + 1 + n
-                    let (os1, lun) = self.read_u8(os1)?;
-                    let (os1, un) = self.take_len(os1, lun as usize)?;
-                    let (os1, lhn) = self.read_u8(os1)?;
-                    let (in1, hn) = self.take_len(os1, lhn as usize)?;
-                    (
-                        in1,
-                        QueryStatusVar::Invokers {
-                            username: String::from_utf8_lossy(un).to_string(),
-                            hostname: String::from_utf8_lossy(hn).to_string(),
-                        },
-                    )
+                    let lun = input.read_u8()?;
+                    let username = input.read_len(lun as usize)?;
+                    let lhn = input.read_u8()?;
+                    let hostname = input.read_len(lhn as usize)?;
+                    QueryStatusVar::Invokers {
+                        username,
+                        hostname,
+                    }
                 }
                 0x0c => {
                     // 1 + n (null-term string)
-                    let (mut os1, count) = self.read_u8(os1)?;
+                    let cnt = input.read_u8()?;
                     let mut names = Vec::new();
-                    for _ in 0..count {
-                        let (os2, s) = self.take_until(os1, 0, false)?;
-                        names.push(String::from_utf8_lossy(s).to_string());
-                        os1 = os2;
+                    for _ in 0..cnt {
+                        let s = input.read_until(0, false)?;
+                        names.push(s);
                     }
-                    (os1, QueryStatusVar::UpdatedDbNames(names))
+                    QueryStatusVar::UpdatedDbNames(names)
                 }
                 0x0d => {
                     // 3 bytes
-                    let (os1, ms) = self.read_le_u24(os1)?;
-                    (os1, QueryStatusVar::MicroSeconds(ms))
+                    let ms = input.read_le_u24()?;
+                    QueryStatusVar::MicroSeconds(ms)
                 }
                 _ => {
                     return Err(Error::ConstraintError(format!(
@@ -206,9 +179,8 @@ impl ReadFrom<'_, QueryStatusVars> for [u8] {
                 }
             };
             vars.push(var);
-            offset = os1;
         }
-        Ok((offset, QueryStatusVars(vars)))
+        Ok(QueryStatusVars(vars))
     }
 }
 

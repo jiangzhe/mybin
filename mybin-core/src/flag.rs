@@ -1,6 +1,8 @@
 use bitflags::bitflags;
 use bytes_parser::error::Result;
-use bytes_parser::WriteTo;
+use bytes_parser::WriteToBytes;
+use bytes::{BufMut, BytesMut};
+
 
 bitflags! {
     pub struct CapabilityFlags: u32 {
@@ -67,9 +69,9 @@ impl Default for CapabilityFlags {
     }
 }
 
-impl WriteTo<'_, CapabilityFlags> for Vec<u8> {
-    fn write_to(&mut self, val: CapabilityFlags) -> Result<usize> {
-        self.extend(&val.bits().to_le_bytes()[..]);
+impl WriteToBytes for CapabilityFlags {
+    fn write_to(self, out: &mut BytesMut) -> Result<usize> {
+        out.put_u32_le(self.bits());
         Ok(4)
     }
 }

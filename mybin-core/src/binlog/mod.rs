@@ -12,16 +12,15 @@ mod rows_v1;
 mod rows_v2;
 mod table_map;
 mod user_var;
-mod util;
 mod xid;
+mod util;
 
-use crate::{raw_event, try_from_event};
-use bytes_parser::bytes::ReadBytes;
+use crate::try_from_event;
 use bytes_parser::error::Result;
-use bytes_parser::number::ReadNumber;
-use bytes_parser::{ReadFrom, ReadWithContext};
+use bytes_parser::{ReadFromBytes, ReadBytesExt};
+use bytes::Bytes;
 use fde::{FormatDescriptionData, StartData};
-use gtid::{GtidLogData, PreviousGtidsLogData};
+use gtid::{GtidLogData, PreviousGtidsLogData, AnonymousGtidLogData};
 use header::{EventHeader, EventHeaderV1};
 use incident::IncidentData;
 use intvar::IntvarData;
@@ -29,8 +28,8 @@ use load::*;
 use query::QueryData;
 use rand::RandData;
 use rotate::RotateData;
-use rows_v1::RowsDataV1;
-use rows_v2::RowsDataV2;
+use rows_v1::{WriteRowsDataV1, UpdateRowsDataV1, DeleteRowsDataV1};
+use rows_v2::{WriteRowsDataV2, UpdateRowsDataV2, DeleteRowsDataV2};
 use table_map::TableMapData;
 use user_var::UserVarData;
 use xid::XidData;
@@ -192,10 +191,11 @@ impl From<LogEventType> for LogEventTypeCode {
 /// fast event type parsing
 ///
 /// input must start at the beginning of an event
-impl ReadFrom<'_, LogEventType> for [u8] {
-    fn read_from(&self, offset: usize) -> Result<(usize, LogEventType)> {
-        let (offset, type_code) = self.read_u8(offset+4)?;
-        Ok((offset, LogEventType::from(type_code)))
+impl ReadFromBytes for LogEventType {
+    fn read_from(input: &mut Bytes) -> Result<Self> {
+        input.read_len(4)?;
+        let type_code = input.read_u8()?;
+        Ok(LogEventType::from(type_code))
     }
 }
 
@@ -205,16 +205,12 @@ pub struct EventLength(pub u32);
 /// fast event length parsing
 ///
 /// input must start at the beginning of an event
-impl ReadFrom<'_, EventLength> for [u8] {
-    fn read_from(&self, offset: usize) -> Result<(usize, EventLength)> {
-        let (offset, event_length) = self.read_le_u32(offset+9)?;
-        Ok((offset, EventLength(event_length)))
+impl ReadFromBytes for EventLength {
+    fn read_from(input: &mut Bytes) -> Result<Self> {
+        input.read_len(9)?;
+        let event_length = input.read_le_u32()?;
+        Ok(EventLength(event_length))
     }
-}
-
-/// provide crc32 checksum value
-pub trait HasCrc32 {
-    fn crc32(&self) -> u32;
 }
 
 /// v1 event with payload
@@ -231,225 +227,151 @@ pub struct RawEventV1<D> {
 pub struct RawEvent<D> {
     pub header: EventHeader,
     pub data: D,
-    pub crc32: u32,
 }
 
-raw_event!(StartEventV3, StartData, 'a);
-try_from_event!(StartEventV3, 'a);
+pub type StartEventV3 = RawEvent<StartData>;
+try_from_event!(StartEventV3, StartData);
+
+pub type FormatDescriptionEvent = RawEvent<FormatDescriptionData>;
+try_from_event!(FormatDescriptionEvent, FormatDescriptionData);
+
+pub type QueryEvent = RawEvent<QueryData>;
+try_from_event!(QueryEvent, QueryData);
+
+pub type StopEvent = RawEvent<()>;
+
+pub type RotateEvent = RawEvent<RotateData>;
+try_from_event!(RotateEvent, RotateData);
+
+pub type IntvarEvent = RawEvent<IntvarData>;
+try_from_event!(IntvarEvent, IntvarData);
+
+pub type LoadEvent = RawEvent<LoadData>;
+try_from_event!(LoadEvent, LoadData);
+
+pub type CreateFileEvent = RawEvent<CreateFileData>;
+try_from_event!(CreateFileEvent, CreateFileData);
+
+pub type AppendBlockEvent = RawEvent<AppendBlockData>;
+try_from_event!(AppendBlockEvent, AppendBlockData);
+
+pub type ExecLoadEvent = RawEvent<ExecLoadData>;
+try_from_event!(ExecLoadEvent, ExecLoadData);
+
+pub type DeleteFileEvent = RawEvent<DeleteFileData>;
+try_from_event!(DeleteFileEvent, DeleteFileData);
+
+pub type NewLoadEvent = RawEvent<NewLoadData>;
+try_from_event!(NewLoadEvent, NewLoadData);
+
+pub type BeginLoadQueryEvent = RawEvent<BeginLoadQueryData>;
+try_from_event!(BeginLoadQueryEvent, BeginLoadQueryData);
+
+pub type ExecuteLoadQueryEvent = RawEvent<ExecuteLoadQueryData>;
+try_from_event!(ExecuteLoadQueryEvent, ExecuteLoadQueryData);
+
+pub type RandEvent = RawEvent<RandData>;
+try_from_event!(RandEvent, RandData);
+
+pub type XidEvent = RawEvent<XidData>;
+try_from_event!(XidEvent, XidData);
+
+pub type UserVarEvent = RawEvent<UserVarData>;
+try_from_event!(UserVarEvent, UserVarData);
+
+pub type IncidentEvent = RawEvent<IncidentData>;
+try_from_event!(IncidentEvent, IncidentData);
+
+pub type HeartbeatLogEvent = RawEvent<()>;
+
+pub type TableMapEvent = RawEvent<TableMapData>;
+try_from_event!(TableMapEvent, TableMapData);
+
+pub type WriteRowsEventV1 = RawEvent<WriteRowsDataV1>;
+try_from_event!(WriteRowsEventV1, WriteRowsDataV1);
+
+pub type UpdateRowsEventV1 = RawEvent<UpdateRowsDataV1>;
+try_from_event!(UpdateRowsEventV1, UpdateRowsDataV1);
+
+pub type DeleteRowsEventV1 = RawEvent<DeleteRowsDataV1>;
+try_from_event!(DeleteRowsEventV1, DeleteRowsDataV1);
+
+pub type WriteRowsEventV2 = RawEvent<WriteRowsDataV2>;
+try_from_event!(WriteRowsEventV2, WriteRowsDataV2);
+
+pub type UpdateRowsEventV2 = RawEvent<UpdateRowsDataV2>;
+try_from_event!(UpdateRowsEventV2, UpdateRowsDataV2);
+
+pub type DeleteRowsEventV2 = RawEvent<DeleteRowsDataV2>;
+try_from_event!(DeleteRowsEventV2, DeleteRowsDataV2);
+
+pub type GtidLogEvent = RawEvent<GtidLogData>;
+try_from_event!(GtidLogEvent, GtidLogData);
+
+pub type AnonymousGtidLogEvent = RawEvent<AnonymousGtidLogData>;
+try_from_event!(AnonymousGtidLogEvent, AnonymousGtidLogData);
+
+pub type PreviousGtidsLogEvent = RawEvent<PreviousGtidsLogData>;
+try_from_event!(PreviousGtidsLogEvent, PreviousGtidsLogData);
 
 #[derive(Debug, Clone)]
-pub struct FormatDescriptionEvent<'a>(RawEvent<FormatDescriptionData<'a>>);
-
-impl<'a> std::ops::Deref for FormatDescriptionEvent<'a> {
-    type Target = RawEvent<FormatDescriptionData<'a>>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-/// implements FormatDescriptionEvent because we need to retrieve
-/// checksum flag from this event
-impl<'a> ReadFrom<'a, FormatDescriptionEvent<'a>> for [u8] {
-    fn read_from(&'a self, offset: usize) -> Result<(usize, FormatDescriptionEvent<'a>)> {
-        let (offset, header): (_, EventHeader) = self.read_from(offset)?;
-        let (offset, data) = self.take_len(offset, header.data_len() as usize)?;
-        let (_, data): (_, FormatDescriptionData) = data.read_from(0)?;
-        let crc32 = data.crc32;
-        Ok((
-            offset,
-            FormatDescriptionEvent(RawEvent {
-                header,
-                data,
-                crc32,
-            }),
-        ))
-    }
-}
-
-impl HasCrc32 for FormatDescriptionEvent<'_> {
-    fn crc32(&self) -> u32 {
-        self.crc32
-    }
-}
-
-try_from_event!(FormatDescriptionEvent, 'a);
-
-raw_event!(QueryEvent, QueryData, 'a);
-try_from_event!(QueryEvent, 'a);
-
-raw_event!(StopEvent);
-try_from_event!(StopEvent);
-
-raw_event!(RotateEvent, RotateData, 'a);
-try_from_event!(RotateEvent, 'a);
-
-raw_event!(IntvarEvent, IntvarData);
-try_from_event!(IntvarEvent);
-
-raw_event!(LoadEvent, LoadData, 'a);
-try_from_event!(LoadEvent, 'a);
-
-raw_event!(CreateFileEvent, CreateFileData, 'a);
-try_from_event!(CreateFileEvent, 'a);
-
-raw_event!(AppendBlockEvent, AppendBlockData, 'a);
-try_from_event!(AppendBlockEvent, 'a);
-
-raw_event!(ExecLoadEvent, ExecLoadData);
-try_from_event!(ExecLoadEvent);
-
-raw_event!(DeleteFileEvent, DeleteFileData);
-try_from_event!(DeleteFileEvent);
-
-raw_event!(NewLoadEvent, NewLoadData, 'a);
-try_from_event!(NewLoadEvent, 'a);
-
-raw_event!(BeginLoadQueryEvent, BeginLoadQueryData, 'a);
-try_from_event!(BeginLoadQueryEvent, 'a);
-
-raw_event!(ExecuteLoadQueryEvent, ExecuteLoadQueryData, 'a);
-try_from_event!(ExecuteLoadQueryEvent, 'a);
-
-raw_event!(RandEvent, RandData);
-try_from_event!(RandEvent);
-
-raw_event!(XidEvent, XidData);
-try_from_event!(XidEvent);
-
-raw_event!(UserVarEvent, UserVarData, 'a);
-try_from_event!(UserVarEvent, 'a);
-
-raw_event!(IncidentEvent, IncidentData, 'a);
-try_from_event!(IncidentEvent, 'a);
-
-raw_event!(HeartbeatLogEvent);
-try_from_event!(HeartbeatLogEvent);
-
-raw_event!(TableMapEvent, TableMapData, 'a);
-try_from_event!(TableMapEvent, 'a);
-
-raw_event!(WriteRowsEventV1, RowsDataV1, 'a);
-try_from_event!(WriteRowsEventV1, 'a);
-
-raw_event!(UpdateRowsEventV1, RowsDataV1, 'a);
-try_from_event!(UpdateRowsEventV1, 'a);
-
-raw_event!(DeleteRowsEventV1, RowsDataV1, 'a);
-try_from_event!(DeleteRowsEventV1, 'a);
-
-raw_event!(WriteRowsEventV2, RowsDataV2, 'a);
-try_from_event!(WriteRowsEventV2, 'a);
-
-raw_event!(UpdateRowsEventV2, RowsDataV2, 'a);
-try_from_event!(UpdateRowsEventV2, 'a);
-
-raw_event!(DeleteRowsEventV2, RowsDataV2, 'a);
-try_from_event!(DeleteRowsEventV2, 'a);
-
-raw_event!(GtidLogEvent, GtidLogData);
-try_from_event!(GtidLogEvent);
-
-raw_event!(AnonymousGtidLogEvent, GtidLogData);
-try_from_event!(AnonymousGtidLogEvent);
-
-raw_event!(PreviousGtidsLogEvent, PreviousGtidsLogData, 'a);
-try_from_event!(PreviousGtidsLogEvent, 'a);
-
-#[derive(Debug, Clone)]
-pub enum Event<'a> {
+pub enum Event {
     // 1
-    StartEventV3(StartEventV3<'a>),
+    StartEventV3(StartEventV3),
     // 2
-    QueryEvent(QueryEvent<'a>),
+    QueryEvent(QueryEvent),
     // 3
     StopEvent(StopEvent),
     // 4
-    RotateEvent(RotateEvent<'a>),
+    RotateEvent(RotateEvent),
     // 5
     IntvarEvent(IntvarEvent),
     // 6
-    LoadEvent(LoadEvent<'a>),
+    LoadEvent(LoadEvent),
     // 8
-    CreateFileEvent(CreateFileEvent<'a>),
+    CreateFileEvent(CreateFileEvent),
     // 9
-    AppendBlockEvent(AppendBlockEvent<'a>),
+    AppendBlockEvent(AppendBlockEvent),
     // 10
     ExecLoadEvent(ExecLoadEvent),
     // 11
     DeleteFileEvent(DeleteFileEvent),
     // 12
-    NewLoadEvent(NewLoadEvent<'a>),
+    NewLoadEvent(NewLoadEvent),
     // 13
     RandEvent(RandEvent),
     // 14
-    UserVarEvent(UserVarEvent<'a>),
+    UserVarEvent(UserVarEvent),
     // 15
-    FormatDescriptionEvent(FormatDescriptionEvent<'a>),
+    FormatDescriptionEvent(FormatDescriptionEvent),
     // 16
     XidEvent(XidEvent),
     // 17
-    BeginLoadQueryEvent(BeginLoadQueryEvent<'a>),
+    BeginLoadQueryEvent(BeginLoadQueryEvent),
     // 18
-    ExecuteLoadQueryEvent(ExecuteLoadQueryEvent<'a>),
+    ExecuteLoadQueryEvent(ExecuteLoadQueryEvent),
     // 19
-    TableMapEvent(TableMapEvent<'a>),
+    TableMapEvent(TableMapEvent),
     // 23
-    WriteRowsEventV1(WriteRowsEventV1<'a>),
+    WriteRowsEventV1(WriteRowsEventV1),
     // 24
-    UpdateRowsEventV1(UpdateRowsEventV1<'a>),
+    UpdateRowsEventV1(UpdateRowsEventV1),
     // 25
-    DeleteRowsEventV1(DeleteRowsEventV1<'a>),
+    DeleteRowsEventV1(DeleteRowsEventV1),
     // 26
-    IncidentEvent(IncidentEvent<'a>),
+    IncidentEvent(IncidentEvent),
     // 27
     HeartbeatLogEvent(HeartbeatLogEvent),
     // 30
-    WriteRowsEventV2(WriteRowsEventV2<'a>),
+    WriteRowsEventV2(WriteRowsEventV2),
     // 31
-    UpdateRowsEventV2(UpdateRowsEventV2<'a>),
+    UpdateRowsEventV2(UpdateRowsEventV2),
     // 32
-    DeleteRowsEventV2(DeleteRowsEventV2<'a>),
+    DeleteRowsEventV2(DeleteRowsEventV2),
     // 33
     GtidLogEvent(GtidLogEvent),
     // 34
     AnonymousGtidLogEvent(AnonymousGtidLogEvent),
     // 35
-    PreviousGtidsLogEvent(PreviousGtidsLogEvent<'a>),
-}
-
-impl HasCrc32 for Event<'_> {
-    fn crc32(&self) -> u32 {
-        match self {
-            Event::StartEventV3(e) => e.crc32(),
-            Event::QueryEvent(e) => e.crc32(),
-            Event::StopEvent(e) => e.crc32(),
-            Event::RotateEvent(e) => e.crc32(),
-            Event::IntvarEvent(e) => e.crc32(),
-            Event::LoadEvent(e) => e.crc32(),
-            Event::CreateFileEvent(e) => e.crc32(),
-            Event::AppendBlockEvent(e) => e.crc32(),
-            Event::ExecLoadEvent(e) => e.crc32(),
-            Event::DeleteFileEvent(e) => e.crc32(),
-            Event::NewLoadEvent(e) => e.crc32(),
-            Event::RandEvent(e) => e.crc32(),
-            Event::UserVarEvent(e) => e.crc32(),
-            Event::FormatDescriptionEvent(e) => e.crc32(),
-            Event::XidEvent(e) => e.crc32(),
-            Event::BeginLoadQueryEvent(e) => e.crc32(),
-            Event::ExecuteLoadQueryEvent(e) => e.crc32(),
-            Event::TableMapEvent(e) => e.crc32(),
-            Event::WriteRowsEventV1(e) => e.crc32(),
-            Event::UpdateRowsEventV1(e) => e.crc32(),
-            Event::DeleteRowsEventV1(e) => e.crc32(),
-            Event::IncidentEvent(e) => e.crc32(),
-            Event::HeartbeatLogEvent(e) => e.crc32(),
-            Event::WriteRowsEventV2(e) => e.crc32(),
-            Event::UpdateRowsEventV2(e) => e.crc32(),
-            Event::DeleteRowsEventV2(e) => e.crc32(),
-            Event::GtidLogEvent(e) => e.crc32(),
-            Event::AnonymousGtidLogEvent(e) => e.crc32(),
-            Event::PreviousGtidsLogEvent(e) => e.crc32(),
-        }
-    }
+    PreviousGtidsLogEvent(PreviousGtidsLogEvent),
 }

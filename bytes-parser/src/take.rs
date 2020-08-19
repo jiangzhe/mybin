@@ -1,6 +1,6 @@
 use crate::error::{Error, Needed, Result};
 
-pub trait ReadBytes<'a> {
+pub trait TakeBytes<'a> {
     /// take a byte slice given offset and len
     fn take_len(&'a self, offset: usize, len: usize) -> Result<(usize, &'a [u8])>
     where
@@ -34,7 +34,7 @@ pub trait ReadBytes<'a> {
     }
 }
 
-impl<'a> ReadBytes<'a> for [u8] {
+impl<'a> TakeBytes<'a> for [u8] {
     fn take_len(&'a self, offset: usize, len: usize) -> Result<(usize, &'a [u8])>
     where
         Self: 'a,

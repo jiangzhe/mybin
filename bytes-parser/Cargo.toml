@@ -8,6 +8,7 @@ workspace = ".."
 [dependencies]
 thiserror = "1.0"
 futures = "0.3"
+bytes = "0.5.6"
 
 [dev-dependencies]
 smol-potat = "0.5.0"

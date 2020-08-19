@@ -1,8 +1,7 @@
 //! gtid related events and parsing logic
-use bytes_parser::bytes::ReadBytes;
 use bytes_parser::error::{Error, Result};
-use bytes_parser::number::ReadNumber;
-use bytes_parser::ReadFrom;
+use bytes_parser::{ReadFromBytes, ReadBytesExt};
+use bytes::{Buf, Bytes};
 use linked_hash_map::LinkedHashMap;
 
 /// Data of GtidEvent
@@ -21,64 +20,79 @@ pub struct GtidLogData {
     pub seq_num: u64,
 }
 
-impl ReadFrom<'_, GtidLogData> for [u8] {
-    fn read_from(&self, offset: usize) -> Result<(usize, GtidLogData)> {
-        let (offset, gtid_flags) = self.read_u8(offset)?;
-        let (offset, encoded_sid) = self.read_le_u128(offset)?;
-        let (offset, encoded_gno) = self.read_le_u64(offset)?;
+impl ReadFromBytes for GtidLogData {
+    fn read_from(input: &mut Bytes) -> Result<Self> {
+        let gtid_flags = input.read_u8()?;
+        let encoded_sid = input.read_le_u128()?;
+        let encoded_gno = input.read_le_u64()?;
         // consumed 25 bytes now
-        let (
-            offset,
-            LogicalTs {
-                ts_type,
-                last_committed,
-                seq_num,
-            },
-        ) = self.read_from(offset)?;
-        Ok((
-            offset,
-            GtidLogData {
-                gtid_flags,
-                encoded_sid,
-                encoded_gno,
-                ts_type,
-                last_committed,
-                seq_num,
-            },
-        ))
+        let LogicalTs {
+            ts_type,
+            last_committed,
+            seq_num,
+        } = LogicalTs::read_from(input)?;
+        Ok(GtidLogData {
+            gtid_flags,
+            encoded_sid,
+            encoded_gno,
+            ts_type,
+            last_committed,
+            seq_num,
+        })
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
+pub struct AnonymousGtidLogData {
+    pub gtid_flags: u8,
+    // from source code
+    pub encoded_sid: u128,
+    pub encoded_gno: u64,
+    // below fields may not exist
+    // in versions earlier than 5.7.4
+    pub ts_type: u8,
+    pub last_committed: u64,
+    pub seq_num: u64,
+}
+
+impl ReadFromBytes for AnonymousGtidLogData {
+    fn read_from(input: &mut Bytes) -> Result<Self> {
+        let gld = GtidLogData::read_from(input)?;
+        Ok(AnonymousGtidLogData{
+            gtid_flags: gld.gtid_flags,
+            encoded_sid: gld.encoded_sid,
+            encoded_gno: gld.encoded_gno,
+            ts_type: gld.ts_type,
+            last_committed: gld.last_committed,
+            seq_num: gld.seq_num,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
 struct LogicalTs {
     ts_type: u8,
     last_committed: u64,
     seq_num: u64,
 }
 
-impl ReadFrom<'_, LogicalTs> for [u8] {
-    fn read_from(&self, offset: usize) -> Result<(usize, LogicalTs)> {
-        if self.len() - offset < 17 {
-            return Ok((
-                self.len(),
-                LogicalTs {
-                    ts_type: 0,
-                    last_committed: 0,
-                    seq_num: 0,
-                },
-            ));
+impl ReadFromBytes for LogicalTs {
+    fn read_from(input: &mut Bytes) -> Result<LogicalTs> {
+        if input.remaining() < 17 {
+            return Ok(LogicalTs {
+                ts_type: 0,
+                last_committed: 0,
+                seq_num: 0,
+            });
         }
-        let (offset, ts_type) = self.read_u8(offset)?;
-        let (offset, last_committed) = self.read_le_u64(offset)?;
-        let (offset, seq_num) = self.read_le_u64(offset)?;
-        Ok((
-            offset,
-            LogicalTs {
-                ts_type,
-                last_committed,
-                seq_num,
-            },
-        ))
+        let ts_type = input.read_u8()?;
+        let last_committed = input.read_le_u64()?;
+        let seq_num = input.read_le_u64()?;
+        Ok(LogicalTs {
+            ts_type,
+            last_committed,
+            seq_num,
+        })
     }
 }
 
@@ -86,14 +100,14 @@ impl ReadFrom<'_, LogicalTs> for [u8] {
 ///
 /// reference: https://github.com/mysql/mysql-server/blob/5.7/libbinlogevents/include/control_events.h#L1074
 #[derive(Debug, Clone)]
-pub struct PreviousGtidsLogData<'a> {
-    pub payload: &'a [u8],
+pub struct PreviousGtidsLogData {
+    pub payload: Bytes,
 }
 
-impl<'a> PreviousGtidsLogData<'a> {
+impl PreviousGtidsLogData {
     pub fn gtid_set(&self) -> Result<GtidSet> {
-        let (_, gtid_set) = self.payload.read_from(0)?;
-        Ok(gtid_set)
+        let mut payload = self.payload.clone();
+        GtidSet::read_from(&mut payload)
     }
 }
 
@@ -101,10 +115,10 @@ impl<'a> PreviousGtidsLogData<'a> {
 ///
 /// seems layout introduction on mysql dev website is wrong,
 /// so follow source code: https://github.com/mysql/mysql-server/blob/5.7/sql/rpl_gtid_set.cc#L1469
-impl<'a> ReadFrom<'a, PreviousGtidsLogData<'a>> for [u8] {
-    fn read_from(&'a self, offset: usize) -> Result<(usize, PreviousGtidsLogData<'a>)> {
-        let (offset, payload) = self.take_len(offset, self.len() - offset)?;
-        Ok((offset, PreviousGtidsLogData { payload }))
+impl ReadFromBytes for PreviousGtidsLogData {
+    fn read_from(input: &mut Bytes) -> Result<Self> {
+        let payload = input.split_to(input.remaining());
+        Ok(PreviousGtidsLogData { payload })
     }
 }
 
@@ -129,30 +143,28 @@ pub struct GtidInterval {
 /// parse gtid set from payload of PreviousGtidsLogEvent
 ///
 /// reference: https://github.com/mysql/mysql-server/blob/5.7/sql/rpl_gtid_set.cc#L1469
-impl ReadFrom<'_, GtidSet> for [u8] {
-    fn read_from(&self, offset: usize) -> Result<(usize, GtidSet)> {
-        let (mut offset, n_sids) = self.read_le_u64(offset)?;
-        let n_sids = n_sids as usize;
+impl ReadFromBytes for GtidSet {
+    fn read_from(input: &mut Bytes) -> Result<Self> {
+        let n_sids = input.read_le_u64()? as usize;
         let mut sids = LinkedHashMap::with_capacity(n_sids);
         for _ in 0..n_sids {
-            let (os1, gtid_range): (_, GtidRange) = self.read_from(offset)?;
+            let gtid_range = GtidRange::read_from(input)?;
             // todo: may need to handle duplicate sids
             sids.insert(gtid_range.sid, gtid_range);
-            offset = os1;
         }
-        Ok((offset, GtidSet { sids }))
+        Ok(GtidSet { sids })
     }
 }
 
-impl ReadFrom<'_, GtidRange> for [u8] {
-    fn read_from(&self, offset: usize) -> Result<(usize, GtidRange)> {
-        let (offset, sid) = self.read_le_u128(offset)?;
-        let (mut offset, n_intervals) = self.read_le_u64(offset)?;
+impl ReadFromBytes for GtidRange {
+    fn read_from(input: &mut Bytes) -> Result<Self> {
+        let sid = input.read_le_u128()?;
+        let n_intervals = input.read_le_u64()? as usize;
         let mut last = 0u64;
         let mut intervals = Vec::with_capacity(n_intervals as usize);
-        for _ in 0..n_intervals as usize {
-            let (os1, start) = self.read_le_u64(offset)?;
-            let (os1, end) = self.read_le_u64(os1)?;
+        for _ in 0..n_intervals {
+            let start = input.read_le_u64()?;
+            let end = input.read_le_u64()?;
             if start <= last || end <= start {
                 return Err(Error::ConstraintError(format!(
                     "invalid gtid range: start={}, end={}, last={}",
@@ -165,8 +177,7 @@ impl ReadFrom<'_, GtidRange> for [u8] {
                 start,
                 end: end - 1,
             });
-            offset = os1;
         }
-        Ok((offset, GtidRange { sid, intervals }))
+        Ok(GtidRange { sid, intervals })
     }
 }

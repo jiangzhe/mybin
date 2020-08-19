@@ -5,9 +5,10 @@ use std::future::Future;
 use std::io::ErrorKind;
 use std::pin::Pin;
 use std::task::{Context, Poll};
+use bytes::{Bytes, BufMut, BytesMut};
 
 pub trait AsyncReadBytes: AsyncRead {
-    fn take_out<'a>(&'a mut self, total: usize, out: &'a mut Vec<u8>) -> TakeOutFuture<'a, Self>
+    fn take_out<'a>(&'a mut self, total: usize, out: &'a mut BytesMut) -> TakeOutFuture<'a, Self>
     where
         Self: Unpin,
     {
@@ -46,7 +47,7 @@ impl<R: AsyncRead> AsyncReadBytes for R {}
 pub struct TakeOutFuture<'a, T: Unpin + ?Sized> {
     pub reader: &'a mut T,
     pub total: usize,
-    pub out: &'a mut Vec<u8>,
+    pub out: &'a mut BytesMut,
 }
 
 impl<R: AsyncRead + Unpin + ?Sized> Future for TakeOutFuture<'_, R> {
@@ -65,10 +66,10 @@ fn take_out_internal<'a, R: AsyncRead + Unpin + ?Sized>(
     reader: &'a mut R,
     cx: &mut Context<'_>,
     required: usize,
-    out: &'a mut Vec<u8>,
+    out: &'a mut BytesMut,
 ) -> Poll<Result<()>> {
     struct Guard<'a> {
-        out: &'a mut Vec<u8>,
+        out: &'a mut BytesMut,
         len: usize,
     }
     impl Drop for Guard<'_> {
@@ -85,7 +86,7 @@ fn take_out_internal<'a, R: AsyncRead + Unpin + ?Sized>(
         match ready!(reader.as_mut().poll_read(cx, &mut g.out[g.len..])) {
             Ok(0) => {
                 return Poll::Ready(Err(Error::InputIncomplete(
-                    vec![],
+                    Bytes::new(),
                     Needed::Size(required - read),
                 )))
             }
@@ -110,18 +111,18 @@ pub struct TakeFuture<'a, T: Unpin + ?Sized> {
 }
 
 impl<R: AsyncRead + Unpin + ?Sized> Future for TakeFuture<'_, R> {
-    type Output = Result<Vec<u8>>;
+    type Output = Result<Bytes>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let Self { reader, total } = &mut *self;
         if *total == 0 {
-            return Poll::Ready(Ok(Vec::new()));
+            return Poll::Ready(Ok(Bytes::new()));
         }
-        let mut out = Vec::new();
+        let mut out = BytesMut::new();
         match ready!(take_out_internal(reader, cx, *total, &mut out)) {
-            Ok(..) => Poll::Ready(Ok(out)),
+            Ok(..) => Poll::Ready(Ok(out.freeze())),
             Err(Error::InputIncomplete(_, needed)) => {
-                Poll::Ready(Err(Error::InputIncomplete(out, needed)))
+                Poll::Ready(Err(Error::InputIncomplete(out.freeze(), needed)))
             }
             Err(e) => Poll::Ready(Err(e)),
         }
@@ -136,7 +137,7 @@ pub struct TakeUntilFuture<'a, T: Unpin + ?Sized> {
 }
 
 impl<R: AsyncRead + Unpin + ?Sized> Future for TakeUntilFuture<'_, R> {
-    type Output = Result<Vec<u8>>;
+    type Output = Result<Bytes>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let Self { reader, b, include } = &mut *self;
@@ -149,21 +150,21 @@ fn take_until_internal<'a, R: AsyncRead + Unpin + ?Sized>(
     cx: &mut Context<'_>,
     b0: u8,
     include: bool,
-) -> Poll<Result<Vec<u8>>> {
+) -> Poll<Result<Bytes>> {
     let mut reader = Pin::new(reader);
     let mut b = 0u8;
-    let mut bs = Vec::new();
+    let mut bs = BytesMut::new();
     loop {
         match ready!(reader.as_mut().poll_read(cx, std::slice::from_mut(&mut b))) {
-            Ok(0) => return Poll::Ready(Err(Error::InputIncomplete(bs, Needed::Unknown))),
+            Ok(0) => return Poll::Ready(Err(Error::InputIncomplete(bs.freeze(), Needed::Unknown))),
             Ok(..) if b == b0 => {
                 if include {
-                    bs.push(b);
+                    bs.put_u8(b);
                 }
-                return Poll::Ready(Ok(bs));
+                return Poll::Ready(Ok(bs.freeze()));
             }
             Ok(..) => {
-                bs.push(b);
+                bs.put_u8(b);
             }
             Err(ref e) if e.kind() == ErrorKind::Interrupted => (),
             Err(e) => return Poll::Ready(Err(Error::from(e))),
@@ -174,30 +175,31 @@ fn take_until_internal<'a, R: AsyncRead + Unpin + ?Sized>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bytes::Buf;
 
     #[smol_potat::test]
     async fn test_take_out_0() {
         let bs = [1u8, 2, 3, 4, 5];
         let mut reader = &bs[..];
-        let mut out = vec![];
+        let mut out = BytesMut::new();
         let _ = reader.take_out(0, &mut out).await.unwrap();
-        assert_eq!(Vec::<u8>::new(), out);
+        assert_eq!(Vec::<u8>::new(), out.bytes());
     }
 
     #[smol_potat::test]
     async fn test_take_out_3() {
         let bs = [1u8, 2, 3, 4, 5];
         let mut reader = &bs[..];
-        let mut out = vec![];
+        let mut out = BytesMut::new();
         let _ = reader.take_out(3, &mut out).await.unwrap();
-        assert_eq!(vec![1u8, 2, 3], out);
+        assert_eq!(vec![1u8, 2, 3], out.bytes());
     }
 
     #[smol_potat::test]
     async fn test_take_out_6() {
         let bs = [1u8, 2, 3, 4, 5];
         let mut reader = &bs[..];
-        let mut out = vec![];
+        let mut out = BytesMut::new();
         let rst = reader.take_out(6, &mut out).await;
         dbg!(&rst);
         dbg!(out);

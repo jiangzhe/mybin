@@ -11,3 +11,4 @@ thiserror = "1.0"
 bytes-parser = { version = "0.1.0", path = "../bytes-parser" }
 crc-any = "2.3"
 linked-hash-map = "0.5.3"
+bytes = "0.5.6"

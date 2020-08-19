@@ -1,6 +1,6 @@
 use bytes_parser::error::Result;
-use bytes_parser::number::ReadNumber;
-use bytes_parser::ReadFrom;
+use bytes_parser::{ReadFromBytes, ReadBytesExt};
+use bytes::Bytes;
 
 /// Data of XidEvent
 ///
@@ -10,9 +10,9 @@ pub struct XidData {
     pub xid: u64,
 }
 
-impl ReadFrom<'_, XidData> for [u8] {
-    fn read_from(&self, offset: usize) -> Result<(usize, XidData)> {
-        let (offset, xid) = self.read_le_u64(offset)?;
-        Ok((offset, XidData { xid }))
+impl ReadFromBytes for XidData {
+    fn read_from(input: &mut Bytes) -> Result<Self> {
+        let xid = input.read_le_u64()?;
+        Ok(XidData { xid })
     }
 }
