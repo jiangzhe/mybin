@@ -190,6 +190,87 @@ impl ReadNumber for [u8] {
     }
 }
 
+// pub trait ReadNum {
+//     fn read_u8(&mut self) -> Result<u8>;
+
+//     fn read_le_u16(&mut self) -> Result<u16>;
+
+//     fn read_le_u24(&mut self) -> Result<u32>;
+
+//     fn read_le_u32(&mut self) -> Result<u32>;
+
+//     fn read_le_u48(&mut self) -> Result<u64>;
+
+//     fn read_le_u64(&mut self) -> Result<u64>;
+
+//     fn read_le_u128(&mut self) -> Result<u128>;
+// }
+
+// impl ReadNum for Bytes {
+//     fn read_u8(&mut self) -> Result<u8> {
+//         if self.remaining() < 1 {
+//             return Err(Error::InputIncomplete(Needed::Size(1)));
+//         }
+//         Ok(self.get_u8())
+//     }
+
+//     fn read_le_u16(&mut self) -> Result<u16> {
+//         if self.remaining() < 2 {
+//             return Err(Error::InputIncomplete(Needed::Size(2 - self.remaining())));
+//         }
+//         Ok(self.get_u16_le())
+//     }
+
+//     fn read_le_u24(&mut self) -> Result<u32> {
+//         if self.remaining() < 3 {
+//             return Err(Error::InputIncomplete(Needed::Size(3 - self.remaining())));
+//         }
+//         let bs = self.bytes();
+//         let r = bs[0] as u32
+//             + ((bs[1] as u32) << 8)
+//             + ((bs[2] as u32) << 16);
+//         self.advance(3);
+//         Ok(r)
+//     }
+
+//     fn read_le_u32(&mut self) -> Result<u32> {
+//         if self.remaining() < 4 {
+//             return Err(Error::InputIncomplete(Needed::Size(4 - self.remaining())));
+//         }
+//         Ok(self.get_u32_le())
+//     }
+
+//     fn read_le_u48(&mut self) -> Result<u64> {
+//         if self.remaining() < 6 {
+//             return Err(Error::InputIncomplete(Needed::Size(6 - self.remaining())));
+//         }
+//         let bs = self.bytes();
+//         let r = bs[0] as u64
+//             + ((bs[1] as u64) << 8)
+//             + ((bs[2] as u64) << 16)
+//             + ((bs[3] as u64) << 24)
+//             + ((bs[4] as u64) << 32)
+//             + ((bs[5] as u64) << 40);
+//         self.advance(6);
+//         Ok(r)
+//     }
+
+//     fn read_le_u64(&mut self) -> Result<u64> {
+//         if self.remaining() < 8 {
+//             return Err(Error::InputIncomplete(Needed::Size(8 - self.remaining())));
+//         }
+//         Ok(self.get_u64_le())
+//     }
+
+//     fn read_le_u128(&mut self) -> Result<u128> {
+//         if self.remaining() < 16 {
+//             return Err(Error::InputIncomplete(Needed::Size(16 - self.remaining())));
+//         }
+//         Ok(self.get_u128_le())
+//     }
+// }
+
+
 pub trait WriteNumber {
     /// write single byte
     fn write_u8(&mut self, n: u8) -> Result<usize>;

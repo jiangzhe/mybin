@@ -1,13 +1,12 @@
-use bytes_parser::bytes::ReadBytes;
 use bytes_parser::error::Result;
-use bytes_parser::number::ReadNumber;
-use bytes_parser::ReadFrom;
+use bytes_parser::{ReadBytesExt, ReadFromBytes};
+use bytes::{Buf, Bytes};
 
 /// Data of LoadEvent
 ///
 /// reference: https://dev.mysql.com/doc/internals/en/load-event.html
 #[derive(Debug, Clone)]
-pub struct LoadData<'a> {
+pub struct LoadData {
     pub slave_proxy_id: u32,
     pub exec_time: u32,
     pub skip_lines: u32,
@@ -22,62 +21,59 @@ pub struct LoadData<'a> {
     pub escaped_by: u8,
     pub opt_flags: u8,
     pub empty_flags: u8,
-    pub field_name_lengths: &'a [u8],
-    pub field_names: &'a [u8],
-    pub table_name: &'a [u8],
-    pub schema_name: &'a [u8],
-    pub file_name: &'a [u8],
+    pub field_name_lengths: Bytes,
+    pub field_names: Bytes,
+    pub table_name: Bytes,
+    pub schema_name: Bytes,
+    pub file_name: Bytes,
 }
 
-impl<'a> ReadFrom<'a, LoadData<'a>> for [u8] {
-    fn read_from(&'a self, offset: usize) -> Result<(usize, LoadData<'a>)> {
-        let (offset, slave_proxy_id) = self.read_le_u32(offset)?;
-        let (offset, exec_time) = self.read_le_u32(offset)?;
-        let (offset, skip_lines) = self.read_le_u32(offset)?;
-        let (offset, table_name_len) = self.read_u8(offset)?;
-        let (offset, schema_len) = self.read_u8(offset)?;
-        let (offset, num_fields) = self.read_le_u32(offset)?;
+impl ReadFromBytes for LoadData {
+    fn read_from(input: &mut Bytes) -> Result<Self> {
+        let slave_proxy_id = input.read_le_u32()?;
+        let exec_time = input.read_le_u32()?;
+        let skip_lines = input.read_le_u32()?;
+        let table_name_len = input.read_u8()?;
+        let schema_len = input.read_u8()?;
+        let num_fields = input.read_le_u32()?;
         // below is variable part
-        let (offset, field_term) = self.read_u8(offset)?;
-        let (offset, enclosed_by) = self.read_u8(offset)?;
-        let (offset, line_term) = self.read_u8(offset)?;
-        let (offset, line_start) = self.read_u8(offset)?;
-        let (offset, escaped_by) = self.read_u8(offset)?;
-        let (offset, opt_flags) = self.read_u8(offset)?;
-        let (offset, empty_flags) = self.read_u8(offset)?;
-        let (offset, field_name_lengths) = self.take_len(offset, num_fields as usize)?;
+        let field_term = input.read_u8()?;
+        let enclosed_by = input.read_u8()?;
+        let line_term = input.read_u8()?;
+        let line_start = input.read_u8()?;
+        let escaped_by = input.read_u8()?;
+        let opt_flags = input.read_u8()?;
+        let empty_flags = input.read_u8()?;
+        let field_name_lengths = input.read_len(num_fields as usize)?;
         let field_name_total_length =
             field_name_lengths.iter().map(|l| *l as u32).sum::<u32>() + num_fields as u32;
-        let (offset, field_names) = self.take_len(offset, field_name_total_length as usize)?;
-        let (offset, tn) = self.take_len(offset, table_name_len as usize + 1)?;
-        let (_, table_name) = tn.take_until(0, 0, false)?;
-        let (offset, sn) = self.take_len(offset, schema_len as usize + 1)?;
-        let (_, schema_name) = sn.take_until(0, 0, false)?;
-        let (offset, fn_in) = self.take_len(offset, self.len() - offset)?;
-        let (_, file_name) = fn_in.take_until(0, 0, false)?;
-        Ok((
-            offset,
-            LoadData {
-                slave_proxy_id,
-                exec_time,
-                skip_lines,
-                table_name_len,
-                schema_len,
-                num_fields,
-                field_term,
-                enclosed_by,
-                line_term,
-                line_start,
-                escaped_by,
-                opt_flags,
-                empty_flags,
-                field_name_lengths,
-                field_names,
-                table_name,
-                schema_name,
-                file_name,
-            },
-        ))
+        let field_names = input.read_len(field_name_total_length as usize)?;
+        let mut table_name = input.read_len(table_name_len as usize + 1)?;
+        let table_name = table_name.read_until(0, false)?;
+        let mut schema_name = input.read_len(schema_len as usize + 1)?;
+        let schema_name = schema_name.read_until(0, false)?;
+        let mut file_name = input.split_to(input.remaining());
+        let file_name = file_name.read_until(0, false)?;
+        Ok(LoadData {
+            slave_proxy_id,
+            exec_time,
+            skip_lines,
+            table_name_len,
+            schema_len,
+            num_fields,
+            field_term,
+            enclosed_by,
+            line_term,
+            line_start,
+            escaped_by,
+            opt_flags,
+            empty_flags,
+            field_name_lengths,
+            field_names,
+            table_name,
+            schema_name,
+            file_name,
+        })
     }
 }
 
@@ -85,24 +81,21 @@ impl<'a> ReadFrom<'a, LoadData<'a>> for [u8] {
 ///
 /// reference: https://dev.mysql.com/doc/internals/en/create-file-event.html
 #[derive(Debug, Clone)]
-pub struct CreateFileData<'a> {
+pub struct CreateFileData {
     pub file_id: u32,
     // below is variable part
-    pub block_data: &'a [u8],
+    pub block_data: Bytes,
 }
 
-impl<'a> ReadFrom<'a, CreateFileData<'a>> for [u8] {
-    fn read_from(&'a self, offset: usize) -> Result<(usize, CreateFileData<'a>)> {
-        let (offset, file_id) = self.read_le_u32(offset)?;
-        let (offset, bd) = self.take_len(offset, self.len() - offset)?;
-        let (_, block_data) = bd.take_until(0, 0, false)?;
-        Ok((
-            offset,
-            CreateFileData {
-                file_id,
-                block_data,
-            },
-        ))
+impl ReadFromBytes for CreateFileData {
+    fn read_from(input: &mut Bytes) -> Result<Self> {
+        let file_id = input.read_le_u32()?;
+        let mut block_data = input.split_to(input.remaining());
+        let block_data = block_data.read_until(0, false)?;
+        Ok(CreateFileData {
+            file_id,
+            block_data,
+        })
     }
 }
 
@@ -110,24 +103,21 @@ impl<'a> ReadFrom<'a, CreateFileData<'a>> for [u8] {
 ///
 /// reference: https://dev.mysql.com/doc/internals/en/append-block-event.html
 #[derive(Debug, Clone)]
-pub struct AppendBlockData<'a> {
+pub struct AppendBlockData {
     pub file_id: u32,
     // below is variable part
-    pub block_data: &'a [u8],
+    pub block_data: Bytes,
 }
 
-impl<'a> ReadFrom<'a, AppendBlockData<'a>> for [u8] {
-    fn read_from(&'a self, offset: usize) -> Result<(usize, AppendBlockData<'a>)> {
-        let (offset, file_id) = self.read_le_u32(offset)?;
-        let (offset, bd) = self.take_len(offset, self.len() - offset)?;
-        let (_, block_data) = bd.take_until(0, 0, false)?;
-        Ok((
-            offset,
-            AppendBlockData {
-                file_id,
-                block_data,
-            },
-        ))
+impl ReadFromBytes for AppendBlockData {
+    fn read_from(input: &mut Bytes) -> Result<Self> {
+        let file_id = input.read_le_u32()?;
+        let mut block_data = input.split_to(input.remaining());
+        let block_data = block_data.read_until(0, false)?;
+        Ok(AppendBlockData {
+            file_id,
+            block_data,
+        })
     }
 }
 
@@ -139,11 +129,10 @@ pub struct ExecLoadData {
     pub file_id: u32,
 }
 
-impl ReadFrom<'_, ExecLoadData> for [u8] {
-    fn read_from(&self, offset: usize) -> Result<(usize, ExecLoadData)> {
-        let (offset, file_id) = self.read_le_u32(offset)?;
-        debug_assert_eq!(self.len(), offset);
-        Ok((offset, ExecLoadData { file_id }))
+impl ReadFromBytes for ExecLoadData {
+    fn read_from(input: &mut Bytes) -> Result<Self> {
+        let file_id = input.read_le_u32()?;
+        Ok(ExecLoadData { file_id })
     }
 }
 
@@ -155,11 +144,10 @@ pub struct DeleteFileData {
     pub file_id: u32,
 }
 
-impl ReadFrom<'_, DeleteFileData> for [u8] {
-    fn read_from(&self, offset: usize) -> Result<(usize, DeleteFileData)> {
-        let (offset, file_id) = self.read_le_u32(offset)?;
-        debug_assert_eq!(self.len(), offset);
-        Ok((offset, DeleteFileData { file_id }))
+impl ReadFromBytes for DeleteFileData {
+    fn read_from(input: &mut Bytes) -> Result<Self> {
+        let file_id = input.read_le_u32()?;
+        Ok(DeleteFileData { file_id })
     }
 }
 
@@ -167,7 +155,7 @@ impl ReadFrom<'_, DeleteFileData> for [u8] {
 ///
 /// reference: https://dev.mysql.com/doc/internals/en/new-load-event.html
 #[derive(Debug, Clone)]
-pub struct NewLoadData<'a> {
+pub struct NewLoadData {
     pub slave_proxy_id: u32,
     pub exec_time: u32,
     pub skip_lines: u32,
@@ -176,81 +164,77 @@ pub struct NewLoadData<'a> {
     pub num_fields: u32,
     //below is variable part
     pub field_term_len: u8,
-    pub field_term: &'a [u8],
+    pub field_term: Bytes,
     pub enclosed_by_len: u8,
-    pub enclosed_by: &'a [u8],
+    pub enclosed_by: Bytes,
     pub line_term_len: u8,
-    pub line_term: &'a [u8],
+    pub line_term: Bytes,
     pub line_start_len: u8,
-    pub line_start: &'a [u8],
+    pub line_start: Bytes,
     pub escaped_by_len: u8,
-    pub escaped_by: &'a [u8],
+    pub escaped_by: Bytes,
     pub opt_flags: u8,
-    pub field_name_lengths: &'a [u8],
-    pub field_names: &'a [u8],
-    pub table_name: &'a [u8],
-    pub schema_name: &'a [u8],
-    pub file_name: &'a [u8],
+    pub field_name_lengths: Bytes,
+    pub field_names: Bytes,
+    pub table_name: Bytes,
+    pub schema_name: Bytes,
+    pub file_name: Bytes,
 }
 
-impl<'a> ReadFrom<'a, NewLoadData<'a>> for [u8] {
-    fn read_from(&'a self, offset: usize) -> Result<(usize, NewLoadData<'a>)> {
-        let (offset, slave_proxy_id) = self.read_le_u32(offset)?;
-        let (offset, exec_time) = self.read_le_u32(offset)?;
-        let (offset, skip_lines) = self.read_le_u32(offset)?;
-        let (offset, table_name_len) = self.read_u8(offset)?;
-        let (offset, schema_len) = self.read_u8(offset)?;
-        let (offset, num_fields) = self.read_le_u32(offset)?;
+impl ReadFromBytes for NewLoadData {
+    fn read_from(input: &mut Bytes) -> Result<Self> {
+        let slave_proxy_id = input.read_le_u32()?;
+        let exec_time = input.read_le_u32()?;
+        let skip_lines = input.read_le_u32()?;
+        let table_name_len = input.read_u8()?;
+        let schema_len = input.read_u8()?;
+        let num_fields = input.read_le_u32()?;
         // below is variable part
-        let (offset, field_term_len) = self.read_u8(offset)?;
-        let (offset, field_term) = self.take_len(offset, field_term_len as usize)?;
-        let (offset, enclosed_by_len) = self.read_u8(offset)?;
-        let (offset, enclosed_by) = self.take_len(offset, enclosed_by_len as usize)?;
-        let (offset, line_term_len) = self.read_u8(offset)?;
-        let (offset, line_term) = self.take_len(offset, line_term_len as usize)?;
-        let (offset, line_start_len) = self.read_u8(offset)?;
-        let (offset, line_start) = self.take_len(offset, line_start_len as usize)?;
-        let (offset, escaped_by_len) = self.read_u8(offset)?;
-        let (offset, escaped_by) = self.take_len(offset, escaped_by_len as usize)?;
-        let (offset, opt_flags) = self.read_u8(offset)?;
-        let (offset, field_name_lengths) = self.take_len(offset, num_fields as usize)?;
+        let field_term_len = input.read_u8()?;
+        let field_term = input.read_len(field_term_len as usize)?;
+        let enclosed_by_len = input.read_u8()?;
+        let enclosed_by = input.read_len(enclosed_by_len as usize)?;
+        let line_term_len = input.read_u8()?;
+        let line_term = input.read_len(line_term_len as usize)?;
+        let line_start_len = input.read_u8()?;
+        let line_start = input.read_len(line_start_len as usize)?;
+        let escaped_by_len = input.read_u8()?;
+        let escaped_by = input.read_len(escaped_by_len as usize)?;
+        let opt_flags = input.read_u8()?;
+        let field_name_lengths = input.read_len(num_fields as usize)?;
         let field_name_total_length =
             field_name_lengths.iter().map(|l| *l as u32).sum::<u32>() + num_fields as u32;
-        let (offset, field_names) = self.take_len(offset, field_name_total_length as usize)?;
-        let (offset, tn) = self.take_len(offset, table_name_len as usize + 1)?;
-        let (_, table_name) = tn.take_until(0, 0, false)?;
-        let (offset, sn) = self.take_len(offset, schema_len as usize + 1)?;
-        let (_, schema_name) = sn.take_until(0, 0, false)?;
-
-        let (offset, fn_in) = self.take_len(offset, self.len() - offset)?;
-        let (_, file_name) = fn_in.take_until(0, 0, false)?;
-        Ok((
-            offset,
-            NewLoadData {
-                slave_proxy_id,
-                exec_time,
-                skip_lines,
-                table_name_len,
-                schema_len,
-                num_fields,
-                field_term_len,
-                field_term,
-                enclosed_by_len,
-                enclosed_by,
-                line_term_len,
-                line_term,
-                line_start_len,
-                line_start,
-                escaped_by_len,
-                escaped_by,
-                opt_flags,
-                field_name_lengths,
-                field_names,
-                table_name,
-                schema_name,
-                file_name,
-            },
-        ))
+        let field_names = input.read_len(field_name_total_length as usize)?;
+        let mut table_name = input.read_len(table_name_len as usize + 1)?;
+        let table_name = table_name.read_until(0, false)?;
+        let mut schema_name = input.read_len(schema_len as usize + 1)?;
+        let schema_name = schema_name.read_until(0, false)?;
+        let mut file_name = input.split_to(input.remaining());
+        let file_name = file_name.read_until(0, false)?;
+        Ok(NewLoadData {
+            slave_proxy_id,
+            exec_time,
+            skip_lines,
+            table_name_len,
+            schema_len,
+            num_fields,
+            field_term_len,
+            field_term,
+            enclosed_by_len,
+            enclosed_by,
+            line_term_len,
+            line_term,
+            line_start_len,
+            line_start,
+            escaped_by_len,
+            escaped_by,
+            opt_flags,
+            field_name_lengths,
+            field_names,
+            table_name,
+            schema_name,
+            file_name,
+        })
     }
 }
 
@@ -258,23 +242,20 @@ impl<'a> ReadFrom<'a, NewLoadData<'a>> for [u8] {
 ///
 /// reference: https://dev.mysql.com/doc/internals/en/begin-load-query-event.html
 #[derive(Debug, Clone)]
-pub struct BeginLoadQueryData<'a> {
+pub struct BeginLoadQueryData {
     pub file_id: u32,
     // below is variable part
-    pub block_data: &'a [u8],
+    pub block_data: Bytes,
 }
 
-impl<'a> ReadFrom<'a, BeginLoadQueryData<'a>> for [u8] {
-    fn read_from(&'a self, offset: usize) -> Result<(usize, BeginLoadQueryData<'a>)> {
-        let (offset, file_id) = self.read_le_u32(offset)?;
-        let (offset, block_data) = self.take_len(offset, self.len() - offset)?;
-        Ok((
-            offset,
-            BeginLoadQueryData {
-                file_id,
-                block_data,
-            },
-        ))
+impl ReadFromBytes for BeginLoadQueryData {
+    fn read_from(input: &mut Bytes) -> Result<Self> {
+        let file_id = input.read_le_u32()?;
+        let block_data = input.split_to(input.remaining());
+        Ok(BeginLoadQueryData {
+            file_id,
+            block_data,
+        })
     }
 }
 
@@ -286,7 +267,7 @@ impl<'a> ReadFrom<'a, BeginLoadQueryData<'a>> for [u8] {
 /// after checking real data in binlog, the second resource seems correct
 /// payload will be lazy evaluated via separate module
 #[derive(Debug, Clone)]
-pub struct ExecuteLoadQueryData<'a> {
+pub struct ExecuteLoadQueryData {
     pub slave_proxy_id: u32,
     pub execution_time: u32,
     pub schema_length: u8,
@@ -297,35 +278,32 @@ pub struct ExecuteLoadQueryData<'a> {
     pub end_pos: u32,
     pub dup_handling_flags: u8,
     // below is variable part
-    pub payload: &'a [u8],
+    pub payload: Bytes,
 }
 
-impl<'a> ReadFrom<'a, ExecuteLoadQueryData<'a>> for [u8] {
-    fn read_from(&'a self, offset: usize) -> Result<(usize, ExecuteLoadQueryData<'a>)> {
-        let (offset, slave_proxy_id) = self.read_le_u32(offset)?;
-        let (offset, execution_time) = self.read_le_u32(offset)?;
-        let (offset, schema_length) = self.read_u8(offset)?;
-        let (offset, error_code) = self.read_le_u16(offset)?;
-        let (offset, status_vars_length) = self.read_le_u16(offset)?;
-        let (offset, file_id) = self.read_le_u32(offset)?;
-        let (offset, start_pos) = self.read_le_u32(offset)?;
-        let (offset, end_pos) = self.read_le_u32(offset)?;
-        let (offset, dup_handling_flags) = self.read_u8(offset)?;
-        let (offset, payload) = self.take_len(offset, self.len() - offset)?;
-        Ok((
-            offset,
-            ExecuteLoadQueryData {
-                slave_proxy_id,
-                execution_time,
-                schema_length,
-                error_code,
-                status_vars_length,
-                file_id,
-                start_pos,
-                end_pos,
-                dup_handling_flags,
-                payload,
-            },
-        ))
+impl ReadFromBytes for ExecuteLoadQueryData {
+    fn read_from(input: &mut Bytes) -> Result<Self> {
+        let slave_proxy_id = input.read_le_u32()?;
+        let execution_time = input.read_le_u32()?;
+        let schema_length = input.read_u8()?;
+        let error_code = input.read_le_u16()?;
+        let status_vars_length = input.read_le_u16()?;
+        let file_id = input.read_le_u32()?;
+        let start_pos = input.read_le_u32()?;
+        let end_pos = input.read_le_u32()?;
+        let dup_handling_flags = input.read_u8()?;
+        let payload = input.split_to(input.remaining());
+        Ok(ExecuteLoadQueryData {
+            slave_proxy_id,
+            execution_time,
+            schema_length,
+            error_code,
+            status_vars_length,
+            file_id,
+            start_pos,
+            end_pos,
+            dup_handling_flags,
+            payload,
+        })
     }
 }

@@ -15,7 +15,7 @@ macro_rules! read_number_future {
                     match ready!(reader.as_mut().poll_read(cx, &mut bs[read..])) {
                         Ok(0) => {
                             return Poll::Ready(Err(Error::InputIncomplete(
-                                Vec::from(&bs[..read]),
+                                bytes::Bytes::copy_from_slice(&bs[..read]),
                                 Needed::Size($len - read),
                             )))
                         }

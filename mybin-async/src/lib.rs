@@ -5,6 +5,7 @@ mod error;
 mod number;
 mod binlog_stream;
 mod recv_msg;
+mod query;
 mod util;
 
 pub use crate::bytes::*;

@@ -1,9 +1,8 @@
 use super::header::EventHeader;
 use super::*;
 use crate::util::checksum_crc32;
-use bytes_parser::bytes::ReadBytes;
-use bytes_parser::number::ReadNumber;
-use bytes_parser::ReadFrom;
+use bytes_parser::{ReadFromBytes, ReadBytesExt};
+use bytes::{Buf,Bytes};
 // use bytes_parser::error::{Result, Error};
 use crate::error::{Error, Result};
 
@@ -20,25 +19,26 @@ pub enum BinlogVersion {
 /// and determine the binlog version based on the first event.
 /// NOTE: some old versions of mysql are not supported and will panic in this method.
 /// reference: https://dev.mysql.com/doc/internals/en/binary-log-versions.html
-impl ReadFrom<'_, BinlogVersion> for [u8] {
-    fn read_from(&self, offset: usize) -> bytes_parser::error::Result<(usize, BinlogVersion)> {
-        let (offset, magic) = self.take_len(offset, 4)?;
-        if magic != b"\xfebin" {
+impl ReadFromBytes for BinlogVersion {
+    fn read_from(input: &mut Bytes) -> bytes_parser::error::Result<Self> {
+        let magic = input.read_len(4)?;
+        if magic.as_ref() != b"\xfebin" {
             return Err(bytes_parser::error::Error::ConstraintError(format!(
                 "invalid magic number: {:?}",
                 magic
             )));
         }
-        let (_, header): (_, EventHeader) = self.read_from(offset)?;
+        // clone to avoid consuming event
+        let header = EventHeader::read_from(&mut input.clone())?;
         match LogEventType::from(header.type_code) {
             LogEventType::StartEventV3 => {
                 if header.event_len < 75 {
-                    Ok((offset, BinlogVersion::V1))
+                    Ok(BinlogVersion::V1)
                 } else {
-                    Ok((offset, BinlogVersion::V3))
+                    Ok(BinlogVersion::V3)
                 }
             }
-            LogEventType::FormatDescriptionEvent => Ok((offset, BinlogVersion::V4)),
+            LogEventType::FormatDescriptionEvent => Ok(BinlogVersion::V4),
             et => Err(bytes_parser::error::Error::ConstraintError(format!(
                 "invalid event type: {:?}",
                 et
@@ -68,7 +68,7 @@ impl ParserV4 {
 
     /// create parser from given format description event
     pub fn from_fde(fde: &FormatDescriptionEvent) -> Self {
-        let post_header_lengths = post_header_lengths_from_raw(fde.data.post_header_lengths);
+        let post_header_lengths = post_header_lengths_from_raw(fde.data.post_header_lengths.as_ref());
         let checksum = fde.data.checksum_flag == 1;
         ParserV4::new(post_header_lengths, checksum)
     }
@@ -76,159 +76,170 @@ impl ParserV4 {
     // this function will verify binlog version to be v4
     // and consume FDE to get post header lengths for all
     // following events
-    pub fn from_binlog_file(input: &[u8]) -> Result<(usize, Self)> {
-        let (offset, binlog_version): (_, BinlogVersion) = input.read_from(0)?;
+    pub fn from_binlog_file(input: &mut Bytes) -> Result<Self> {
+        let binlog_version = BinlogVersion::read_from(input)?;
         if binlog_version != BinlogVersion::V4 {
             return Err(Error::InvalidBinlogFormat(format!(
                 "unsupported binlog version: {:?}",
                 binlog_version
             )));
         }
-        let (offset, fde) = input.read_from(offset)?;
-        Ok((offset, Self::from_fde(&fde)))
+        let header = EventHeader::read_from(input)?;
+        let mut raw_data = input.read_len(header.data_len() as usize)?;
+        let data = FormatDescriptionData::read_from(&mut raw_data)?;
+        Ok(Self::from_fde(&FormatDescriptionEvent{header, data}))
     }
 
     // parse the event starting from given offset
     // if validate_checksum is set to true, will
     // verify crc32 checksum if possible
     // for any non-supported event, returns None
-    pub fn parse_event<'a>(
+    pub fn parse_event(
         &self,
-        input: &'a [u8],
-        offset: usize,
+        input: &mut Bytes,
         validate_checksum: bool,
-    ) -> Result<(usize, Option<Event<'a>>)> {
-        let start = offset;
-        let (_, header): (_, EventHeader) = input.read_from(offset)?;
-        let (offset, raw_data) = input.take_len(offset, header.event_len as usize)?;
+    ) -> Result<Option<Event>> {
+        if self.checksum && validate_checksum {
+            // do not consume original input for checksum
+            let header = EventHeader::read_from(&mut input.clone())?;
+            let mut raw_data = (&mut input.clone()).read_len(header.event_len as usize)?;
+            let mut checksum_data = raw_data.split_off(raw_data.remaining()-4);
+            let expected = checksum_data.read_le_u32()?;
+            let actual = checksum_crc32(raw_data.as_ref());
+            if expected != actual {
+                return Err(Error::BinlogChecksumMismatch(expected, actual));
+            }
+        }
+        
+        let header = EventHeader::read_from(input)?;
+        let mut raw_data = input.read_len(header.data_len() as usize)?;
+        if self.checksum {
+            // need to remove 4-byte crc32 code at end
+            raw_data.truncate(raw_data.remaining() - 4);
+        }
         let event = match LogEventType::from(header.type_code) {
             // UnknownEvent not supported
             LogEventType::StartEventV3 => {
-                Event::StartEventV3(raw_data.read_with_ctx(0, self.checksum)?.1)
+                Event::StartEventV3(RawEvent{header: header, data: StartData::read_from(&mut raw_data)?})
             }
             LogEventType::QueryEvent => {
-                Event::QueryEvent(raw_data.read_with_ctx(0, self.checksum)?.1)
+                Event::QueryEvent(RawEvent{header: header, data: QueryData::read_from(&mut raw_data)?})
             }
             LogEventType::StopEvent => {
-                Event::StopEvent(raw_data.read_with_ctx(0, self.checksum)?.1)
+                Event::StopEvent(RawEvent{header: header, data: ()})
             }
             LogEventType::RotateEvent => {
-                Event::RotateEvent(raw_data.read_with_ctx(0, self.checksum)?.1)
+                Event::RotateEvent(RawEvent{header: header, data: RotateData::read_from(&mut raw_data)?})
             }
             LogEventType::IntvarEvent => {
-                Event::IntvarEvent(raw_data.read_with_ctx(0, self.checksum)?.1)
+                Event::IntvarEvent(RawEvent{header: header, data: IntvarData::read_from(&mut raw_data)?})
             }
             LogEventType::LoadEvent => {
-                Event::LoadEvent(raw_data.read_with_ctx(0, self.checksum)?.1)
+                Event::LoadEvent(RawEvent{header: header, data: LoadData::read_from(&mut raw_data)?})
             }
             // SlaveEvent not supported
             LogEventType::CreateFileEvent => {
-                Event::CreateFileEvent(raw_data.read_with_ctx(0, self.checksum)?.1)
+                Event::CreateFileEvent(RawEvent{header: header, data: CreateFileData::read_from(&mut raw_data)?})
             }
             LogEventType::AppendBlockEvent => {
-                Event::AppendBlockEvent(raw_data.read_with_ctx(0, self.checksum)?.1)
+                Event::AppendBlockEvent(RawEvent{header: header, data: AppendBlockData::read_from(&mut raw_data)?})
             }
             LogEventType::ExecLoadEvent => {
-                Event::ExecLoadEvent(raw_data.read_with_ctx(0, self.checksum)?.1)
+                Event::ExecLoadEvent(RawEvent{header: header, data: ExecLoadData::read_from(&mut raw_data)?})
             }
             LogEventType::DeleteFileEvent => {
-                Event::DeleteFileEvent(raw_data.read_with_ctx(0, self.checksum)?.1)
+                Event::DeleteFileEvent(RawEvent{header: header, data: DeleteFileData::read_from(&mut raw_data)?})
             }
             LogEventType::NewLoadEvent => {
-                Event::NewLoadEvent(raw_data.read_with_ctx(0, self.checksum)?.1)
+                Event::NewLoadEvent(RawEvent{header: header, data: NewLoadData::read_from(&mut raw_data)?})
             }
             LogEventType::RandEvent => {
-                Event::RandEvent(raw_data.read_with_ctx(0, self.checksum)?.1)
+                Event::RandEvent(RawEvent{header: header, data: RandData::read_from(&mut raw_data)?})
             }
             LogEventType::UserVarEvent => {
-                Event::UserVarEvent(raw_data.read_with_ctx(0, self.checksum)?.1)
+                Event::UserVarEvent(RawEvent{header: header, data: UserVarData::read_from(&mut raw_data)?})
             }
             LogEventType::FormatDescriptionEvent => {
-                Event::FormatDescriptionEvent(raw_data.read_from(0)?.1)
+                Event::FormatDescriptionEvent(RawEvent{header: header, data: FormatDescriptionData::read_from(&mut raw_data)?})
             }
-            LogEventType::XidEvent => Event::XidEvent(raw_data.read_with_ctx(0, self.checksum)?.1),
+            LogEventType::XidEvent => Event::XidEvent(RawEvent{header: header, data: XidData::read_from(&mut raw_data)?}),
             LogEventType::BeginLoadQueryEvent => {
-                Event::BeginLoadQueryEvent(raw_data.read_with_ctx(0, self.checksum)?.1)
+                Event::BeginLoadQueryEvent(RawEvent{header: header, data: BeginLoadQueryData::read_from(&mut raw_data)?})
             }
             LogEventType::ExecuteLoadQueryEvent => {
-                Event::ExecuteLoadQueryEvent(raw_data.read_with_ctx(0, self.checksum)?.1)
+                Event::ExecuteLoadQueryEvent(RawEvent{header: header, data: ExecuteLoadQueryData::read_from(&mut raw_data)?})
             }
             LogEventType::TableMapEvent => {
-                Event::TableMapEvent(raw_data.read_with_ctx(0, self.checksum)?.1)
+                Event::TableMapEvent(RawEvent{header: header, data: TableMapData::read_from(&mut raw_data)?})
             }
             // WriteRowsEventV0 not supported
             // UpdateRowsEventV0 not supported
             // DeleteRowsEventV0 not supported
             LogEventType::WriteRowsEventV1 => {
-                Event::WriteRowsEventV1(raw_data.read_with_ctx(0, self.checksum)?.1)
+                Event::WriteRowsEventV1(RawEvent{header: header, data: WriteRowsDataV1::read_from(&mut raw_data)?})
             }
             LogEventType::UpdateRowsEventV1 => {
-                Event::UpdateRowsEventV1(raw_data.read_with_ctx(0, self.checksum)?.1)
+                Event::UpdateRowsEventV1(RawEvent{header: header, data: UpdateRowsDataV1::read_from(&mut raw_data)?})
             }
             LogEventType::DeleteRowsEventV1 => {
-                Event::DeleteRowsEventV1(raw_data.read_with_ctx(0, self.checksum)?.1)
+                Event::DeleteRowsEventV1(RawEvent{header: header, data: DeleteRowsDataV1::read_from(&mut raw_data)?})
             }
             LogEventType::IncidentEvent => {
-                Event::IncidentEvent(raw_data.read_with_ctx(0, self.checksum)?.1)
+                Event::IncidentEvent(RawEvent{header: header, data: IncidentData::read_from(&mut raw_data)?})
             }
             LogEventType::HeartbeatLogEvent => {
-                Event::HeartbeatLogEvent(raw_data.read_with_ctx(0, self.checksum)?.1)
+                Event::HeartbeatLogEvent(RawEvent{header: header, data: ()})
             }
             // IgnorableLogEvent not supported
             // RowsQueryLogEvent not supported
             LogEventType::WriteRowsEventV2 => {
-                Event::WriteRowsEventV2(raw_data.read_with_ctx(0, self.checksum)?.1)
+                Event::WriteRowsEventV2(RawEvent{header: header, data: WriteRowsDataV2::read_from(&mut raw_data)?})
             }
             LogEventType::UpdateRowsEventV2 => {
-                Event::UpdateRowsEventV2(raw_data.read_with_ctx(0, self.checksum)?.1)
+                Event::UpdateRowsEventV2(RawEvent{header: header, data: UpdateRowsDataV2::read_from(&mut raw_data)?})
             }
             LogEventType::DeleteRowsEventV2 => {
-                Event::DeleteRowsEventV2(raw_data.read_with_ctx(0, self.checksum)?.1)
+                Event::DeleteRowsEventV2(RawEvent{header: header, data: DeleteRowsDataV2::read_from(&mut raw_data)?})
             }
             LogEventType::GtidLogEvent => {
-                Event::GtidLogEvent(raw_data.read_with_ctx(0, self.checksum)?.1)
+                Event::GtidLogEvent(RawEvent{header: header, data: GtidLogData::read_from(&mut raw_data)?})
             }
             LogEventType::AnonymousGtidLogEvent => {
-                Event::AnonymousGtidLogEvent(raw_data.read_with_ctx(0, self.checksum)?.1)
+                Event::AnonymousGtidLogEvent(RawEvent{header: header, data: AnonymousGtidLogData::read_from(&mut raw_data)?})
             }
             LogEventType::PreviousGtidsLogEvent => {
-                Event::PreviousGtidsLogEvent(raw_data.read_with_ctx(0, self.checksum)?.1)
+                Event::PreviousGtidsLogEvent(RawEvent{header: header, data: PreviousGtidsLogData::read_from(&mut raw_data)?})
             }
             // TransactionContextEvent not supported
             // ViewChangeEvent not supported
             // XaPrepareLogEvent not supported
-            _ => return Ok((offset, None)),
+            _ => return Ok(None),
         };
-        if self.checksum && validate_checksum {
-            let expected = event.crc32();
-            let actual = checksum_crc32(&input[start..offset - 4]);
-            if expected != actual {
-                return Err(Error::BinlogChecksumMismatch(expected, actual));
-            }
-        }
-        Ok((offset, Some(event)))
+        Ok(Some(event))
     }
 
-    pub fn skip_event(&self, input: &[u8], offset: usize) -> Result<usize> {
-        let (offset, header): (_, EventHeader) = input.read_from(offset)?;
-        let (offset, _) = input.take_len(offset, header.data_len() as usize)?;
-        Ok(offset)
+    pub fn skip_event(&self, input: &mut Bytes) -> Result<()> {
+        let header = EventHeader::read_from(input)?;
+        input.read_len(header.data_len() as usize)?;
+        Ok(())
     }
 
-    pub fn checksum_event(&self, input: &[u8], offset: usize) -> Result<usize> {
+    pub fn checksum_event(&self, input: &Bytes) -> Result<()> {
         if !self.checksum {
             return Err(Error::InvalidBinlogFormat(
                 "binlog checksum not enabled".to_owned(),
             ));
         }
-        let (_, header): (_, EventHeader) = input.read_from(offset)?;
-        let (offset, event) = input.take_len(offset, header.event_len as usize - 4)?;
-        let actual = checksum_crc32(event);
-        let (offset, expected) = input.read_le_u32(offset)?;
-        if expected == actual {
-            return Ok(offset);
+        let mut input = input.clone();
+        let header = EventHeader::read_from(&mut input.clone())?;
+        let mut raw_data = (&mut input).read_len(header.event_len as usize)?;
+        let mut checksum_data = raw_data.split_off(raw_data.remaining()-4);
+        let expected = checksum_data.read_le_u32()?;
+        let actual = checksum_crc32(raw_data.as_ref());
+        if expected != actual {
+            return Err(Error::BinlogChecksumMismatch(expected, actual));
         }
-        Err(Error::BinlogChecksumMismatch(expected, actual))
+        Ok(())
     }
 }
 
@@ -246,7 +257,6 @@ fn post_header_lengths_from_raw(raw_lengths: &[u8]) -> Vec<u8> {
 mod tests {
     use super::*;
     use crate::error::Result;
-    use bytes_parser::error::Result as PResult;
     use std::convert::TryInto;
 
     const BINLOG_5_5_50: &[u8] = include_bytes!("../../data/mysql-bin.5.5.50.StartEvent");
@@ -265,279 +275,289 @@ mod tests {
 
     #[test]
     fn test_binlog_version() -> Result<()> {
-        let (_, bv): (_, BinlogVersion) = BINLOG_5_7_30.read_from(0)?;
+        let mut input = BINLOG_5_7_30;
+        let input = &mut input.to_bytes();
+        let bv = BinlogVersion::read_from(input)?;
         assert_eq!(BinlogVersion::V4, bv);
 
-        let fail: PResult<(_, BinlogVersion)> = b"\xfebin".read_from(0);
+        let mut input = &b"\xfebin"[..];
+        let input = &mut input.to_bytes();
+        let fail = BinlogVersion::read_from(input);
         dbg!(fail.unwrap_err());
         Ok(())
     }
 
     #[test]
     fn test_binlog_no_checksum() -> Result<()> {
-        let input = BINLOG_NO_CHECKSUM;
-        let (offset, _): (_, BinlogVersion) = input.read_from(0)?;
-        let (_, fde): (_, FormatDescriptionEvent) = input.read_from(offset)?;
-        println!("{:#?}", fde);
+        let mut input = BINLOG_NO_CHECKSUM;
+        let input = &mut input.to_bytes();
+        BinlogVersion::read_from(input)?;
+        EventHeader::read_from(input)?;
+        let fdd = FormatDescriptionData::read_from(input)?;
+        println!("{:#?}", fdd);
         Ok(())
     }
 
     #[test]
     fn test_format_description_event_5_5() -> Result<()> {
-        let input = BINLOG_5_5_50;
-        let (offset, _): (_, BinlogVersion) = input.read_from(0)?;
-        let (_, event): (_, FormatDescriptionEvent) = input.read_from(offset)?;
+        let mut input = BINLOG_5_5_50;
+        let input = &mut input.to_bytes();
+        BinlogVersion::read_from(input)?;
+        let header = EventHeader::read_from(input)?;
+        let fdd = FormatDescriptionData::read_from(input)?;
         assert_eq!(
             LogEventType::FormatDescriptionEvent,
-            LogEventType::from(event.header.type_code)
+            LogEventType::from(header.type_code)
         );
         println!(
             "post header lengths: {}",
-            event.data.post_header_lengths.len()
+            fdd.post_header_lengths.len()
         );
-        for i in 0..event.data.post_header_lengths.len() {
+        for i in 0..fdd.post_header_lengths.len() {
             println!(
                 "{:?}: {}",
                 LogEventType::from(i as u8 + 1),
-                event.data.post_header_lengths[i]
+                fdd.post_header_lengths[i]
             );
         }
         // reference: https://dev.mysql.com/doc/internals/en/format-description-event.html
         // binlog: mysql 5.5.50
-        assert_eq!(56, post_header_length(&event, LogEventType::StartEventV3));
-        assert_eq!(13, post_header_length(&event, LogEventType::QueryEvent));
-        assert_eq!(0, post_header_length(&event, LogEventType::StopEvent));
-        assert_eq!(8, post_header_length(&event, LogEventType::RotateEvent));
-        assert_eq!(0, post_header_length(&event, LogEventType::IntvarEvent));
-        assert_eq!(18, post_header_length(&event, LogEventType::LoadEvent));
-        assert_eq!(0, post_header_length(&event, LogEventType::SlaveEvent));
-        assert_eq!(4, post_header_length(&event, LogEventType::CreateFileEvent));
+        assert_eq!(56, post_header_length(&fdd, LogEventType::StartEventV3));
+        assert_eq!(13, post_header_length(&fdd, LogEventType::QueryEvent));
+        assert_eq!(0, post_header_length(&fdd, LogEventType::StopEvent));
+        assert_eq!(8, post_header_length(&fdd, LogEventType::RotateEvent));
+        assert_eq!(0, post_header_length(&fdd, LogEventType::IntvarEvent));
+        assert_eq!(18, post_header_length(&fdd, LogEventType::LoadEvent));
+        assert_eq!(0, post_header_length(&fdd, LogEventType::SlaveEvent));
+        assert_eq!(4, post_header_length(&fdd, LogEventType::CreateFileEvent));
         assert_eq!(
             4,
-            post_header_length(&event, LogEventType::AppendBlockEvent)
+            post_header_length(&fdd, LogEventType::AppendBlockEvent)
         );
-        assert_eq!(4, post_header_length(&event, LogEventType::ExecLoadEvent));
-        assert_eq!(4, post_header_length(&event, LogEventType::DeleteFileEvent));
-        assert_eq!(18, post_header_length(&event, LogEventType::NewLoadEvent));
-        assert_eq!(0, post_header_length(&event, LogEventType::RandEvent));
-        assert_eq!(0, post_header_length(&event, LogEventType::UserVarEvent));
+        assert_eq!(4, post_header_length(&fdd, LogEventType::ExecLoadEvent));
+        assert_eq!(4, post_header_length(&fdd, LogEventType::DeleteFileEvent));
+        assert_eq!(18, post_header_length(&fdd, LogEventType::NewLoadEvent));
+        assert_eq!(0, post_header_length(&fdd, LogEventType::RandEvent));
+        assert_eq!(0, post_header_length(&fdd, LogEventType::UserVarEvent));
         assert_eq!(
             84,
-            post_header_length(&event, LogEventType::FormatDescriptionEvent)
+            post_header_length(&fdd, LogEventType::FormatDescriptionEvent)
         );
-        assert_eq!(0, post_header_length(&event, LogEventType::XidEvent));
+        assert_eq!(0, post_header_length(&fdd, LogEventType::XidEvent));
         assert_eq!(
             4,
-            post_header_length(&event, LogEventType::BeginLoadQueryEvent)
+            post_header_length(&fdd, LogEventType::BeginLoadQueryEvent)
         );
         assert_eq!(
             26,
-            post_header_length(&event, LogEventType::ExecuteLoadQueryEvent)
+            post_header_length(&fdd, LogEventType::ExecuteLoadQueryEvent)
         );
-        assert_eq!(8, post_header_length(&event, LogEventType::TableMapEvent));
+        assert_eq!(8, post_header_length(&fdd, LogEventType::TableMapEvent));
         assert_eq!(
             0,
-            post_header_length(&event, LogEventType::DeleteRowsEventV0)
-        );
-        assert_eq!(
-            0,
-            post_header_length(&event, LogEventType::UpdateRowsEventV0)
+            post_header_length(&fdd, LogEventType::DeleteRowsEventV0)
         );
         assert_eq!(
             0,
-            post_header_length(&event, LogEventType::WriteRowsEventV0)
+            post_header_length(&fdd, LogEventType::UpdateRowsEventV0)
+        );
+        assert_eq!(
+            0,
+            post_header_length(&fdd, LogEventType::WriteRowsEventV0)
         );
         assert_eq!(
             8,
-            post_header_length(&event, LogEventType::DeleteRowsEventV1)
+            post_header_length(&fdd, LogEventType::DeleteRowsEventV1)
         );
         assert_eq!(
             8,
-            post_header_length(&event, LogEventType::UpdateRowsEventV1)
+            post_header_length(&fdd, LogEventType::UpdateRowsEventV1)
         );
         assert_eq!(
             8,
-            post_header_length(&event, LogEventType::WriteRowsEventV1)
+            post_header_length(&fdd, LogEventType::WriteRowsEventV1)
         );
-        assert_eq!(2, post_header_length(&event, LogEventType::IncidentEvent));
+        assert_eq!(2, post_header_length(&fdd, LogEventType::IncidentEvent));
         assert_eq!(
             0,
-            post_header_length(&event, LogEventType::HeartbeatLogEvent)
+            post_header_length(&fdd, LogEventType::HeartbeatLogEvent)
         );
         // 5.5 does not have v2 row events
         // assert_eq!(10, post_header_length(&event, LogEventType::WriteRowsEventV2));
         // assert_eq!(10, post_header_length(&event, LogEventType::DeleteRowsEventV2));
         // assert_eq!(10, post_header_length(&event, LogEventType::UpdateRowsEventV2));
 
-        println!("{:#?}", event);
+        println!("{:#?}", fdd);
         Ok(())
     }
 
     #[test]
     fn test_format_description_event_5_7() -> Result<()> {
-        let input = BINLOG_5_7_30;
-        let (offset, _): (_, BinlogVersion) = input.read_from(0)?;
-        let (_, event): (_, FormatDescriptionEvent) = input.read_from(offset)?;
+        let mut input = BINLOG_5_7_30;
+        let input = &mut input.to_bytes();
+        BinlogVersion::read_from(input)?;
+        let header = EventHeader::read_from(input)?;
+        let fdd = FormatDescriptionData::read_from(input)?;
         assert_eq!(
             LogEventType::FormatDescriptionEvent,
-            LogEventType::from(event.header.type_code)
+            LogEventType::from(header.type_code)
         );
         println!(
             "post header lengths: {}",
-            event.data.post_header_lengths.len()
+            fdd.post_header_lengths.len()
         );
-        for i in 1..event.data.post_header_lengths.len() {
+        for i in 1..fdd.post_header_lengths.len() {
             println!(
                 "{:?}: {}",
                 LogEventType::from(i as u8 + 1),
-                event.data.post_header_lengths[i]
+                fdd.post_header_lengths[i]
             );
         }
         // below is the event post header lengths of mysql 5.7.30
         // 1
-        assert_eq!(56, post_header_length(&event, LogEventType::StartEventV3));
+        assert_eq!(56, post_header_length(&fdd, LogEventType::StartEventV3));
         // 2
-        assert_eq!(13, post_header_length(&event, LogEventType::QueryEvent));
+        assert_eq!(13, post_header_length(&fdd, LogEventType::QueryEvent));
         // 3
-        assert_eq!(0, post_header_length(&event, LogEventType::StopEvent));
+        assert_eq!(0, post_header_length(&fdd, LogEventType::StopEvent));
         // 4
-        assert_eq!(8, post_header_length(&event, LogEventType::RotateEvent));
+        assert_eq!(8, post_header_length(&fdd, LogEventType::RotateEvent));
         // 5
-        assert_eq!(0, post_header_length(&event, LogEventType::IntvarEvent));
+        assert_eq!(0, post_header_length(&fdd, LogEventType::IntvarEvent));
         // 6
-        assert_eq!(18, post_header_length(&event, LogEventType::LoadEvent));
+        assert_eq!(18, post_header_length(&fdd, LogEventType::LoadEvent));
         // 7
-        assert_eq!(0, post_header_length(&event, LogEventType::SlaveEvent));
+        assert_eq!(0, post_header_length(&fdd, LogEventType::SlaveEvent));
         // 8
-        assert_eq!(4, post_header_length(&event, LogEventType::CreateFileEvent));
+        assert_eq!(4, post_header_length(&fdd, LogEventType::CreateFileEvent));
         // 9
         assert_eq!(
             4,
-            post_header_length(&event, LogEventType::AppendBlockEvent)
+            post_header_length(&fdd, LogEventType::AppendBlockEvent)
         );
         // 10
-        assert_eq!(4, post_header_length(&event, LogEventType::ExecLoadEvent));
+        assert_eq!(4, post_header_length(&fdd, LogEventType::ExecLoadEvent));
         // 11
-        assert_eq!(4, post_header_length(&event, LogEventType::DeleteFileEvent));
+        assert_eq!(4, post_header_length(&fdd, LogEventType::DeleteFileEvent));
         // 12
-        assert_eq!(18, post_header_length(&event, LogEventType::NewLoadEvent));
+        assert_eq!(18, post_header_length(&fdd, LogEventType::NewLoadEvent));
         // 13
-        assert_eq!(0, post_header_length(&event, LogEventType::RandEvent));
+        assert_eq!(0, post_header_length(&fdd, LogEventType::RandEvent));
         // 14
-        assert_eq!(0, post_header_length(&event, LogEventType::UserVarEvent));
+        assert_eq!(0, post_header_length(&fdd, LogEventType::UserVarEvent));
         // 15
         // length of StartEventV3 + 1 + number of LogEventType = 56 + 1 + 38
         // NOTE: FDE may contains additional 1-byte of checksum flag at end,
         //       followed by a 4-byte checksum value
         assert_eq!(
             95,
-            post_header_length(&event, LogEventType::FormatDescriptionEvent)
+            post_header_length(&fdd, LogEventType::FormatDescriptionEvent)
         );
         // 16
-        assert_eq!(0, post_header_length(&event, LogEventType::XidEvent));
+        assert_eq!(0, post_header_length(&fdd, LogEventType::XidEvent));
         // 17
         assert_eq!(
             4,
-            post_header_length(&event, LogEventType::BeginLoadQueryEvent)
+            post_header_length(&fdd, LogEventType::BeginLoadQueryEvent)
         );
         // 18
         assert_eq!(
             26,
-            post_header_length(&event, LogEventType::ExecuteLoadQueryEvent)
+            post_header_length(&fdd, LogEventType::ExecuteLoadQueryEvent)
         );
         // 19
-        assert_eq!(8, post_header_length(&event, LogEventType::TableMapEvent));
+        assert_eq!(8, post_header_length(&fdd, LogEventType::TableMapEvent));
         // 20
         assert_eq!(
             0,
-            post_header_length(&event, LogEventType::WriteRowsEventV0)
+            post_header_length(&fdd, LogEventType::WriteRowsEventV0)
         );
         // 21
         assert_eq!(
             0,
-            post_header_length(&event, LogEventType::UpdateRowsEventV0)
+            post_header_length(&fdd, LogEventType::UpdateRowsEventV0)
         );
         // 22
         assert_eq!(
             0,
-            post_header_length(&event, LogEventType::DeleteRowsEventV0)
+            post_header_length(&fdd, LogEventType::DeleteRowsEventV0)
         );
         // 23
         assert_eq!(
             8,
-            post_header_length(&event, LogEventType::WriteRowsEventV1)
+            post_header_length(&fdd, LogEventType::WriteRowsEventV1)
         );
         // 24
         assert_eq!(
             8,
-            post_header_length(&event, LogEventType::UpdateRowsEventV1)
+            post_header_length(&fdd, LogEventType::UpdateRowsEventV1)
         );
         // 25
         assert_eq!(
             8,
-            post_header_length(&event, LogEventType::DeleteRowsEventV1)
+            post_header_length(&fdd, LogEventType::DeleteRowsEventV1)
         );
         // 26
-        assert_eq!(2, post_header_length(&event, LogEventType::IncidentEvent));
+        assert_eq!(2, post_header_length(&fdd, LogEventType::IncidentEvent));
         // 27
         assert_eq!(
             0,
-            post_header_length(&event, LogEventType::HeartbeatLogEvent)
+            post_header_length(&fdd, LogEventType::HeartbeatLogEvent)
         );
         // 28
         assert_eq!(
             0,
-            post_header_length(&event, LogEventType::IgnorableLogEvent)
+            post_header_length(&fdd, LogEventType::IgnorableLogEvent)
         );
         // 29
         assert_eq!(
             0,
-            post_header_length(&event, LogEventType::RowsQueryLogEvent)
+            post_header_length(&fdd, LogEventType::RowsQueryLogEvent)
         );
         // 30
         assert_eq!(
             10,
-            post_header_length(&event, LogEventType::WriteRowsEventV2)
+            post_header_length(&fdd, LogEventType::WriteRowsEventV2)
         );
         // 31
         assert_eq!(
             10,
-            post_header_length(&event, LogEventType::UpdateRowsEventV2)
+            post_header_length(&fdd, LogEventType::UpdateRowsEventV2)
         );
         // 32
         assert_eq!(
             10,
-            post_header_length(&event, LogEventType::DeleteRowsEventV2)
+            post_header_length(&fdd, LogEventType::DeleteRowsEventV2)
         );
         // 33
-        assert_eq!(42, post_header_length(&event, LogEventType::GtidLogEvent));
+        assert_eq!(42, post_header_length(&fdd, LogEventType::GtidLogEvent));
         // 34
         assert_eq!(
             42,
-            post_header_length(&event, LogEventType::AnonymousGtidLogEvent)
+            post_header_length(&fdd, LogEventType::AnonymousGtidLogEvent)
         );
         // 35
         assert_eq!(
             0,
-            post_header_length(&event, LogEventType::PreviousGtidsLogEvent)
+            post_header_length(&fdd, LogEventType::PreviousGtidsLogEvent)
         );
         // 36
         assert_eq!(
             18,
-            post_header_length(&event, LogEventType::TransactionContextEvent)
+            post_header_length(&fdd, LogEventType::TransactionContextEvent)
         );
         // 37
         assert_eq!(
             52,
-            post_header_length(&event, LogEventType::ViewChangeEvent)
+            post_header_length(&fdd, LogEventType::ViewChangeEvent)
         );
         // 38
         assert_eq!(
             0,
-            post_header_length(&event, LogEventType::XaPrepareLogEvent)
+            post_header_length(&fdd, LogEventType::XaPrepareLogEvent)
         );
 
-        println!("{:#?}", event);
+        println!("{:#?}", fdd);
         Ok(())
     }
 
@@ -546,18 +566,19 @@ mod tests {
     #[test]
     fn test_query_event() -> Result<()> {
         use crate::binlog::query::{Flags2Code, QueryStatusVar, QueryStatusVars, SqlModeCode};
-        let input = BINLOG_QUERY_EVENT;
-        let (mut offset, pv4) = ParserV4::from_binlog_file(input)?;
+        let mut input = BINLOG_QUERY_EVENT;
+        let input = &mut input.to_bytes();
+        let pv4 = ParserV4::from_binlog_file(input)?;
         for _ in 0..2 {
-            offset = pv4.skip_event(input, offset)?;
+            pv4.skip_event(input)?;
         }
         // the 3rd event is QueryEvent
-        let (_, qe) = pv4.parse_event(input, offset, true)?;
+        let qe = pv4.parse_event(input, true)?;
         let qe: QueryEvent = qe.unwrap().try_into()?;
         println!("{:#?}", qe);
-        dbg!(String::from_utf8_lossy(qe.data.schema));
-
-        let (_, vars): (_, QueryStatusVars) = qe.data.status_vars.read_from(0)?;
+        dbg!(std::str::from_utf8(&qe.data.schema)?);
+        dbg!(std::str::from_utf8(&qe.data.query)?);
+        let vars = QueryStatusVars::read_from(&mut qe.data.status_vars.clone())?;
         println!("{:#?}", vars);
         vars.iter().for_each(|v| match v {
             QueryStatusVar::Flags2Code(n) => {
@@ -577,42 +598,43 @@ mod tests {
     // FDE, PreviousGtid, Stop
     #[test]
     fn test_stop_event() -> Result<()> {
-        let input = BINLOG_5_7_30;
-        let (offset, pv4) = ParserV4::from_binlog_file(input)?;
-        let offset = pv4.skip_event(input, offset)?;
-
+        let mut input = BINLOG_5_7_30;
+        let input = &mut input.to_bytes();
+        let pv4 = ParserV4::from_binlog_file(input)?;
+        pv4.skip_event(input)?;
         // third event is StopEvent
-        let (_, se) = pv4.parse_event(input, offset, true)?;
-        let se: StopEvent = se.unwrap().try_into()?;
+        let se = pv4.parse_event(input, true)?.unwrap();
         println!("{:#?}", se);
-        Ok(())
+        Ok(()) 
     }
 
     // 3 events:
     // FDE, PreviousGtid, Rotate
     #[test]
     fn test_rotate_event() -> Result<()> {
-        let input = BINLOG_ROTATE_EVENT;
-        let (offset, pv4) = ParserV4::from_binlog_file(input)?;
-        let offset = pv4.skip_event(input, offset)?;
+        let mut input = BINLOG_ROTATE_EVENT;
+        let input = &mut input.to_bytes();
+        let pv4 = ParserV4::from_binlog_file(input)?;
+        pv4.skip_event(input)?;
         // 2nd event is RotateEvent
-        let (_, re) = pv4.parse_event(input, offset, true)?;
+        let re = pv4.parse_event(input, true)?;
         let re: RotateEvent = re.unwrap().try_into()?;
         println!("{:#?}", re);
-        dbg!(String::from_utf8_lossy(re.data.next_binlog_filename));
+        dbg!(String::from_utf8_lossy(re.data.next_binlog_filename.as_ref()));
         Ok(())
     }
 
     // rename after implementation
     #[test]
     fn test_intvar_event() -> Result<()> {
-        let input = BINLOG_RAND_EVENT;
-        let (mut offset, pv4) = ParserV4::from_binlog_file(input)?;
+        let mut input = BINLOG_RAND_EVENT;
+        let input = &mut input.to_bytes();
+        let pv4 = ParserV4::from_binlog_file(input)?;
         for _ in 0..3 {
-            offset = pv4.skip_event(input, offset)?;
+            pv4.skip_event(input)?;
         }
         // 4th event
-        let (_, ive) = pv4.parse_event(input, offset, true)?;
+        let ive = pv4.parse_event(input, true)?;
         let ive: IntvarEvent = ive.unwrap().try_into()?;
         println!("{:#?}", ive);
         Ok(())
@@ -653,28 +675,30 @@ mod tests {
     // Xid
     #[test]
     fn test_begin_load_query_event() -> Result<()> {
-        let input = BINLOG_BEGIN_LOAD_QUERY_EVENT;
-        let (mut offset, pv4) = ParserV4::from_binlog_file(input)?;
+        let mut input = BINLOG_BEGIN_LOAD_QUERY_EVENT;
+        let input = &mut input.to_bytes();
+        let pv4 = ParserV4::from_binlog_file(input)?;
         for _ in 0..3 {
-            offset = pv4.skip_event(input, offset)?;
+            pv4.skip_event(input)?;
         }
         // 4th event
-        let (_, blqe) = pv4.parse_event(input, offset, true)?;
+        let blqe = pv4.parse_event(input, true)?;
         let blqe: BeginLoadQueryEvent = blqe.unwrap().try_into()?;
         println!("{:#?}", blqe);
-        dbg!(String::from_utf8_lossy(blqe.data.block_data));
+        dbg!(String::from_utf8_lossy(blqe.data.block_data.as_ref()));
         Ok(())
     }
 
     #[test]
     fn test_execute_load_query_event() -> Result<()> {
-        let input = BINLOG_BEGIN_LOAD_QUERY_EVENT;
-        let (mut offset, pv4) = ParserV4::from_binlog_file(input)?;
+        let mut input = BINLOG_BEGIN_LOAD_QUERY_EVENT;
+        let input = &mut input.to_bytes();
+        let pv4 = ParserV4::from_binlog_file(input)?;
         for _ in 0..4 {
-            offset = pv4.skip_event(input, offset)?;
+            pv4.skip_event(input)?;
         }
         // 5th event
-        let (_, elqe) = pv4.parse_event(input, offset, true)?;
+        let elqe = pv4.parse_event(input, true)?;
         let elqe: ExecuteLoadQueryEvent = elqe.unwrap().try_into()?;
         println!("{:#?}", elqe);
         Ok(())
@@ -682,26 +706,28 @@ mod tests {
 
     #[test]
     fn test_rand_event() -> Result<()> {
-        let input = BINLOG_RAND_EVENT;
-        let (mut offset, pv4) = ParserV4::from_binlog_file(input)?;
+        let mut input = BINLOG_RAND_EVENT;
+        let input = &mut input.to_bytes();
+        let pv4 = ParserV4::from_binlog_file(input)?;
         for _ in 0..4 {
-            offset = pv4.skip_event(input, offset)?;
+            pv4.skip_event(input)?;
         }
         // 5th event
-        let (_, re) = pv4.parse_event(input, offset, true)?;
+        let re = pv4.parse_event(input, true)?;
         println!("{:#?}", re);
         Ok(())
     }
 
     #[test]
     fn test_xid_event() -> Result<()> {
-        let input = BINLOG_ROWS_EVENT_V2;
-        let (mut offset, pv4) = ParserV4::from_binlog_file(input)?;
+        let mut input = BINLOG_ROWS_EVENT_V2;
+        let input = &mut input.to_bytes();
+        let pv4 = ParserV4::from_binlog_file(input)?;
         for _ in 0..9 {
-            offset = pv4.skip_event(input, offset)?;
+            pv4.skip_event(input)?;
         }
         // 10th is Xid Event
-        let (_, xe) = pv4.parse_event(input, offset, true)?;
+        let xe = pv4.parse_event(input, true)?;
         let xe: XidEvent = xe.unwrap().try_into()?;
         println!("{:#?}", xe);
         Ok(())
@@ -711,20 +737,21 @@ mod tests {
     fn test_user_var_event() -> Result<()> {
         use crate::binlog::user_var::UserVarValue;
 
-        let input = BINLOG_USER_VAR_EVENT;
-        let (mut offset, pv4) = ParserV4::from_binlog_file(input)?;
-        while offset < input.len() {
-            let (_, event_type): (_, LogEventType) = input.read_from(offset)?;
+        let mut input = BINLOG_USER_VAR_EVENT;
+        let input = &mut input.to_bytes();
+        let pv4 = ParserV4::from_binlog_file(input)?;
+        while input.has_remaining() {
+            // not consume the real bytes
+            let event_type = LogEventType::read_from(&mut input.clone())?;
             match event_type {
                 LogEventType::UserVarEvent => {
-                    let (os1, uve) = pv4.parse_event(input, offset, true)?;
-                    let uve: UserVarEvent = uve.unwrap().try_into()?;
+                    let uve = pv4.parse_event(input, true)?;
+                    let mut uve: UserVarEvent = uve.unwrap().try_into()?;
                     println!("{:#?}", uve);
-                    let (_, uvv): (_, UserVarValue) = uve.data.value.read_from(0)?;
+                    let uvv = UserVarValue::read_from(&mut uve.data.value)?;
                     println!("{:#?}", uvv);
-                    offset = os1;
                 }
-                _ => offset = pv4.skip_event(input, offset)?,
+                _ => pv4.skip_event(input)?,
             }
         }
         Ok(())
@@ -746,35 +773,31 @@ mod tests {
     // Xid(COMMIT)
     #[test]
     fn test_table_map_event() -> Result<()> {
-        let input = BINLOG_ROWS_EVENT_V2;
-        let (mut offset, pv4) = ParserV4::from_binlog_file(input)?;
+        let mut input = BINLOG_ROWS_EVENT_V2;
+        let input = &mut input.to_bytes();
+        let pv4 = ParserV4::from_binlog_file(input)?;
         for _ in 0..3 {
-            offset = pv4.skip_event(input, offset)?;
+            pv4.skip_event(input)?;
         }
         // 4th event
-        let (_, tme) = pv4.parse_event(input, offset, true)?;
+        let tme = pv4.parse_event(input, true)?;
         let tme: TableMapEvent = tme.unwrap().try_into()?;
         println!("{:#?}", tme);
-        // let (in1, rtm) = parse_raw_table_map::<VerboseError<_>>(tme.data.payload)?;
-        // println!("table_map={:#?}", rtm);
-        // println!("in1={:?}", in1);
-        // let tm = rtm.table_map.unwrap();
-        let rtm = tme.data.raw_table_map().unwrap();
-        println!("{:#?}", rtm);
-        let tm = tme.data.table_map().unwrap();
+        let tm = tme.data.into_table_map().unwrap();
         println!("{:#?}", tm);
         Ok(())
     }
 
     #[test]
     fn test_delete_rows_event_v1() -> Result<()> {
-        let input = BINLOG_ROWS_EVENT_V1;
-        let (mut offset, pv4) = ParserV4::from_binlog_file(input)?;
+        let mut input = BINLOG_ROWS_EVENT_V1;
+        let input = &mut input.to_bytes();
+        let pv4 = ParserV4::from_binlog_file(input)?;
         for _ in 0..6 {
-            offset = pv4.skip_event(input, offset)?;
+            pv4.skip_event(input)?;
         }
         // 7th event
-        let (_, dre) = pv4.parse_event(input, offset, true)?;
+        let dre = pv4.parse_event(input, true)?;
         let dre: DeleteRowsEventV1 = dre.unwrap().try_into()?;
         println!("{:#?}", dre);
         Ok(())
@@ -782,13 +805,14 @@ mod tests {
 
     #[test]
     fn test_update_rows_event_v1() -> Result<()> {
-        let input = BINLOG_ROWS_EVENT_V1;
-        let (mut offset, pv4) = ParserV4::from_binlog_file(input)?;
+        let mut input = BINLOG_ROWS_EVENT_V1;
+        let input = &mut input.to_bytes();
+        let pv4 = ParserV4::from_binlog_file(input)?;
         for _ in 0..4 {
-            offset = pv4.skip_event(input, offset)?;
+            pv4.skip_event(input)?;
         }
         // 5th event
-        let (_, ure) = pv4.parse_event(input, offset, true)?;
+        let ure = pv4.parse_event(input, true)?;
         let ure: UpdateRowsEventV1 = ure.unwrap().try_into()?;
         println!("{:#?}", ure);
         Ok(())
@@ -796,13 +820,14 @@ mod tests {
 
     #[test]
     fn test_write_rows_event_v1() -> Result<()> {
-        let input = BINLOG_ROWS_EVENT_V1;
-        let (mut offset, pv4) = ParserV4::from_binlog_file(input)?;
+        let mut input = BINLOG_ROWS_EVENT_V1;
+        let input = &mut input.to_bytes();
+        let pv4 = ParserV4::from_binlog_file(input)?;
         for _ in 0..2 {
-            offset = pv4.skip_event(input, offset)?;
+            pv4.skip_event(input)?;
         }
         // 3th event
-        let (_, wre) = pv4.parse_event(input, offset, true)?;
+        let wre = pv4.parse_event(input, true)?;
         let wre: WriteRowsEventV1 = wre.unwrap().try_into()?;
         println!("{:#?}", wre);
         Ok(())
@@ -810,71 +835,75 @@ mod tests {
 
     #[test]
     fn test_delete_rows_event_v2() -> Result<()> {
-        let input = BINLOG_ROWS_EVENT_V2;
-        let (mut offset, pv4) = ParserV4::from_binlog_file(input)?;
+        let mut input = BINLOG_ROWS_EVENT_V2;
+        let input = &mut input.to_bytes();
+        let pv4 = ParserV4::from_binlog_file(input)?;
         for _ in 0..7 {
-            offset = pv4.skip_event(input, offset)?;
+            pv4.skip_event(input)?;
         }
         // 8th is TableMapEvent
-        let (offset, tme) = pv4.parse_event(input, offset, true)?;
+        let tme = pv4.parse_event(input, true)?;
         let tme: TableMapEvent = tme.unwrap().try_into()?;
         let tm = tme.data.table_map().unwrap();
         // 9th event is DeleteRowsEventV2
-        let (_, dre) = pv4.parse_event(input, offset, true)?;
+        let dre = pv4.parse_event(input, true)?;
         let dre: DeleteRowsEventV2 = dre.unwrap().try_into()?;
         println!("{:#?}", dre);
-        let delete_rows = dre.data.delete_rows(&tm.col_metas).unwrap();
+        let delete_rows = dre.data.rows(&tm.col_metas).unwrap();
         dbg!(delete_rows);
         Ok(())
     }
 
     #[test]
     fn test_update_rows_event_v2() -> Result<()> {
-        let input = BINLOG_ROWS_EVENT_V2;
-        let (mut offset, pv4) = ParserV4::from_binlog_file(input)?;
+        let mut input = BINLOG_ROWS_EVENT_V2;
+        let input = &mut input.to_bytes();
+        let pv4 = ParserV4::from_binlog_file(input)?;
         for _ in 0..5 {
-            offset = pv4.skip_event(input, offset)?;
+            pv4.skip_event(input)?;
         }
         // 6th is TableMapEvent
-        let (offset, tme) = pv4.parse_event(input, offset, true)?;
+        let tme = pv4.parse_event(input, true)?;
         let tme: TableMapEvent = tme.unwrap().try_into()?;
         let tm = tme.data.table_map().unwrap();
         // 7th event is UpdateRowsEventV2
-        let (_, ure) = pv4.parse_event(input, offset, true)?;
+        let ure = pv4.parse_event(input, true)?;
         let ure: UpdateRowsEventV2 = ure.unwrap().try_into()?;
         println!("{:#?}", ure);
-        let update_rows = ure.data.update_rows(&tm.col_metas).unwrap();
+        let update_rows = ure.data.rows(&tm.col_metas).unwrap();
         dbg!(update_rows);
         Ok(())
     }
 
     #[test]
     fn test_write_rows_event_v2() -> Result<()> {
-        let input = BINLOG_ROWS_EVENT_V2;
-        let (mut offset, pv4) = ParserV4::from_binlog_file(input)?;
+        let mut input = BINLOG_ROWS_EVENT_V2;
+        let input = &mut input.to_bytes();
+        let pv4 = ParserV4::from_binlog_file(input)?;
         for _ in 0..3 {
-            offset = pv4.skip_event(input, offset)?;
+            pv4.skip_event(input)?;
         }
         // 4th is TableMapEvent
-        let (offset, tme) = pv4.parse_event(input, offset, true)?;
+        let tme = pv4.parse_event(input, true)?;
         let tme: TableMapEvent = tme.unwrap().try_into()?;
         let tm = tme.data.table_map().unwrap();
         // 5th event is WriteRowsEventV2
-        let (_, wre) = pv4.parse_event(input, offset, true)?;
+        let wre = pv4.parse_event(input, true)?;
         let wre: WriteRowsEventV2 = wre.unwrap().try_into()?;
         println!("{:#?}", wre);
-        let write_rows = wre.data.write_rows(&tm.col_metas).unwrap();
+        let write_rows = wre.data.rows(&tm.col_metas).unwrap();
         dbg!(write_rows);
         Ok(())
     }
 
     #[test]
     fn test_gtid_log_event() -> Result<()> {
-        let input = BINLOG_GTID_EVENT;
-        let (mut offset, pv4) = ParserV4::from_binlog_file(input)?;
-        offset = pv4.skip_event(input, offset)?;
+        let mut input = BINLOG_GTID_EVENT;
+        let input = &mut input.to_bytes();
+        let pv4 = ParserV4::from_binlog_file(input)?;
+        pv4.skip_event(input)?;
         // 2nd event
-        let (_, gle) = pv4.parse_event(input, offset, true)?;
+        let gle = pv4.parse_event(input, true)?;
         let gle: GtidLogEvent = gle.unwrap().try_into()?;
         println!("{:#?}", gle);
         Ok(())
@@ -882,11 +911,12 @@ mod tests {
 
     #[test]
     fn test_anonymous_gtid_log_event() -> Result<()> {
-        let input = BINLOG_RAND_EVENT;
-        let (mut offset, pv4) = ParserV4::from_binlog_file(input)?;
-        offset = pv4.skip_event(input, offset)?;
+        let mut input = BINLOG_RAND_EVENT;
+        let input = &mut input.to_bytes();
+        let pv4 = ParserV4::from_binlog_file(input)?;
+        pv4.skip_event(input)?;
         // 2nd event
-        let (_, agle) = pv4.parse_event(input, offset, true)?;
+        let agle = pv4.parse_event(input, true)?;
         let agle: AnonymousGtidLogEvent = agle.unwrap().try_into()?;
         println!("{:#?}", agle);
         Ok(())
@@ -894,10 +924,11 @@ mod tests {
 
     #[test]
     fn test_previous_gtids_log_event() -> Result<()> {
-        let input = BINLOG_GTID_EVENT;
-        let (offset, pv4) = ParserV4::from_binlog_file(input)?;
+        let mut input = BINLOG_GTID_EVENT;
+        let input = &mut input.to_bytes();
+        let pv4 = ParserV4::from_binlog_file(input)?;
         // 1st event
-        let (_, pgle) = pv4.parse_event(input, offset, true)?;
+        let pgle = pv4.parse_event(input, true)?;
         let pgle: PreviousGtidsLogEvent = pgle.unwrap().try_into()?;
         println!("{:#?}", pgle);
         dbg!(pgle.data.gtid_set().unwrap());
@@ -915,17 +946,18 @@ mod tests {
             BINLOG_BEGIN_LOAD_QUERY_EVENT,
             BINLOG_RAND_EVENT,
         ];
-        for f in files {
-            let (mut offset, pv4) = ParserV4::from_binlog_file(f)?;
-            while offset < f.len() {
-                offset = pv4.checksum_event(f, offset)?;
+        for mut f in files.into_iter().map(|mut f| f.to_bytes()) {
+            let pv4 = ParserV4::from_binlog_file(&mut f)?;
+            while f.has_remaining() {
+                pv4.checksum_event(&f)?;
+                pv4.skip_event(&mut f)?;
             }
         }
         Ok(())
     }
 
-    fn post_header_length(event: &FormatDescriptionEvent, event_type: LogEventType) -> u8 {
+    fn post_header_length(fdd: &FormatDescriptionData, event_type: LogEventType) -> u8 {
         let idx = LogEventTypeCode::from(event_type).0 as usize - 1;
-        event.data.post_header_lengths[idx]
+        fdd.post_header_lengths[idx]
     }
 }

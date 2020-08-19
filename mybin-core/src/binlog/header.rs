@@ -1,8 +1,8 @@
 use super::LogEventTypeCode;
 use bitflags::bitflags;
 use bytes_parser::error::Result;
-use bytes_parser::number::ReadNumber;
-use bytes_parser::ReadFrom;
+use bytes_parser::{ReadFromBytes, ReadBytesExt};
+use bytes::Bytes;
 
 #[derive(Debug, Clone)]
 pub struct EventHeaderV1 {
@@ -26,21 +26,18 @@ impl EventHeaderV1 {
 ///
 /// the header includes 4 fields:
 /// timestamp 0:4, type_code 4:1, server_id: 5:4, event_length: 9:4
-impl ReadFrom<'_, EventHeaderV1> for [u8] {
-    fn read_from(&self, offset: usize) -> Result<(usize, EventHeaderV1)> {
-        let (offset, timestamp) = self.read_le_u32(offset)?;
-        let (offset, type_code) = self.read_u8(offset)?;
-        let (offset, server_id) = self.read_le_u32(offset)?;
-        let (offset, event_len) = self.read_le_u32(offset)?;
-        Ok((
-            offset,
-            EventHeaderV1 {
-                timestamp,
-                type_code: LogEventTypeCode(type_code),
-                server_id,
-                event_len,
-            },
-        ))
+impl ReadFromBytes for EventHeaderV1 {
+    fn read_from(input: &mut Bytes) -> Result<Self> {
+        let timestamp = input.read_le_u32()?;
+        let type_code = input.read_u8()?;
+        let server_id = input.read_le_u32()?;
+        let event_len = input.read_le_u32()?;
+        Ok(EventHeaderV1 {
+            timestamp,
+            type_code: LogEventTypeCode(type_code),
+            server_id,
+            event_len,
+        })
     }
 }
 
@@ -81,29 +78,23 @@ impl EventHeader {
 /// thie common header includes 6 fields:
 /// timestamp 0:4, type_code 4:1, server_id: 5:4,
 /// event_length: 9:4, next_position: 13:4, flags 17:2
-impl ReadFrom<'_, EventHeader> for [u8] {
-    fn read_from(&self, offset: usize) -> Result<(usize, EventHeader)> {
-        let (
-            offset,
-            EventHeaderV1 {
-                timestamp,
-                type_code,
-                server_id,
-                event_len,
-            },
-        ) = self.read_from(offset)?;
-        let (offset, next_pos) = self.read_le_u32(offset)?;
-        let (offset, flags) = self.read_le_u16(offset)?;
-        Ok((
-            offset,
-            EventHeader {
-                timestamp,
-                type_code,
-                server_id,
-                event_len,
-                next_pos,
-                flags: EventHeaderFlags::from_bits_truncate(flags),
-            },
-        ))
+impl ReadFromBytes for EventHeader {
+    fn read_from(input: &mut Bytes) -> Result<Self> {
+        let EventHeaderV1 {
+            timestamp,
+            type_code,
+            server_id,
+            event_len,
+        } = EventHeaderV1::read_from(input)?;
+        let next_pos = input.read_le_u32()?;
+        let flags = input.read_le_u16()?;
+        Ok(EventHeader {
+            timestamp,
+            type_code,
+            server_id,
+            event_len,
+            next_pos,
+            flags: EventHeaderFlags::from_bits_truncate(flags),
+        })
     }
 }

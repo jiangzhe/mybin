@@ -1,7 +1,7 @@
 use bitflags::bitflags;
 use bytes_parser::error::{Error, Result};
-use bytes_parser::number::ReadNumber;
-use bytes_parser::ReadFrom;
+use bytes_parser::{ReadBytesExt, ReadFromBytes};
+use bytes::Bytes;
 
 /// Data of IntvarEvent
 ///
@@ -12,14 +12,13 @@ pub struct IntvarData {
     pub value: u64,
 }
 
-impl ReadFrom<'_, IntvarData> for [u8] {
-    fn read_from(&self, offset: usize) -> Result<(usize, IntvarData)> {
-        let (offset, key) = self.read_u8(offset)?;
+impl ReadFromBytes for IntvarData {
+    fn read_from(input: &mut Bytes) -> Result<Self> {
+        let key = input.read_u8()?;
         let key = IntvarKey::from_bits(key)
             .ok_or_else(|| Error::ConstraintError(format!("invalid intvar key {}", key)))?;
-        let (offset, value) = self.read_le_u64(offset)?;
-        debug_assert_eq!(self.len(), offset);
-        Ok((offset, IntvarData { key, value }))
+        let value = input.read_le_u64()?;
+        Ok(IntvarData { key, value })
     }
 }
 

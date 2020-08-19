@@ -1,36 +1,32 @@
-use bytes_parser::bytes::ReadBytes;
 use bytes_parser::error::{Result, Error};
-use bytes_parser::number::ReadNumber;
-use bytes_parser::ReadFrom;
+use bytes_parser::{ReadBytesExt, ReadFromBytes};
+use bytes::{Buf, Bytes};
 use bitflags::bitflags;
 
 /// Data of UserVarEvent
 ///
 /// reference: https://dev.mysql.com/doc/internals/en/user-var-event.html
 #[derive(Debug, Clone)]
-pub struct UserVarData<'a> {
+pub struct UserVarData {
     pub name_length: u32,
-    pub name: &'a [u8],
+    pub name: Bytes,
     pub is_null: u8,
     // value is lazy evaluated
-    pub value: &'a [u8],
+    pub value: Bytes,
 }
 
-impl<'a> ReadFrom<'a, UserVarData<'a>> for [u8] {
-    fn read_from(&'a self, offset: usize) -> Result<(usize, UserVarData<'a>)> {
-        let (offset, name_length) = self.read_le_u32(offset)?;
-        let (offset, name) = self.take_len(offset, name_length as usize)?;
-        let (offset, is_null) = self.read_u8(offset)?;
-        let (offset, value) = self.take_len(offset, self.len() - offset)?;
-        Ok((
-            offset,
-            UserVarData {
-                name_length,
-                name,
-                is_null,
-                value,
-            },
-        ))
+impl ReadFromBytes for UserVarData {
+    fn read_from(input: &mut Bytes) -> Result<Self> {
+        let name_length = input.read_le_u32()?;
+        let name = input.read_len(name_length as usize)?;
+        let is_null = input.read_u8()?;
+        let value = input.split_to(input.remaining());
+        Ok(UserVarData {
+            name_length,
+            name,
+            is_null,
+            value,
+        })
     }
 }
 
@@ -38,36 +34,33 @@ impl<'a> ReadFrom<'a, UserVarData<'a>> for [u8] {
 ///
 /// reference: https://github.com/mysql/mysql-server/blob/5.7/libbinlogevents/include/statement_events.h#L824
 #[derive(Debug, Clone)]
-pub struct UserVarValue<'a> {
+pub struct UserVarValue {
     pub value_type: u8,
     pub charset_num: u32,
-    pub value: &'a [u8],
+    pub value: Bytes,
     pub flags: UserVarFlags,
 }
 
 // todo: extract meaningful value from value byte arrary
-impl<'a> ReadFrom<'a, UserVarValue<'a>> for [u8] {
-    fn read_from(&'a self, offset: usize) -> Result<(usize, UserVarValue<'a>)> {
-        let (offset, value_type) = self.read_u8(offset)?;
-        let (offset, charset_num) = self.read_le_u32(offset)?;
-        let (offset, value_len) = self.read_le_u32(offset)?;
-        let (offset, value) = self.take_len(offset, value_len as usize)?;
-        let (offset, flags) = if offset < self.len() {
-            self.read_u8(offset)?
+impl ReadFromBytes for UserVarValue {
+    fn read_from(input: &mut Bytes) -> Result<Self> {
+        let value_type = input.read_u8()?;
+        let charset_num = input.read_le_u32()?;
+        let value_len = input.read_le_u32()?;
+        let value = input.read_len(value_len as usize)?;
+        let flags = if input.has_remaining() {
+            input.read_u8()?
         } else {
-            (offset, 0)
+            0
         };
         let flags = UserVarFlags::from_bits(flags)
             .ok_or_else(|| Error::ConstraintError(format!("invalid user var flags {:02x}", flags)))?;
-        Ok((
-            offset,
-            UserVarValue {
-                value_type,
-                charset_num,
-                value,
-                flags,
-            },
-        ))
+        Ok(UserVarValue {
+            value_type,
+            charset_num,
+            value,
+            flags,
+        })
     }
 }
 

@@ -17,3 +17,7 @@ log = "0.4"
 rust-crypto = "0.2"
 mybin-core = { version = "0.1.0", path = "../mybin-core" }
 bytes-parser = { version = "0.1.0", path = "../bytes-parser" }
+pin-project = "0.4.23"
+
+[dev-dependencies]
+env_logger = "0.7.1"

@@ -5,24 +5,23 @@ use crate::number::{AsyncReadNumber, AsyncWriteNumber};
 use crate::recv_msg::{RecvMsg, RecvMsgFuture};
 use crate::binlog_stream::BinlogStream;
 use async_net::TcpStream;
-use bytes_parser::{ReadFrom, ReadWithContext, WriteTo};
+use bytes_parser::{ReadFromBytes, ReadFromBytesWithContext, WriteToBytes, ReadBytesExt, WriteBytesExt};
 use mybin_core::flag::{CapabilityFlags, StatusFlags};
 use mybin_core::handshake::{HandshakeClientResponse41, InitialHandshake};
 use mybin_core::packet::HandshakeMessage;
+use crate::query::Query;
 use serde_derive::*;
 use smol::io::AsyncWriteExt;
 use std::net::{SocketAddr, ToSocketAddrs};
-
+use bytes::{Buf, Bytes, BytesMut};
 
 #[derive(Debug)]
 pub struct Conn {
     socket_addr: SocketAddr,
     pub(crate) stream: TcpStream,
-    cap_flags: CapabilityFlags,
+    pub(crate) cap_flags: CapabilityFlags,
     pkt_nr: u8,
-    server_status: StatusFlags,
-    read_buf: Vec<u8>,
-    write_buf: Vec<u8>,
+    pub(crate) server_status: StatusFlags,
 }
 
 #[allow(dead_code)]
@@ -45,8 +44,6 @@ impl Conn {
             cap_flags: CapabilityFlags::empty(),
             pkt_nr: 0,
             server_status: StatusFlags::empty(),
-            read_buf: Vec::with_capacity(1024 * 8),
-            write_buf: Vec::with_capacity(1024 * 8),
         })
     }
 
@@ -54,16 +51,16 @@ impl Conn {
     /// should be called before any other commands
     /// this method will change the connect capability flags
     pub async fn handshake(&mut self, opts: ConnOpts) -> Result<()> {
-        let msg = self.recv_msg().await?;
-        let (_, handshake): (_, InitialHandshake) = msg.read_from(0)?;
+        let mut msg = self.recv_msg().await?;
+        let handshake = InitialHandshake::read_from(&mut msg)?;
         log::debug!(
             "protocol version: {}, server version: {}, connection_id: {}",
             handshake.protocol_version,
-            String::from_utf8_lossy(handshake.server_version),
+            String::from_utf8_lossy(handshake.server_version.bytes()),
             handshake.connection_id,
         );
         log::debug!("auth_plugin={}, auth_data_1={:?}, auth_data_2={:?}", 
-            String::from_utf8_lossy(handshake.auth_plugin_name), 
+            String::from_utf8_lossy(handshake.auth_plugin_name.bytes()), 
             handshake.auth_plugin_data_1, handshake.auth_plugin_data_2);
         let mut seed = vec![];
         seed.extend(handshake.auth_plugin_data_1);
@@ -75,6 +72,8 @@ impl Conn {
         self.cap_flags.insert(CapabilityFlags::TRANSACTIONS);
         self.cap_flags.insert(CapabilityFlags::MULTI_RESULTS);
         self.cap_flags.insert(CapabilityFlags::SECURE_CONNECTION);
+        // deprecate EOF to allow server send OK packet instead of EOF packet
+        self.cap_flags.insert(CapabilityFlags::DEPRECATE_EOF);
         self.cap_flags
             .insert(CapabilityFlags::PLUGIN_AUTH_LENENC_CLIENT_DATA);
         CapabilityFlags::default();
@@ -82,7 +81,7 @@ impl Conn {
         self.cap_flags.remove(CapabilityFlags::SSL);
         // by default use mysql_native_password auth_plugin
         let (auth_plugin_name, auth_response) = 
-            generate_auth_response(&opts.username, &opts.password, &seed)?;
+            gen_auth_resp(&opts.username, &opts.password, &seed)?;
 
         if !opts.database.is_empty() {
             self.cap_flags.insert(CapabilityFlags::CONNECT_WITH_DB);
@@ -98,9 +97,9 @@ impl Conn {
         };
         self.send_msg(client_resp).await?;
         let cap_flags = self.cap_flags.clone();
-        let msg = self.recv_msg().await?;
+        let mut msg = self.recv_msg().await?;
         // todo: handle auth switch request
-        match msg.read_with_ctx(0, &cap_flags)?.1 {
+        match HandshakeMessage::read_with_ctx(&mut msg, &cap_flags)? {
             HandshakeMessage::Ok(ok) => {
                 log::debug!("handshake succeeds");
                 self.server_status = ok.status_flags;
@@ -111,13 +110,13 @@ impl Conn {
                 return Err(Error::PacketError(format!(
                     "error_code: {}, error_message: {}",
                     err.error_code,
-                    String::from_utf8_lossy(err.error_message)
+                    String::from_utf8_lossy(err.error_message.bytes()),
                 )))
             }
             HandshakeMessage::Switch(switch) => {
                 log::debug!(
                     "switch auth_plugin={}, auth_data={:?}",
-                    String::from_utf8_lossy(switch.plugin_name),
+                    String::from_utf8_lossy(switch.plugin_name.bytes()),
                     switch.auth_plugin_data
                 );
                 unimplemented!();
@@ -129,9 +128,8 @@ impl Conn {
     /// receive message from MySQL server
     ///
     /// this method will concat mutliple packets if payload too large.
-    pub async fn recv_msg(&mut self) -> Result<&[u8]> {
-        // let mut out = Vec::new();
-        self.read_buf.clear();
+    pub async fn recv_msg(&mut self) -> Result<Bytes> {
+        let mut buf = BytesMut::new();
         loop {
             let payload_len = self.stream.read_le_u24().await?;
             let seq_id = self.stream.read_u8().await?;
@@ -148,7 +146,7 @@ impl Conn {
             }
             self.pkt_nr += 1;
             self.stream
-                .take_out(payload_len as usize, &mut self.read_buf)
+                .take_out(payload_len as usize, &mut buf)
                 .await?;
             // read multiple packets if payload larger than or equal to 2^24-1
             // https://dev.mysql.com/doc/internals/en/sending-more-than-16mbyte.html
@@ -156,7 +154,12 @@ impl Conn {
                 break;
             }
         }
-        Ok(&self.read_buf)
+        Ok(buf.freeze())
+    }
+
+    /// future to receive message for internal use
+    pub(crate) fn recv_msg_fut<'s, 'o>(&'s mut self, out: &'o mut BytesMut) -> RecvMsgFuture<'s, 'o> {
+        RecvMsgFuture::new(&mut self.stream, out)
     }
 
     /// send message to MySQL server
@@ -164,14 +167,13 @@ impl Conn {
     /// this method will split message into multiple packets if payload too large.
     pub async fn send_msg<'a, T>(&mut self, msg: T) -> Result<()>
     where
-        Vec<u8>: WriteTo<'a, T>,
-        T: 'a,
+        T: WriteToBytes,
     {
-        self.write_buf.clear();
-        self.write_buf.write_to(msg)?;
+        let mut buf = BytesMut::new();
+        msg.write_to(&mut buf);
         let mut chunk_size = 0;
         // let mut seq_id = 0;
-        for chunk in self.write_buf.chunks(0xffffff) {
+        for chunk in buf.bytes().chunks(0xffffff) {
             chunk_size = chunk.len();
             self.stream.write_le_u24(chunk_size as u32).await?;
             self.stream.write_u8(self.pkt_nr).await?;
@@ -188,6 +190,10 @@ impl Conn {
         Ok(())
     }
 
+    pub fn query<S: Into<String>>(&mut self, qry: S) -> Query {
+        Query::new(self)
+    }
+
     /// consume the connection and return the binlog stream
     pub async fn request_binlog_stream(mut self) -> Result<BinlogStream> {
         todo!()
@@ -201,7 +207,7 @@ impl Conn {
     }
 }
 
-fn generate_auth_response(username: &str, password: &str, seed: &[u8]) -> Result<(String, Vec<u8>)> {
+fn gen_auth_resp(username: &str, password: &str, seed: &[u8]) -> Result<(String, Vec<u8>)> {
     let mut seed = seed;
     if let Some(0x00) = seed.last() {
         // remove trailing 0x00 byte
@@ -224,15 +230,22 @@ pub struct ConnOpts {
 
 #[cfg(test)]
 mod tests {
-    // use super::*;
 
-    // #[smol_potat::test]
-    // async fn test_real_conn() {
-    //     let mut conn = Conn::connect("127.0.0.1:13306").await.unwrap();
-    //     conn.handshake(ConnOpts{
-    //         username: "root".to_owned(),
-    //         password: "password".to_owned(),
-    //         database: "".to_owned(),
-    //     }).await.unwrap();
-    // }
+    #[smol_potat::test]
+    async fn test_real_conn() {
+        // use super::*;
+        // use mybin_core::ComQuery;
+
+        // env_logger::init();
+
+        // let mut conn = Conn::connect("127.0.0.1:13306").await.unwrap();
+        // conn.handshake(ConnOpts{
+        //     username: "root".to_owned(),
+        //     password: "password".to_owned(),
+        //     database: "".to_owned(),
+        // }).await.unwrap();
+
+        // conn.query(ComQuery::new("set @master_binlog_checksum = @@global.binlog_checksum")).await.unwrap();
+
+    }
 }

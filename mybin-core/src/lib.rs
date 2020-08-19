@@ -1,11 +1,12 @@
-pub mod binlog;
-mod binlog_dump;
 pub mod col;
 pub mod error;
 pub mod flag;
 pub mod handshake;
 pub mod packet;
 pub mod query;
+pub mod resultset;
+pub mod binlog;
+pub mod binlog_dump;
 mod util;
 
 pub use crate::binlog_dump::*;
@@ -15,7 +16,7 @@ use std::convert::TryFrom;
 
 // pub mod prelude {
 //     pub use bytes_parser::number::ReadNumber;
-//     pub use bytes_parser::bytes::ReadBytes;
+//     pub use bytes_parser::take::TakeBytes;
 //     pub use bytes_parser::my::ReadMyEncoding;
 //     pub use bytes_parser::{ReadFrom, ReadWithContext, WriteTo, WriteWithContext};
 // }

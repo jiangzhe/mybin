@@ -3,6 +3,7 @@ use std::task::{Poll, Context};
 use std::pin::Pin;
 use async_net::TcpStream;
 use crate::error::Result;
+use bytes::BytesMut;
 
 // internal struct to concat multiple packets
 #[derive(Debug)]
@@ -19,23 +20,23 @@ enum RecvMsgState {
 }
 
 #[derive(Debug)]
-pub struct RecvMsgFuture<'a> {
-    pub(crate) stream: &'a mut TcpStream,
+pub struct RecvMsgFuture<'s, 'o> {
+    pub(crate) stream: &'s mut TcpStream,
     state: RecvMsgState,
-    out: &'a mut Vec<u8>,
+    out: &'o mut BytesMut,
     payload_len: u32,
     seq_id: u8,
 }
 
-impl RecvMsgFuture<'_> {
+impl RecvMsgFuture<'_, '_> {
     /// method to get over borrow checker
-    fn stream_and_out(&mut self) -> (&mut TcpStream, &mut Vec<u8>) {
+    fn stream_and_out(&mut self) -> (&mut TcpStream, &mut BytesMut) {
         (self.stream, self.out)
     }
 }
 
-impl<'a> RecvMsgFuture<'a> {
-    pub(crate) fn new(stream: &'a mut TcpStream, out: &'a mut Vec<u8>) -> Self {
+impl<'s, 'o> RecvMsgFuture<'s, 'o> {
+    pub(crate) fn new(stream: &'s mut TcpStream, out: &'o mut BytesMut) -> Self {
         RecvMsgFuture{
             stream,
             state: RecvMsgState::ReadLen,
@@ -46,7 +47,7 @@ impl<'a> RecvMsgFuture<'a> {
     }
 }
 
-impl Future for RecvMsgFuture<'_> {
+impl Future for RecvMsgFuture<'_, '_> {
     type Output = Result<RecvMsg>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {

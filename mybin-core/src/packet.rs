@@ -1,106 +1,71 @@
 use crate::flag::*;
 use crate::handshake::AuthSwitchRequest;
-use bytes_parser::bytes::ReadBytes;
 use bytes_parser::error::{Error, Needed, Result};
-use bytes_parser::my::ReadMyEncoding;
-use bytes_parser::number::ReadNumber;
-use bytes_parser::EMPTY_BYTE_ARRAY;
-use bytes_parser::{ReadFrom, ReadWithContext};
+use bytes_parser::my::ReadMyEnc;
+use bytes_parser::{ReadFromBytes, ReadFromBytesWithContext, ReadBytesExt};
+use bytes::{Buf, Bytes};
 
 /// MySQL packet
 ///
 /// reference: https://dev.mysql.com/doc/internals/en/mysql-packet.html
 #[derive(Debug, Clone)]
-pub struct Packet<'a> {
+pub struct Packet {
     pub payload_len: u32,
     pub seq_id: u8,
-    pub payload: &'a [u8],
+    pub payload: Bytes,
 }
 
-impl<'a> ReadFrom<'a, Packet<'a>> for [u8] {
-    fn read_from(&'a self, offset: usize) -> Result<(usize, Packet<'a>)> {
-        let (offset, payload_len) = self.read_le_u24(offset)?;
-        let (offset, seq_id) = self.read_u8(offset)?;
-        let (offset, payload) = self.take_len(offset, payload_len as usize)?;
-        Ok((
-            offset,
-            Packet {
-                payload_len,
-                seq_id,
-                payload,
-            },
-        ))
+impl ReadFromBytes for Packet {
+    fn read_from(input: &mut Bytes) -> Result<Packet> {
+        let payload_len = input.read_le_u24()?;
+        let seq_id = input.read_u8()?;
+        let payload = input.read_len(payload_len as usize)?;
+        Ok(Packet {
+            payload_len,
+            seq_id,
+            payload,
+        })
     }
 }
 
 /// one or more packet payloads can combine to one full message
 #[derive(Debug, Clone)]
-pub enum Message<'a> {
-    Ok(OkPacket<'a>),
-    Err(ErrPacket<'a>),
+pub enum Message {
+    Ok(OkPacket),
+    Err(ErrPacket),
     Eof(EofPacket),
-}
-
-impl<'a, 'c> ReadWithContext<'a, 'c, Message<'a>> for [u8] {
-    type Context = &'c CapabilityFlags;
-
-    fn read_with_ctx(
-        &'a self,
-        offset: usize,
-        cap_flags: Self::Context,
-    ) -> Result<(usize, Message)> {
-        if self.len() <= offset {
-            return Err(Error::InputIncomplete(Needed::Unknown));
-        }
-        match self[0] {
-            0x00 => {
-                let (offset, ok) = self.read_with_ctx(offset, cap_flags)?;
-                Ok((offset, Message::Ok(ok)))
-            }
-            0xff => {
-                let (offset, err) = self.read_with_ctx(offset, (cap_flags, true))?;
-                Ok((offset, Message::Err(err)))
-            }
-            0xfe => {
-                let (offset, eof) = self.read_with_ctx(offset, cap_flags)?;
-                Ok((offset, Message::Eof(eof)))
-            }
-            c => Err(Error::ConstraintError(format!("invalid packet code {}", c))),
-        }
-    }
 }
 
 /// handshake message
 #[derive(Debug, Clone)]
-pub enum HandshakeMessage<'a> {
-    Ok(OkPacket<'a>),
-    Err(ErrPacket<'a>),
-    Switch(AuthSwitchRequest<'a>),
+pub enum HandshakeMessage {
+    Ok(OkPacket),
+    Err(ErrPacket),
+    Switch(AuthSwitchRequest),
 }
 
-impl<'a, 'c> ReadWithContext<'a, 'c, HandshakeMessage<'a>> for [u8] {
+impl<'c> ReadFromBytesWithContext<'c> for HandshakeMessage {
     type Context = &'c CapabilityFlags;
 
     fn read_with_ctx(
-        &'a self,
-        offset: usize,
+        input: &mut Bytes,
         cap_flags: Self::Context,
-    ) -> Result<(usize, HandshakeMessage<'a>)> {
-        if self.len() <= offset {
+    ) -> Result<Self> {
+        if !input.has_remaining() {
             return Err(Error::InputIncomplete(Needed::Unknown));
         }
-        match self[0] {
+        match input[0] {
             0x00 => {
-                let (offset, ok) = self.read_with_ctx(offset, cap_flags)?;
-                Ok((offset, HandshakeMessage::Ok(ok)))
+                let ok = OkPacket::read_with_ctx(input, cap_flags)?;
+                Ok(HandshakeMessage::Ok(ok))
             }
             0xff => {
-                let (offset, err) = self.read_with_ctx(offset, (cap_flags, false))?;
-                Ok((offset, HandshakeMessage::Err(err)))
+                let err = ErrPacket::read_with_ctx(input, (cap_flags, false))?;
+                Ok(HandshakeMessage::Err(err))
             }
             0xfe => {
-                let (offset, switch) = self.read_from(offset)?;
-                Ok((offset, HandshakeMessage::Switch(switch)))
+                let switch = AuthSwitchRequest::read_from(input)?;
+                Ok(HandshakeMessage::Switch(switch))
             }
             c => Err(Error::ConstraintError(format!("invalid packet code {}", c))),
         }
@@ -111,7 +76,7 @@ impl<'a, 'c> ReadWithContext<'a, 'c, HandshakeMessage<'a>> for [u8] {
 ///
 /// reference: https://dev.mysql.com/doc/internals/en/packet-OK_Packet.html
 #[derive(Debug, Clone)]
-pub struct OkPacket<'a> {
+pub struct OkPacket {
     pub header: u8,
     // actually len-enc-int
     pub affected_rows: u64,
@@ -123,71 +88,61 @@ pub struct OkPacket<'a> {
     pub warnings: u16,
     // if SESSION_TRACK enabled: len-enc-str
     // else: EOF-terminated string
-    pub info: &'a [u8],
+    pub info: Bytes,
     // if SESSION_TRACK and SESSION_STATE_CHANGED enabled
-    pub session_state_changes: &'a [u8],
+    pub session_state_changes: Bytes,
 }
 
-impl<'a, 'c> ReadWithContext<'a, 'c, OkPacket<'a>> for [u8] {
+impl<'c> ReadFromBytesWithContext<'c> for OkPacket {
     type Context = &'c CapabilityFlags;
 
-    fn read_with_ctx(
-        &'a self,
-        offset: usize,
-        cap_flags: &'c CapabilityFlags,
-    ) -> Result<(usize, OkPacket<'a>)> {
-        let (offset, header) = self.read_u8(offset)?;
-        debug_assert_eq!(0x00, header);
-        let (offset, affected_rows) = self.read_len_enc_int(offset)?;
-        let affected_rows = affected_rows.to_u64().expect("invalid affected rows");
-        let (offset, last_insert_id) = self.read_len_enc_int(offset)?;
-        let last_insert_id = last_insert_id.to_u64().expect("invalid last insert id");
-        let (offset, status_flags) = if cap_flags.contains(CapabilityFlags::PROTOCOL_41)
+    fn read_with_ctx(input: &mut Bytes, cap_flags: Self::Context) -> Result<OkPacket> {
+        // header can be either 0x00 or 0xfe
+        let header = input.read_u8()?;
+        let affected_rows = input.read_len_enc_int()?;
+        let affected_rows = affected_rows.to_u64()
+            .ok_or_else(|| Error::ConstraintError("invalid affected rows".to_owned()))?;
+        let last_insert_id = input.read_len_enc_int()?;
+        let last_insert_id = last_insert_id.to_u64()
+            .ok_or_else(|| Error::ConstraintError("invalid last insert id".to_owned()))?;
+        let status_flags = if cap_flags.contains(CapabilityFlags::PROTOCOL_41)
             || cap_flags.contains(CapabilityFlags::TRANSACTIONS)
         {
-            let (offset, status_flags) = self.read_le_u16(offset)?;
-            let status_flags = StatusFlags::from_bits(status_flags).expect("invalid status flags");
-            (offset, status_flags)
+            let status_flags = input.read_le_u16()?;
+            StatusFlags::from_bits(status_flags)
+                .ok_or_else(|| Error::ConstraintError("invalid status flags".to_owned()))?
         } else {
-            (offset, StatusFlags::empty())
+            StatusFlags::empty()
         };
-        let (offset, warnings) = if cap_flags.contains(CapabilityFlags::PROTOCOL_41) {
-            self.read_le_u16(offset)?
+        let warnings = if cap_flags.contains(CapabilityFlags::PROTOCOL_41) {
+            input.read_le_u16()?
         } else {
-            (offset, 0)
+            0
         };
-        let (offset, info) = if cap_flags.contains(CapabilityFlags::SESSION_TRACK) {
-            let (offset, info) = self.read_len_enc_str(offset)?;
-            (offset, info.into_ref().expect("invalid info"))
+        let info = if cap_flags.contains(CapabilityFlags::SESSION_TRACK) {
+            let info = input.read_len_enc_str()?;
+            info.into_bytes().ok_or_else(|| Error::ConstraintError("invalid info".to_owned()))?
         } else {
-            let (offset, info): (_, &'a [u8]) = self.take_len(offset, self.len() - offset)?;
-            (offset, info)
+            input.split_to(input.remaining())
         };
-        let (offset, session_state_changes) = if cap_flags.contains(CapabilityFlags::SESSION_TRACK)
+        let session_state_changes = if cap_flags.contains(CapabilityFlags::SESSION_TRACK)
             && status_flags.contains(StatusFlags::SESSION_STATE_CHANGED)
         {
-            let (offset, session_state_changes) = self.read_len_enc_str(offset)?;
-            (
-                offset,
-                session_state_changes
-                    .into_ref()
-                    .expect("invalid session state changes"),
-            )
+            let session_state_changes = input.read_len_enc_str()?;
+            session_state_changes.into_bytes()
+                .ok_or_else(|| Error::ConstraintError("invalid session state changes".to_owned()))?
         } else {
-            (offset, &EMPTY_BYTE_ARRAY[..])
+            Bytes::new()
         };
-        Ok((
-            offset,
-            OkPacket {
-                header,
-                affected_rows,
-                last_insert_id,
-                status_flags,
-                warnings,
-                info,
-                session_state_changes,
-            },
-        ))
+        Ok(OkPacket {
+            header,
+            affected_rows,
+            last_insert_id,
+            status_flags,
+            warnings,
+            info,
+            session_state_changes,
+        })
     }
 }
 
@@ -195,47 +150,39 @@ impl<'a, 'c> ReadWithContext<'a, 'c, OkPacket<'a>> for [u8] {
 ///
 /// reference: https://dev.mysql.com/doc/internals/en/packet-ERR_Packet.html
 #[derive(Debug, Clone)]
-pub struct ErrPacket<'a> {
+pub struct ErrPacket {
     pub header: u8,
     pub error_code: u16,
     // if PROTOCOL_41 enabled: string[1]
     pub sql_state_marker: u8,
     // if PROTOCOL_41 enabled: string[5]
-    pub sql_state: &'a [u8],
+    pub sql_state: Bytes,
     // EOF-terminated string
-    pub error_message: &'a [u8],
+    pub error_message: Bytes,
 }
 
-impl<'a, 'c> ReadWithContext<'a, 'c, ErrPacket<'a>> for [u8] {
+impl<'c> ReadFromBytesWithContext<'c> for ErrPacket {
     type Context = (&'c CapabilityFlags, bool);
 
-    fn read_with_ctx(
-        &'a self,
-        offset: usize,
-        (cap_flags, sql): Self::Context,
-    ) -> Result<(usize, ErrPacket<'a>)> {
-        let (offset, header) = self.read_u8(offset)?;
-        debug_assert_eq!(0xff, header);
-        let (offset, error_code) = self.read_le_u16(offset)?;
-        let (offset, sql_state_marker, sql_state) =
+    fn read_with_ctx(input: &mut Bytes, (cap_flags, sql): Self::Context) -> Result<ErrPacket> {
+        let header = input.read_u8()?;
+        let error_code = input.read_le_u16()?;
+        let (sql_state_marker, sql_state) =
             if sql && cap_flags.contains(CapabilityFlags::PROTOCOL_41) {
-                let (offset, sql_state_marker) = self.read_u8(offset)?;
-                let (offset, sql_state) = self.take_len(offset, 5usize)?;
-                (offset, sql_state_marker, sql_state)
+                let sql_state_marker = input.read_u8()?;
+                let sql_state = input.read_len(5usize)?;
+                (sql_state_marker, sql_state)
             } else {
-                (offset, 0u8, &EMPTY_BYTE_ARRAY[..])
+                (0u8, Bytes::new())
             };
-        let (offset, error_message) = self.take_len(offset, self.len() - offset)?;
-        Ok((
-            offset,
-            ErrPacket {
-                header,
-                error_code,
-                sql_state_marker,
-                sql_state,
-                error_message,
-            },
-        ))
+        let error_message = input.split_to(input.remaining());
+        Ok(ErrPacket {
+            header,
+            error_code,
+            sql_state_marker,
+            sql_state,
+            error_message,
+        })
     }
 }
 
@@ -251,28 +198,24 @@ pub struct EofPacket {
     pub status_flags: StatusFlags,
 }
 
-impl<'a, 'c> ReadWithContext<'a, 'c, EofPacket> for [u8] {
+impl<'c> ReadFromBytesWithContext<'c> for EofPacket {
     type Context = &'c CapabilityFlags;
 
-    fn read_with_ctx(&self, offset: usize, cap_flags: Self::Context) -> Result<(usize, EofPacket)> {
-        let (offset, header) = self.read_u8(offset)?;
-        debug_assert_eq!(0xfe, header);
-        let (offset, warnings, status_flags) = if cap_flags.contains(CapabilityFlags::PROTOCOL_41) {
-            let (offset, warnings) = self.read_le_u16(offset)?;
-            let (offset, status_flags) = self.read_le_u16(offset)?;
-            let status_flags = StatusFlags::from_bits(status_flags).expect("invalid status flags");
-            (offset, warnings, status_flags)
+    fn read_with_ctx(input: &mut Bytes, cap_flags: Self::Context) -> Result<EofPacket> {
+        let header = input.read_u8()?;
+        let (warnings, status_flags) = if cap_flags.contains(CapabilityFlags::PROTOCOL_41) {
+            let warnings = input.read_le_u16()?;
+            let status_flags = input.read_le_u16()?;
+            let status_flags = StatusFlags::from_bits(status_flags).ok_or_else(|| Error::ConstraintError(format!("invalid status flags {}", status_flags)))?;
+            (warnings, status_flags)
         } else {
-            (offset, 0, StatusFlags::empty())
+            (0, StatusFlags::empty())
         };
-        Ok((
-            offset,
-            EofPacket {
-                header,
-                warnings,
-                status_flags,
-            },
-        ))
+        Ok(EofPacket {
+            header,
+            warnings,
+            status_flags,
+        })
     }
 }
 
@@ -282,22 +225,21 @@ mod tests {
     const PACKET_DATA: &[u8] = include_bytes!("../data/packet.dat");
 
     use super::*;
-    use bytes_parser::ReadFrom;
 
     #[test]
     fn test_packet() {
-        let (offset, pkt): (_, Packet<'_>) = PACKET_DATA.read_from(0).unwrap();
-        assert_eq!(PACKET_DATA.len(), offset);
+        let mut input = (&PACKET_DATA[..]).to_bytes();
+        let pkt = Packet::read_from(&mut input).unwrap();
         dbg!(pkt);
     }
 
     #[test]
     fn test_ok_packet() {
         let input: Vec<u8> = vec![0, 0, 0, 2, 0, 0, 0];
-        let (_, pkt): (_, OkPacket) = input
-            .read_with_ctx(0, &CapabilityFlags::PROTOCOL_41)
+        let mut input = (&input[..]).to_bytes();
+        let ok = OkPacket::read_with_ctx(&mut input, &CapabilityFlags::PROTOCOL_41)
             .unwrap();
-        dbg!(pkt);
+        dbg!(ok);
     }
 
     #[test]
@@ -317,13 +259,9 @@ mod tests {
             101, 32, 114, 101, 97, 100, 32, 102, 114, 111, 109, 32, 39, 46, 47, 109, 121, 115, 113,
             108, 45, 98, 105, 110, 46, 48, 48, 48, 48, 48, 49, 39, 32, 97, 116, 32, 49, 50, 51, 46,
         ];
-        let (_, pkt): (_, ErrPacket) = input
-            .read_with_ctx(0, (&CapabilityFlags::PROTOCOL_41, true))
+        let mut input = (&input[..]).to_bytes();
+        let err = ErrPacket::read_with_ctx(&mut input, (&CapabilityFlags::PROTOCOL_41, true))
             .unwrap();
-        // dbg!(pkt);
-        println!("{}", pkt.error_code);
-        println!("{:?}", pkt.sql_state_marker);
-        println!("{}", String::from_utf8_lossy(pkt.sql_state));
-        println!("{}", String::from_utf8_lossy(pkt.error_message));
+        dbg!(err);
     }
 }
