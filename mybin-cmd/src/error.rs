@@ -10,6 +10,10 @@ pub enum Error {
     InvalidColumnTypeCode(u32),
     #[error("invalid binlog format: {0}")]
     InvalidBinlogFormat(String),
+    #[error("unsupported binlog event: {0}")]
+    UnsupportedBinlogEvent(String),
+    #[error("binlog checksum mismatch: expected={0}, actual={1}")]
+    BinlogChecksumMismatch(u32, u32),
     #[error("utf8 error: {0}")]
     Utf8Error(#[from] std::string::FromUtf8Error),
     #[error("parse error: {0}")]

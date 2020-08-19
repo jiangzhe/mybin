@@ -4,7 +4,6 @@ mod binlog_dump;
 mod query;
 mod packet;
 mod flag;
-mod checksum;
 mod binlog;
 mod util;
 mod col;

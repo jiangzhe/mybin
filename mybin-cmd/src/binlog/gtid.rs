@@ -9,7 +9,7 @@ use bytes_parser::error::{Result, Error};
 ///
 /// reference: https://github.com/mysql/mysql-server/blob/5.7/libbinlogevents/include/control_events.h#L933
 #[derive(Debug, Clone)]
-pub struct GtidData {
+pub struct GtidLogData {
     pub gtid_flags: u8,
     // from source code
     pub encoded_sid: u128,
@@ -21,14 +21,14 @@ pub struct GtidData {
     pub seq_num: u64,
 }
 
-impl ReadFrom<'_, GtidData> for [u8] {
-    fn read_from(&self, offset: usize) -> Result<(usize, GtidData)> {
+impl ReadFrom<'_, GtidLogData> for [u8] {
+    fn read_from(&self, offset: usize) -> Result<(usize, GtidLogData)> {
         let (offset, gtid_flags) = self.read_u8(offset)?;
         let (offset, encoded_sid) = self.read_le_u128(offset)?;
         let (offset, encoded_gno) = self.read_le_u64(offset)?;
         // consumed 25 bytes now
         let (offset, LogicalTs{ts_type, last_committed, seq_num}) = self.read_from(offset)?;
-        Ok((offset, GtidData{
+        Ok((offset, GtidLogData{
             gtid_flags,
             encoded_sid,
             encoded_gno,
@@ -62,11 +62,11 @@ impl ReadFrom<'_, LogicalTs> for [u8] {
 ///
 /// reference: https://github.com/mysql/mysql-server/blob/5.7/libbinlogevents/include/control_events.h#L1074
 #[derive(Debug, Clone)]
-pub struct PreviousGtidsData<'a> {
+pub struct PreviousGtidsLogData<'a> {
     pub payload: &'a [u8],
 }
 
-impl<'a> PreviousGtidsData<'a> {
+impl<'a> PreviousGtidsLogData<'a> {
     pub fn gtid_set(&self) -> Result<GtidSet> {
         let (_, gtid_set) = self.payload.read_from(0)?;
         Ok(gtid_set)
@@ -77,10 +77,10 @@ impl<'a> PreviousGtidsData<'a> {
 ///
 /// seems layout introduction on mysql dev website is wrong,
 /// so follow source code: https://github.com/mysql/mysql-server/blob/5.7/sql/rpl_gtid_set.cc#L1469
-impl<'a> ReadFrom<'a, PreviousGtidsData<'a>> for [u8] {
-    fn read_from(&'a self, offset: usize) -> Result<(usize, PreviousGtidsData<'a>)> {
+impl<'a> ReadFrom<'a, PreviousGtidsLogData<'a>> for [u8] {
+    fn read_from(&'a self, offset: usize) -> Result<(usize, PreviousGtidsLogData<'a>)> {
         let (offset, payload) = self.take_len(offset, self.len() - offset)?;
-        Ok((offset, PreviousGtidsData{payload}))
+        Ok((offset, PreviousGtidsLogData{payload}))
     }
 }
 

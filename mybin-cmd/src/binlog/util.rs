@@ -1,9 +1,10 @@
 #[macro_export]
 macro_rules! raw_event {
     ($event_name:ident) => {
+        #[derive(Debug, Clone)]
         pub struct $event_name($crate::binlog::RawEvent<()>);
 
-        impl ReadWithContext<'_, '_, $event_name> for [u8] {
+        impl bytes_parser::ReadWithContext<'_, '_, $event_name> for [u8] {
             type Context = bool;
             
             fn read_with_ctx(&self, offset: usize, checksum: Self::Context) -> Result<(usize, $event_name)> {
@@ -20,8 +21,15 @@ macro_rules! raw_event {
                 })))
             }
         }
+
+        impl $crate::binlog::HasCrc32 for $event_name {
+            fn crc32(&self) -> u32 {
+                self.0.crc32
+            }
+        } 
     };
     ($event_name:ident, $data_name:ident) => {
+        #[derive(Debug, Clone)]
         pub struct $event_name($crate::binlog::RawEvent<$data_name>);
 
         impl std::ops::Deref for $event_name {
@@ -38,7 +46,7 @@ macro_rules! raw_event {
             }
         }
 
-        impl ReadWithContext<'_, '_, $event_name> for [u8] {
+        impl bytes_parser::ReadWithContext<'_, '_, $event_name> for [u8] {
             type Context = bool;
             
             fn read_with_ctx(&self, offset: usize, checksum: Self::Context) -> Result<(usize, $event_name)> {
@@ -62,8 +70,15 @@ macro_rules! raw_event {
                 })))
             }
         }
+
+        impl $crate::binlog::HasCrc32 for $event_name {
+            fn crc32(&self) -> u32 {
+                self.0.crc32
+            }
+        }
     };
     ($event_name:ident, $data_name:ident, $lt:tt) => {
+        #[derive(Debug, Clone)]
         pub struct $event_name<$lt>($crate::binlog::RawEvent<$data_name<$lt>>);
 
         impl<$lt> std::ops::Deref for $event_name<$lt> {
@@ -96,6 +111,12 @@ macro_rules! raw_event {
                     data,
                     crc32,
                 })))
+            }
+        }
+
+        impl $crate::binlog::HasCrc32 for $event_name<'_> {
+            fn crc32(&self) -> u32 {
+                self.0.crc32
             }
         }
     }

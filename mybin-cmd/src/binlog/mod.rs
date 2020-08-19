@@ -21,7 +21,7 @@ use fde::{StartData, FormatDescriptionData};
 use query::QueryData;
 use rotate::RotateData;
 use intvar::IntvarData;
-use gtid::{GtidData, PreviousGtidsData};
+use gtid::{GtidLogData, PreviousGtidsLogData};
 use user_var::UserVarData;
 use load::*;
 use rand::RandData;
@@ -194,8 +194,7 @@ impl From<LogEventType> for LogEventTypeCode {
 /// input must start at the beginning of an event
 impl ReadFrom<'_, LogEventType> for [u8] {
     fn read_from(&self, offset: usize) -> Result<(usize, LogEventType)> {
-        let (offset, _) = self.take_len(offset, 4)?;
-        let (offset, type_code) = self.read_u8(offset)?;
+        let (offset, type_code) = self.read_u8(4)?;
         Ok((offset, LogEventType::from(type_code)))
     }
 }
@@ -208,10 +207,14 @@ pub struct EventLength(pub u32);
 /// input must start at the beginning of an event
 impl ReadFrom<'_, EventLength> for [u8] {
     fn read_from(&self, offset: usize) -> Result<(usize, EventLength)> {
-        let (offset, _) = self.take_len(offset, 9)?;
-        let (offset, event_length) = self.read_le_u32(offset)?;
+        let (offset, event_length) = self.read_le_u32(9)?;
         Ok((offset, EventLength(event_length)))
     }
+}
+
+/// provide crc32 checksum value
+pub trait HasCrc32 {
+    fn crc32(&self) -> u32;
 }
 
 /// v1 event with payload
@@ -233,10 +236,11 @@ pub struct RawEvent<D> {
 
 raw_event!(StartEventV3, StartData, 'a);
 
-pub struct FormatDescriptionEvent<'a>(FormatDescriptionData<'a>);
+#[derive(Debug, Clone)]
+pub struct FormatDescriptionEvent<'a>(RawEvent<FormatDescriptionData<'a>>);
 
 impl<'a> std::ops::Deref for FormatDescriptionEvent<'a> {
-    type Target = FormatDescriptionData<'a>;
+    type Target = RawEvent<FormatDescriptionData<'a>>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -251,6 +255,12 @@ impl<'a> ReadFrom<'a, FormatDescriptionEvent<'a>> for [u8] {
         let (offset, data) = self.take_len(offset, header.data_len() as usize)?;
         let (_, fde) = data.read_from(0)?;
         Ok((offset, fde))
+    }
+}
+
+impl HasCrc32 for FormatDescriptionEvent<'_> {
+    fn crc32(&self) -> u32 {
+        self.0.crc32
     }
 }
 
@@ -286,7 +296,7 @@ raw_event!(UserVarEvent, UserVarData, 'a);
 
 raw_event!(IncidentEvent, IncidentData, 'a);
 
-raw_event!(HeartbeatEvent);
+raw_event!(HeartbeatLogEvent);
 
 raw_event!(TableMapEvent, TableMapData, 'a);
 
@@ -302,15 +312,15 @@ raw_event!(UpdateRowsEventV2, RowsDataV2, 'a);
 
 raw_event!(DeleteRowsEventV2, RowsDataV2, 'a);
 
-raw_event!(GtidEvent, GtidData);
+raw_event!(GtidLogEvent, GtidLogData);
 
-raw_event!(AnonymousGtidEvent, GtidData);
+raw_event!(AnonymousGtidLogEvent, GtidLogData);
 
-raw_event!(PreviousGtidsEvent, PreviousGtidsData, 'a);
+raw_event!(PreviousGtidsLogEvent, PreviousGtidsLogData, 'a);
 
 pub enum Event<'a> {
     // 1
-    // StartEventV3(StartEventV3<'a>),
+    StartEventV3(StartEventV3<'a>),
     // 2
     QueryEvent(QueryEvent<'a>),
     // 3
@@ -354,7 +364,7 @@ pub enum Event<'a> {
     // 26
     IncidentEvent(IncidentEvent<'a>),
     // 27
-    HeartbeatEvent(HeartbeatEvent),
+    HeartbeatLogEvent(HeartbeatLogEvent),
     // 30
     WriteRowsEventV2(WriteRowsEventV2<'a>),
     // 31
@@ -362,10 +372,45 @@ pub enum Event<'a> {
     // 32
     DeleteRowsEventV2(DeleteRowsEventV2<'a>),
     // 33
-    GtidEvent(GtidEvent),
+    GtidLogEvent(GtidLogEvent),
     // 34
-    AnonymousGtidEvent(AnonymousGtidEvent),
+    AnonymousGtidLogEvent(AnonymousGtidLogEvent),
     // 35
-    PreviousGtidsEvent(PreviousGtidsEvent<'a>),
+    PreviousGtidsLogEvent(PreviousGtidsLogEvent<'a>),
 }
 
+impl HasCrc32 for Event<'_> {
+    fn crc32(&self) -> u32 {
+        match self {
+            Event::StartEventV3(e) => e.crc32(),
+            Event::QueryEvent(e) => e.crc32(),
+            Event::StopEvent(e) => e.crc32(),
+            Event::RotateEvent(e) => e.crc32(),
+            Event::IntvarEvent(e) => e.crc32(),
+            Event::LoadEvent(e) => e.crc32(),
+            Event::CreateFileEvent(e) => e.crc32(),
+            Event::AppendBlockEvent(e) => e.crc32(),
+            Event::ExecLoadEvent(e) => e.crc32(),
+            Event::DeleteFileEvent(e) => e.crc32(),
+            Event::NewLoadEvent(e) => e.crc32(),
+            Event::RandEvent(e) => e.crc32(),
+            Event::UserVarEvent(e) => e.crc32(),
+            Event::FormatDescriptionEvent(e) => e.crc32(),
+            Event::XidEvent(e) => e.crc32(),
+            Event::BeginLoadQueryEvent(e) => e.crc32(),
+            Event::ExecuteLoadQueryEvent(e) => e.crc32(),
+            Event::TableMapEvent(e) => e.crc32(),
+            Event::WriteRowsEventV1(e) => e.crc32(),
+            Event::UpdateRowsEventV1(e) => e.crc32(),
+            Event::DeleteRowsEventV1(e) => e.crc32(),
+            Event::IncidentEvent(e) => e.crc32(),
+            Event::HeartbeatLogEvent(e) => e.crc32(),
+            Event::WriteRowsEventV2(e) => e.crc32(),
+            Event::UpdateRowsEventV2(e) => e.crc32(),
+            Event::DeleteRowsEventV2(e) => e.crc32(),
+            Event::GtidLogEvent(e) => e.crc32(),
+            Event::AnonymousGtidLogEvent(e) => e.crc32(),
+            Event::PreviousGtidsLogEvent(e) => e.crc32(),
+        }
+    }
+}
