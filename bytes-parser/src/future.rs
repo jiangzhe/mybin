@@ -1,7 +1,7 @@
 //! async read and write
 use crate::error::{Error, Needed, Result};
 use crate::{read_number_future, write_number_future};
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 use futures::io::{AsyncRead, AsyncWrite};
 use futures::ready;
 use std::future::Future;
@@ -283,32 +283,39 @@ pub trait AsyncWriteBytesExt: AsyncWrite {
         WriteU8Future { writer: self, n }
     }
 
-    fn write_le_u16(&mut self, n: u16) -> WriteU16Future<Self>
+    fn write_le_u16(&mut self, n: u16) -> WriteLeU16Future<Self>
     where
         Self: Unpin,
     {
-        WriteU16Future { writer: self, n }
+        WriteLeU16Future { writer: self, n }
     }
 
-    fn write_le_u24(&mut self, n: u32) -> WriteU24Future<Self>
+    fn write_le_u24(&mut self, n: u32) -> WriteLeU24Future<Self>
     where
         Self: Unpin,
     {
-        WriteU24Future { writer: self, n }
+        WriteLeU24Future { writer: self, n }
     }
 
-    fn write_le_u32(&mut self, n: u32) -> WriteU32Future<Self>
+    fn write_le_u32(&mut self, n: u32) -> WriteLeU32Future<Self>
     where
         Self: Unpin,
     {
-        WriteU32Future { writer: self, n }
+        WriteLeU32Future { writer: self, n }
     }
 
-    fn write_le_u64(&mut self, n: u64) -> WriteU64Future<Self>
+    fn write_le_u64(&mut self, n: u64) -> WriteLeU64Future<Self>
     where
         Self: Unpin,
     {
-        WriteU64Future { writer: self, n }
+        WriteLeU64Future { writer: self, n }
+    }
+
+    fn write_bytes<'w, 'b>(&'w mut self, bs: &'b mut Bytes) -> WriteBytesFuture<'w, 'b, Self>
+    where
+        Self: Unpin,
+    {
+        WriteBytesFuture { writer: self, bs }
     }
 }
 
@@ -316,9 +323,9 @@ impl<W: AsyncWrite> AsyncWriteBytesExt for W {}
 
 write_number_future!(WriteU8Future, u8, 1, u8::to_le_bytes);
 
-write_number_future!(WriteU16Future, u16, 2, u16::to_le_bytes);
+write_number_future!(WriteLeU16Future, u16, 2, u16::to_le_bytes);
 
-write_number_future!(WriteU24Future, u32, 3, u24_to_le_bytes);
+write_number_future!(WriteLeU24Future, u32, 3, u24_to_le_bytes);
 
 fn u24_to_le_bytes(n: u32) -> [u8; 3] {
     [
@@ -328,9 +335,44 @@ fn u24_to_le_bytes(n: u32) -> [u8; 3] {
     ]
 }
 
-write_number_future!(WriteU32Future, u32, 4, u32::to_le_bytes);
+write_number_future!(WriteLeU32Future, u32, 4, u32::to_le_bytes);
 
-write_number_future!(WriteU64Future, u64, 8, u64::to_le_bytes);
+write_number_future!(WriteLeU64Future, u64, 8, u64::to_le_bytes);
+
+#[must_use = "futures do nothing unless you `.await` or poll them"]
+#[derive(Debug)]
+pub struct WriteBytesFuture<'w, 'b, W: Unpin + ?Sized> {
+    pub writer: &'w mut W,
+    pub bs: &'b mut Bytes,
+}
+
+impl<W> Future for WriteBytesFuture<'_, '_, W>
+where
+    W: AsyncWrite + Unpin + ?Sized,
+{
+    type Output = Result<()>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        if !self.bs.has_remaining() {
+            return Poll::Ready(Ok(()));
+        }
+        let Self { writer, bs } = &mut *self;
+        let mut writer = Pin::new(writer);
+        loop {
+            match ready!(writer.as_mut().poll_write(cx, bs.bytes())) {
+                Ok(0) => return Poll::Ready(Err(crate::error::Error::OutputUnavailable)),
+                Ok(n) => {
+                    bs.advance(n);
+                    if !bs.has_remaining() {
+                        return Poll::Ready(Ok(()));
+                    }
+                }
+                Err(ref e) if e.kind() == ErrorKind::Interrupted => (),
+                Err(e) => return Poll::Ready(Err(Error::from(e))),
+            }
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

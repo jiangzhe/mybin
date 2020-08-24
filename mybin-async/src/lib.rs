@@ -1,9 +1,9 @@
 mod auth_plugin;
-mod binlog_stream;
+mod binlog;
 mod conn;
 mod error;
+mod msg;
 mod query;
-mod recv_msg;
 
 pub use error::*;
 
@@ -12,7 +12,6 @@ mod tests {
 
     const PROTOCOL: &[u8] = include_bytes!("../data/protocol.dat");
 
-    use super::*;
     use bytes_parser::future::AsyncReadBytesExt;
 
     #[smol_potat::test]

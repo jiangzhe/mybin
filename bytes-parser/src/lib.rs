@@ -221,6 +221,22 @@ pub trait WriteToBytes {
     fn write_to(self, out: &mut BytesMut) -> Result<usize>;
 }
 
+impl WriteToBytes for &[u8] {
+    fn write_to(self, out: &mut BytesMut) -> Result<usize> {
+        let len = self.len();
+        out.put(self);
+        Ok(len)
+    }
+}
+
+impl WriteToBytes for Bytes {
+    fn write_to(self, out: &mut BytesMut) -> Result<usize> {
+        let len = self.remaining();
+        out.put(self.bytes());
+        Ok(len)
+    }
+}
+
 pub trait WriteToBytesWithContext<'c> {
     type Context: 'c;
 
@@ -240,13 +256,17 @@ pub trait WriteBytesExt {
 
     fn write_le_u64(&mut self, n: u64) -> Result<usize>;
 
+    fn write_le_i64(&mut self, n: i64) -> Result<usize>;
+
     fn write_le_u128(&mut self, n: u128) -> Result<usize>;
 
     fn write_le_f32(&mut self, n: f32) -> Result<usize>;
 
     fn write_le_f64(&mut self, n: f64) -> Result<usize>;
 
-    fn write_bytes(&mut self, bs: &[u8]) -> Result<usize>;
+    fn write_bytes<T>(&mut self, val: T) -> Result<usize>
+    where
+        T: WriteToBytes;
 }
 
 impl WriteBytesExt for BytesMut {
@@ -280,6 +300,11 @@ impl WriteBytesExt for BytesMut {
         Ok(8)
     }
 
+    fn write_le_i64(&mut self, n: i64) -> Result<usize> {
+        self.put_i64_le(n);
+        Ok(8)
+    }
+
     fn write_le_u128(&mut self, n: u128) -> Result<usize> {
         self.put_u128_le(n);
         Ok(16)
@@ -295,9 +320,11 @@ impl WriteBytesExt for BytesMut {
         Ok(8)
     }
 
-    fn write_bytes(&mut self, bs: &[u8]) -> Result<usize> {
-        self.put(bs);
-        Ok(bs.len())
+    fn write_bytes<T>(&mut self, val: T) -> Result<usize>
+    where
+        T: WriteToBytes,
+    {
+        val.write_to(self)
     }
 }
 

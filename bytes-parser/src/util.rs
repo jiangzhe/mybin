@@ -39,6 +39,7 @@ macro_rules! read_number_future {
 macro_rules! write_number_future {
     ($struct_name:ident, $ty:ty, $len:expr, $fname:expr) => {
         #[must_use = "futures do nothing unless you `.await` or poll them"]
+        #[derive(Debug)]
         pub struct $struct_name<'a, W: Unpin + ?Sized> {
             pub writer: &'a mut W,
             pub n: $ty,

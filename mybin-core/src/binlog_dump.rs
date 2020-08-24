@@ -1,5 +1,8 @@
 use super::Command;
 use bitflags::bitflags;
+use bytes::BytesMut;
+use bytes_parser::error::Result;
+use bytes_parser::{WriteBytesExt, WriteToBytes};
 
 /// Request a binlog network stream from master
 /// starting a given postion
@@ -29,15 +32,17 @@ impl ComBinlogDump {
             binlog_filename,
         }
     }
+}
 
-    pub fn to_bytes(&self) -> Vec<u8> {
-        let mut bs = Vec::new();
-        bs.push(self.cmd.to_byte());
-        bs.extend(&self.binlog_pos.to_le_bytes());
-        bs.extend(&self.flags.to_le_bytes());
-        bs.extend(&self.server_id.to_le_bytes());
-        bs.extend(&self.binlog_filename.as_bytes()[..]);
-        bs
+impl WriteToBytes for ComBinlogDump {
+    fn write_to(self, out: &mut BytesMut) -> Result<usize> {
+        let mut len = 0;
+        len += out.write_u8(self.cmd.to_byte())?;
+        len += out.write_le_u32(self.binlog_pos)?;
+        len += out.write_le_u16(self.flags)?;
+        len += out.write_le_u32(self.server_id)?;
+        len += out.write_bytes(self.binlog_filename.as_bytes())?;
+        Ok(len)
     }
 }
 
@@ -52,28 +57,85 @@ pub struct ComBinlogDumpGtid {
     pub binlog_pos: u64,
     // if flags & BINLOG_THROUGH_GTID
     // 4-byte length before the real data
-    pub data: SidData,
+    pub sid_data: SidData,
 }
 
 impl ComBinlogDumpGtid {
-    pub fn to_bytes(&self) -> Vec<u8> {
-        let mut bs = Vec::new();
-        bs.push(self.cmd.to_byte());
-        bs.extend(&self.flags.bits().to_le_bytes());
-        bs.extend(&self.server_id.to_le_bytes());
+    
+    pub fn binlog_pos(mut self, binlog_pos: u64) -> Self {
+        self.binlog_pos = binlog_pos;
+        self
+    }
+
+    pub fn binlog_filename<S: Into<String>>(mut self, binlog_filename: S) -> Self {
+        self.binlog_filename = binlog_filename.into();
+        self
+    }
+
+    pub fn server_id(mut self, server_id: u32) -> Self {
+        self.server_id = server_id;
+        self
+    }
+
+    pub fn sid(mut self, sid: SidRange) -> Self {
+        self.sid_data.0.push(sid);
+        self
+    }
+
+    pub fn sids(mut self, sids: Vec<SidRange>) -> Self {
+        self.sid_data.0.extend(sids);
+        self
+    }
+
+    pub fn use_gtid(mut self, use_gtid: bool) -> Self {
+        if use_gtid {
+            self.flags.remove(BinlogDumpGtidFlags::THROUGH_POSITION);
+            self.flags.insert(BinlogDumpGtidFlags::THROUGH_GTID);
+        } else {
+            self.flags.insert(BinlogDumpGtidFlags::THROUGH_POSITION);
+            self.flags.remove(BinlogDumpGtidFlags::THROUGH_GTID);
+        }
+        self
+    }
+
+    pub fn non_block(mut self, non_block: bool) -> Self {
+        if non_block {
+            self.flags.insert(BinlogDumpGtidFlags::NON_BLOCK);
+        } else {
+            self.flags.remove(BinlogDumpGtidFlags::NON_BLOCK);
+        }
+        self
+    }
+}
+
+impl Default for ComBinlogDumpGtid {
+    fn default() -> Self {
+        ComBinlogDumpGtid{
+            cmd: Command::BinlogDumpGtid,
+            binlog_pos: 4,
+            binlog_filename: String::new(),
+            flags: BinlogDumpGtidFlags::THROUGH_POSITION,
+            server_id: 0,
+            sid_data: SidData::empty(),
+        }
+    }
+}
+
+impl WriteToBytes for ComBinlogDumpGtid {
+    fn write_to(self, out: &mut BytesMut) -> Result<usize> {
+        let mut len = 0;
+        len += out.write_u8(self.cmd.to_byte())?;
+        len += out.write_le_u16(self.flags.bits())?;
+        len += out.write_le_u32(self.server_id)?;
         // 4-byte length of filename
         let fn_len = self.binlog_filename.len() as u32;
-        bs.extend(&fn_len.to_le_bytes());
-        bs.extend(self.binlog_filename.as_bytes());
-        bs.extend(&self.binlog_pos.to_le_bytes());
+        len += out.write_le_u32(fn_len)?;
+        len += out.write_bytes(self.binlog_filename.as_bytes())?;
+        len += out.write_le_u64(self.binlog_pos)?;
         if self.flags.contains(BinlogDumpGtidFlags::THROUGH_GTID) {
-            let data = self.data.to_bytes();
-            // 4-byte length of data
-            let data_len = data.len() as u32;
-            bs.extend(&data_len.to_le_bytes());
-            bs.extend(data);
+            len += out.write_bytes(self.sid_data)?;
         }
-        bs
+        Ok(len)
     }
 }
 
@@ -87,45 +149,45 @@ bitflags! {
 
 /// Sid data contains multiple sid with intervals
 #[derive(Debug, Clone)]
-pub struct SidData(Vec<SidRange>);
+pub struct SidData(pub Vec<SidRange>);
 
 impl SidData {
     pub fn empty() -> Self {
         SidData(vec![])
     }
+}
 
-    /// convert SidData to binary representation
-    /// to send to MySQL server
-    pub fn to_bytes(&self) -> Vec<u8> {
-        let mut bs = Vec::new();
+impl WriteToBytes for SidData {
+    fn write_to(self, out: &mut BytesMut) -> Result<usize> {
+        let mut len = 0;
         // 4-byte length of sids
         let n_sids = self.0.len() as u32;
-        bs.extend(&n_sids.to_le_bytes());
-        for sid in &self.0 {
-            bs.extend(sid.to_bytes());
+        len += out.write_le_u32(n_sids)?;
+        for sid in self.0 {
+            len += out.write_bytes(sid)?;
         }
-        bs
+        Ok(len)
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct SidRange {
-    pub sid: [u8; 16],
+    pub sid: u128,
     // 8-byte length
     pub intervals: Vec<(i64, i64)>,
 }
 
-impl SidRange {
-    pub fn to_bytes(&self) -> Vec<u8> {
-        let mut bs = Vec::new();
-        bs.extend(&self.sid[..]);
+impl WriteToBytes for SidRange {
+    fn write_to(self, out: &mut BytesMut) -> Result<usize> {
+        let mut len = 0;
+        len += out.write_le_u128(self.sid)?;
         // 8-byte length of intervals
         let n_intervals = self.intervals.len() as u64;
-        bs.extend(&n_intervals.to_le_bytes());
-        for (start, end) in &self.intervals {
-            bs.extend(&start.to_le_bytes());
-            bs.extend(&end.to_le_bytes());
+        len += out.write_le_u64(n_intervals)?;
+        for (start, end) in self.intervals {
+            len += out.write_le_i64(start)?;
+            len += out.write_le_i64(end)?;
         }
-        bs
+        Ok(len)
     }
 }
