@@ -1,7 +1,7 @@
-use bytes_parser::ReadFromBytesWithContext;
-use bytes_parser::my::{LenEncStr, ReadMyEnc};
-use bytes_parser::Result;
 use bytes::Bytes;
+use bytes_parser::my::{LenEncStr, ReadMyEnc};
+use bytes_parser::ReadFromBytesWithContext;
+use bytes_parser::Result;
 
 #[derive(Debug, Clone)]
 pub struct TextRow(pub Vec<LenEncStr>);

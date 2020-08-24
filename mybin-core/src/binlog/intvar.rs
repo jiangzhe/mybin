@@ -1,7 +1,7 @@
 use bitflags::bitflags;
+use bytes::Bytes;
 use bytes_parser::error::{Error, Result};
 use bytes_parser::{ReadBytesExt, ReadFromBytes};
-use bytes::Bytes;
 
 /// Data of IntvarEvent
 ///

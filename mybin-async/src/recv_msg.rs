@@ -1,9 +1,9 @@
-use std::future::Future;
-use std::task::{Poll, Context};
-use std::pin::Pin;
-use async_net::TcpStream;
 use crate::error::Result;
+use async_net::TcpStream;
 use bytes::BytesMut;
+use std::future::Future;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
 // internal struct to concat multiple packets
 #[derive(Debug)]
@@ -37,7 +37,7 @@ impl RecvMsgFuture<'_, '_> {
 
 impl<'s, 'o> RecvMsgFuture<'s, 'o> {
     pub(crate) fn new(stream: &'s mut TcpStream, out: &'o mut BytesMut) -> Self {
-        RecvMsgFuture{
+        RecvMsgFuture {
             stream,
             state: RecvMsgState::ReadLen,
             out,
@@ -51,9 +51,8 @@ impl Future for RecvMsgFuture<'_, '_> {
     type Output = Result<RecvMsg>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        use bytes_parser::future::{ReadLeU24Future, ReadLenOutFuture, ReadU8Future};
         use smol::ready;
-        use crate::number::{ReadU8Future, ReadLeU24Future};
-        use crate::bytes::TakeOutFuture;
 
         loop {
             match self.state {
@@ -65,7 +64,7 @@ impl Future for RecvMsgFuture<'_, '_> {
                             self.payload_len = n;
                             self.state = RecvMsgState::ReadSeq;
                         }
-                        Err(e) => return Poll::Ready(Err(e)),
+                        Err(e) => return Poll::Ready(Err(e.into())),
                     }
                 }
                 RecvMsgState::ReadSeq => {
@@ -76,27 +75,23 @@ impl Future for RecvMsgFuture<'_, '_> {
                             self.seq_id = n;
                             self.state = RecvMsgState::ReadPayload;
                         }
-                        Err(e) => return Poll::Ready(Err(e)),
+                        Err(e) => return Poll::Ready(Err(e.into())),
                     }
                 }
                 RecvMsgState::ReadPayload => {
-                    let total = self.payload_len as usize;
+                    let n = self.payload_len as usize;
                     let (reader, out) = self.stream_and_out();
-                    let mut take_out_fut = TakeOutFuture{
-                        reader,
-                        total,
-                        out,
-                    };
-                    match ready!(Pin::new(&mut take_out_fut).poll(cx)) {
+                    let mut fut = ReadLenOutFuture { reader, n, out };
+                    match ready!(Pin::new(&mut fut).poll(cx)) {
                         Ok(_) => {
                             // make this future reuseable
                             self.state = RecvMsgState::ReadLen;
-                            return Poll::Ready(Ok(RecvMsg{
+                            return Poll::Ready(Ok(RecvMsg {
                                 payload_len: self.payload_len,
                                 seq_id: self.seq_id,
                             }));
-                        },
-                        Err(e) => return Poll::Ready(Err(e)),
+                        }
+                        Err(e) => return Poll::Ready(Err(e.into())),
                     }
                 }
             }

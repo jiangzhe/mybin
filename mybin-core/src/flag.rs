@@ -1,8 +1,7 @@
 use bitflags::bitflags;
+use bytes::{BufMut, BytesMut};
 use bytes_parser::error::Result;
 use bytes_parser::WriteToBytes;
-use bytes::{BufMut, BytesMut};
-
 
 bitflags! {
     pub struct CapabilityFlags: u32 {

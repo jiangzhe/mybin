@@ -1,6 +1,6 @@
+use bytes::Bytes;
 use bytes_parser::error::Result;
 use bytes_parser::{ReadBytesExt, ReadFromBytes};
-use bytes::Bytes;
 
 /// Data of IncidentEvent
 ///

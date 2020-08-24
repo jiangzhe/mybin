@@ -1,16 +1,11 @@
 mod auth_plugin;
-mod bytes;
+mod binlog_stream;
 mod conn;
 mod error;
-mod number;
-mod binlog_stream;
-mod recv_msg;
 mod query;
-mod util;
+mod recv_msg;
 
-pub use crate::bytes::*;
 pub use error::*;
-pub use number::*;
 
 #[cfg(test)]
 mod tests {
@@ -18,6 +13,7 @@ mod tests {
     const PROTOCOL: &[u8] = include_bytes!("../data/protocol.dat");
 
     use super::*;
+    use bytes_parser::future::AsyncReadBytesExt;
 
     #[smol_potat::test]
     async fn test_mysql_conn_protocol() {
@@ -26,7 +22,7 @@ mod tests {
         println!("payload_length={}", payload_length);
         let sequence_id = reader.read_u8().await.unwrap();
         println!("sequence_id={}", sequence_id);
-        let data = reader.take(payload_length as usize).await.unwrap();
+        let data = reader.read_len(payload_length as usize).await.unwrap();
         println!("data={:?}", data);
     }
 }

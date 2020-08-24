@@ -1,12 +1,12 @@
-use crate::packet::{ErrPacket, OkPacket, EofPacket};
-use crate::Command;
 use crate::col::ColumnDefinition;
 use crate::flag::CapabilityFlags;
+use crate::packet::{EofPacket, ErrPacket, OkPacket};
 use crate::resultset::TextRow;
-use bytes_parser::{ReadFromBytesWithContext, WriteToBytes, WriteBytesExt};
-use bytes_parser::my::ReadMyEnc;
-use bytes_parser::error::{Result, Error, Needed};
+use crate::Command;
 use bytes::{Buf, Bytes, BytesMut};
+use bytes_parser::error::{Error, Needed, Result};
+use bytes_parser::my::ReadMyEnc;
+use bytes_parser::{ReadFromBytesWithContext, WriteBytesExt, WriteToBytes};
 
 #[derive(Debug, Clone)]
 pub struct ComQuery {
@@ -33,9 +33,9 @@ impl WriteToBytes for ComQuery {
 }
 
 /// response of COM_QUERY
-/// 
+///
 /// reference: https://dev.mysql.com/doc/internals/en/com-query-response.html#packet-ProtocolText::Resultset
-/// 
+///
 /// todo: support local_infile_request
 #[derive(Debug, Clone)]
 pub enum ComQueryResponse {
@@ -66,9 +66,8 @@ pub struct ComQueryStateMachine {
 }
 
 impl ComQueryStateMachine {
-
     pub fn new(cap_flags: CapabilityFlags) -> Self {
-        ComQueryStateMachine{
+        ComQueryStateMachine {
             col_cnt: 0,
             state: ComQueryState::Pending,
             cap_flags,
@@ -91,9 +90,10 @@ impl ComQueryStateMachine {
     fn next_state<'a>(&mut self, input: Bytes) -> Result<(ComQueryState, ComQueryResponse)> {
         match self.state {
             ComQueryState::Pending => self.on_pending(input),
-            ComQueryState::Ok | ComQueryState::Err => {
-                Err(Error::ConstraintError(format!("illegal state to receive message {:?}", self.state)))
-            }
+            ComQueryState::Ok | ComQueryState::Err => Err(Error::ConstraintError(format!(
+                "illegal state to receive message {:?}",
+                self.state
+            ))),
             ComQueryState::ColDefs(col_cnt) => self.on_col_defs(input, col_cnt),
             ComQueryState::Rows => self.on_rows(input),
         }
@@ -101,7 +101,7 @@ impl ComQueryStateMachine {
 
     fn on_pending(&mut self, mut input: Bytes) -> Result<(ComQueryState, ComQueryResponse)> {
         if !input.has_remaining() {
-            return Err(Error::InputIncomplete(Needed::Unknown));
+            return Err(Error::InputIncomplete(Bytes::new(), Needed::Unknown));
         }
         match input[0] {
             0x00 => {
@@ -115,22 +115,33 @@ impl ComQueryStateMachine {
             _ => {
                 // must be length encoded column count packet
                 let col_cnt = input.read_len_enc_int()?;
-                let col_cnt = col_cnt.to_u64()
-                    .ok_or_else(|| Error::ConstraintError(format!("invalid column count {:?}", col_cnt)))?;
+                let col_cnt = col_cnt.to_u64().ok_or_else(|| {
+                    Error::ConstraintError(format!("invalid column count {:?}", col_cnt))
+                })?;
                 self.col_cnt = col_cnt as usize;
-                Ok((ComQueryState::ColDefs(self.col_cnt), ComQueryResponse::ColCnt(col_cnt)))
+                Ok((
+                    ComQueryState::ColDefs(self.col_cnt),
+                    ComQueryResponse::ColCnt(col_cnt),
+                ))
             }
         }
     }
 
-    fn on_col_defs(&mut self, mut input: Bytes, col_cnt: usize) -> Result<(ComQueryState, ComQueryResponse)> {
+    fn on_col_defs(
+        &mut self,
+        mut input: Bytes,
+        col_cnt: usize,
+    ) -> Result<(ComQueryState, ComQueryResponse)> {
         if col_cnt > 0 {
             let col_def = ColumnDefinition::read_with_ctx(&mut input, false)?;
             let col_cnt = col_cnt - 1;
             if col_cnt == 0 && self.cap_flags.contains(CapabilityFlags::DEPRECATE_EOF) {
                 return Ok((ComQueryState::Rows, ComQueryResponse::ColDef(col_def)));
             }
-            return Ok((ComQueryState::ColDefs(col_cnt), ComQueryResponse::ColDef(col_def)));
+            return Ok((
+                ComQueryState::ColDefs(col_cnt),
+                ComQueryResponse::ColDef(col_def),
+            ));
         }
         // must be EOF
         let eof = EofPacket::read_with_ctx(&mut input, &self.cap_flags)?;
@@ -139,7 +150,7 @@ impl ComQueryStateMachine {
 
     fn on_rows(&mut self, mut input: Bytes) -> Result<(ComQueryState, ComQueryResponse)> {
         if !input.has_remaining() {
-            return Err(Error::InputIncomplete(Needed::Unknown));
+            return Err(Error::InputIncomplete(Bytes::new(), Needed::Unknown));
         }
         match input[0] {
             // EOF Packet
@@ -169,7 +180,9 @@ mod tests {
         let cap_flags = CapabilityFlags::PROTOCOL_41 | CapabilityFlags::DEPRECATE_EOF;
         let pkts = vec![
             vec![1u8],
-            vec![3, 100, 101, 102, 0, 0, 0, 0, 0, 12, 33, 0, 0, 0, 0, 0, 253, 1, 0, 31, 0, 0],
+            vec![
+                3, 100, 101, 102, 0, 0, 0, 0, 0, 12, 33, 0, 0, 0, 0, 0, 253, 1, 0, 31, 0, 0,
+            ],
             vec![0],
             vec![254, 0, 0, 2, 0, 0, 0],
         ];
@@ -187,7 +200,9 @@ mod tests {
         let cap_flags = CapabilityFlags::PROTOCOL_41;
         let pkts = vec![
             vec![1],
-            vec![3, 100, 101, 102, 0, 0, 0, 1, 49, 0, 12, 63, 0, 1, 0, 0, 0, 8, 129, 0, 0, 0, 0],
+            vec![
+                3, 100, 101, 102, 0, 0, 0, 1, 49, 0, 12, 63, 0, 1, 0, 0, 0, 8, 129, 0, 0, 0, 0,
+            ],
             vec![254, 0, 0, 2, 0],
             vec![1, 49],
             vec![254, 0, 0, 2, 0],
@@ -204,9 +219,7 @@ mod tests {
     #[test]
     fn test_empty_result_set() -> Result<()> {
         let cap_flags = CapabilityFlags::PROTOCOL_41 | CapabilityFlags::DEPRECATE_EOF;
-        let pkts = vec![
-            vec![0, 0, 0, 2, 0, 0, 0],
-        ];
+        let pkts = vec![vec![0, 0, 0, 2, 0, 0, 0]];
         let mut sm = ComQueryStateMachine::new(cap_flags);
         for pkt in pkts.into_iter().map(|x| (&x[..]).to_bytes()) {
             let resp = sm.next(pkt)?;
@@ -219,21 +232,17 @@ mod tests {
     #[test]
     fn test_err_result_set() -> Result<()> {
         let cap_flags = CapabilityFlags::PROTOCOL_41 | CapabilityFlags::DEPRECATE_EOF;
-        let pkts = vec![
-            vec![255, 40, 4, 35, 52, 50, 48, 48, 48, 89, 111, 117, 32, 104, 
-            97, 118, 101, 32, 97, 110, 32, 101, 114, 114, 111, 114, 32, 
-            105, 110, 32, 121, 111, 117, 114, 32, 83, 81, 76, 32, 115, 
-            121, 110, 116, 97, 120, 59, 32, 99, 104, 101, 99, 107, 32, 
-            116, 104, 101, 32, 109, 97, 110, 117, 97, 108, 32, 116, 104, 
-            97, 116, 32, 99, 111, 114, 114, 101, 115, 112, 111, 110, 100, 
-            115, 32, 116, 111, 32, 121, 111, 117, 114, 32, 77, 121, 83, 
-            81, 76, 32, 115, 101, 114, 118, 101, 114, 32, 118, 101, 114, 
-            115, 105, 111, 110, 32, 102, 111, 114, 32, 116, 104, 101, 32, 
-            114, 105, 103, 104, 116, 32, 115, 121, 110, 116, 97, 120, 32, 
-            116, 111, 32, 117, 115, 101, 32, 110, 101, 97, 114, 32, 39, 
-            115, 101, 45, 116, 32, 64, 97, 98, 99, 32, 61, 32, 49, 39, 32, 
-            97, 116, 32, 108, 105, 110, 101, 32, 49],
-        ];
+        let pkts = vec![vec![
+            255, 40, 4, 35, 52, 50, 48, 48, 48, 89, 111, 117, 32, 104, 97, 118, 101, 32, 97, 110,
+            32, 101, 114, 114, 111, 114, 32, 105, 110, 32, 121, 111, 117, 114, 32, 83, 81, 76, 32,
+            115, 121, 110, 116, 97, 120, 59, 32, 99, 104, 101, 99, 107, 32, 116, 104, 101, 32, 109,
+            97, 110, 117, 97, 108, 32, 116, 104, 97, 116, 32, 99, 111, 114, 114, 101, 115, 112,
+            111, 110, 100, 115, 32, 116, 111, 32, 121, 111, 117, 114, 32, 77, 121, 83, 81, 76, 32,
+            115, 101, 114, 118, 101, 114, 32, 118, 101, 114, 115, 105, 111, 110, 32, 102, 111, 114,
+            32, 116, 104, 101, 32, 114, 105, 103, 104, 116, 32, 115, 121, 110, 116, 97, 120, 32,
+            116, 111, 32, 117, 115, 101, 32, 110, 101, 97, 114, 32, 39, 115, 101, 45, 116, 32, 64,
+            97, 98, 99, 32, 61, 32, 49, 39, 32, 97, 116, 32, 108, 105, 110, 101, 32, 49,
+        ]];
         let mut sm = ComQueryStateMachine::new(cap_flags);
         for pkt in pkts.into_iter().map(|x| (&x[..]).to_bytes()) {
             let resp = sm.next(pkt)?;

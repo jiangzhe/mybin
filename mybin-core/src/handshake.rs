@@ -1,8 +1,8 @@
 use crate::flag::*;
+use bytes::{Buf, Bytes, BytesMut};
 use bytes_parser::error::{Error, Result};
 use bytes_parser::my::LenEncInt;
-use bytes_parser::{ReadBytesExt, WriteBytesExt, WriteToBytes, ReadFromBytes};
-use bytes::{Buf, Bytes, BytesMut};
+use bytes_parser::{ReadBytesExt, ReadFromBytes, WriteBytesExt, WriteToBytes};
 
 #[derive(Debug, Clone)]
 pub struct InitialHandshake {
@@ -39,8 +39,7 @@ impl ReadFromBytes for InitialHandshake {
         let capability_flags =
             (capability_flags_lower as u32) | ((capability_flags_upper as u32) << 16);
         let cap_flags = CapabilityFlags::from_bits_truncate(capability_flags);
-        let auth_plugin_data_2 = if cap_flags.contains(CapabilityFlags::SECURE_CONNECTION)
-        {
+        let auth_plugin_data_2 = if cap_flags.contains(CapabilityFlags::SECURE_CONNECTION) {
             let len = std::cmp::max(13, auth_plugin_data_length - 8);
             input.read_len(len as usize)?
         } else {
@@ -99,7 +98,7 @@ impl WriteToBytes for HandshakeClientResponse41 {
         // character set 8:9
         len += out.write_u8(self.charset)?;
         // reserved 23 bytes 9:32
-        len += out.write_bytes(&[0u8;23])?;
+        len += out.write_bytes(&[0u8; 23])?;
         // null-terminated username
         len += out.write_bytes(self.username.as_bytes())?;
         len += out.write_u8(0)?;

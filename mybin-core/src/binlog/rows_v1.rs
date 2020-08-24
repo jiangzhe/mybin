@@ -1,7 +1,7 @@
 //! meaningful data structures and parsing logic of RowsEventV1
-use bytes_parser::error::Result;
-use bytes_parser::{ReadFromBytes, ReadBytesExt};
 use bytes::{Buf, Bytes};
+use bytes_parser::error::Result;
+use bytes_parser::{ReadBytesExt, ReadFromBytes};
 
 /// Data of WriteRowsEventV1
 ///
@@ -43,7 +43,7 @@ pub struct UpdateRowsDataV1 {
 impl ReadFromBytes for UpdateRowsDataV1 {
     fn read_from(input: &mut Bytes) -> Result<Self> {
         let wrd = WriteRowsDataV1::read_from(input)?;
-        Ok(UpdateRowsDataV1{
+        Ok(UpdateRowsDataV1 {
             table_id: wrd.table_id,
             flags: wrd.flags,
             payload: wrd.payload,
@@ -64,7 +64,7 @@ pub struct DeleteRowsDataV1 {
 impl ReadFromBytes for DeleteRowsDataV1 {
     fn read_from(input: &mut Bytes) -> Result<Self> {
         let wrd = WriteRowsDataV1::read_from(input)?;
-        Ok(DeleteRowsDataV1{
+        Ok(DeleteRowsDataV1 {
             table_id: wrd.table_id,
             flags: wrd.flags,
             payload: wrd.payload,

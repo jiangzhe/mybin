@@ -1,6 +1,6 @@
-use bytes_parser::error::Result;
-use bytes_parser::{ReadFromBytes, ReadBytesExt};
 use bytes::Bytes;
+use bytes_parser::error::Result;
+use bytes_parser::{ReadBytesExt, ReadFromBytes};
 
 /// Data of XidEvent
 ///

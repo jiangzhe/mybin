@@ -1,8 +1,8 @@
 //! meaningful data structures and parsing logic of QueryEvent
 use bitflags::bitflags;
+use bytes::{Buf, Bytes};
 use bytes_parser::error::{Error, Result};
 use bytes_parser::{ReadBytesExt, ReadFromBytes};
-use bytes::{Buf, Bytes};
 
 /// Data of QueryEvent
 ///
@@ -151,10 +151,7 @@ impl ReadFromBytes for QueryStatusVars {
                     let username = input.read_len(lun as usize)?;
                     let lhn = input.read_u8()?;
                     let hostname = input.read_len(lhn as usize)?;
-                    QueryStatusVar::Invokers {
-                        username,
-                        hostname,
-                    }
+                    QueryStatusVar::Invokers { username, hostname }
                 }
                 0x0c => {
                     // 1 + n (null-term string)

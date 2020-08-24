@@ -13,5 +13,5 @@ macro_rules! try_from_event {
                 }
             }
         }
-    }
+    };
 }

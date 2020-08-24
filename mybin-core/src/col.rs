@@ -1,10 +1,10 @@
 //! defines structure and metadata for mysql columns
 use crate::util::bitmap_index;
+use bytes::Bytes;
 use bytes_parser::error::{Error, Result};
 use bytes_parser::my::{LenEncStr, ReadMyEnc};
-use bytes_parser::{ReadFromBytesWithContext, ReadBytesExt};
+use bytes_parser::{ReadBytesExt, ReadFromBytesWithContext};
 use std::convert::TryFrom;
-use bytes::Bytes;
 
 /// ColumnType defined in binlog
 ///
@@ -395,10 +395,7 @@ pub enum ColumnValue {
 impl<'c> ReadFromBytesWithContext<'c> for ColumnValue {
     type Context = &'c ColumnMetadata;
 
-    fn read_with_ctx(
-        input: &mut Bytes,
-        col_meta: Self::Context,
-    ) -> Result<Self> {
+    fn read_with_ctx(input: &mut Bytes, col_meta: Self::Context) -> Result<Self> {
         let col_val = match col_meta {
             ColumnMetadata::Decimal { .. } => {
                 let v = input.read_len_enc_str()?;
@@ -410,23 +407,13 @@ impl<'c> ReadFromBytesWithContext<'c> for ColumnValue {
                     LenEncStr::Bytes(bs) => ColumnValue::Decimal(bs),
                 }
             }
-            ColumnMetadata::Tiny { .. } => {
-                ColumnValue::Tiny(input.read_i8()?)
-            }
-            ColumnMetadata::Short { .. } => {
-                ColumnValue::Short(input.read_le_i16()?)
-            }
-            ColumnMetadata::Long { .. } => {
-                ColumnValue::Long(input.read_le_i32()?)
-            }
+            ColumnMetadata::Tiny { .. } => ColumnValue::Tiny(input.read_i8()?),
+            ColumnMetadata::Short { .. } => ColumnValue::Short(input.read_le_i16()?),
+            ColumnMetadata::Long { .. } => ColumnValue::Long(input.read_le_i32()?),
             // todo: pack_len not used?
-            ColumnMetadata::Float { .. } => {
-                ColumnValue::Float(input.read_le_f32()?)
-            }
+            ColumnMetadata::Float { .. } => ColumnValue::Float(input.read_le_f32()?),
             // todo: pack_len not used?
-            ColumnMetadata::Double { .. } => {
-                ColumnValue::Double(input.read_le_f64()?)
-            }
+            ColumnMetadata::Double { .. } => ColumnValue::Double(input.read_le_f64()?),
             ColumnMetadata::Null { .. } => ColumnValue::Null,
             ColumnMetadata::Timestamp { .. } => {
                 let len = input.read_u8()?;
@@ -456,9 +443,7 @@ impl<'c> ReadFromBytesWithContext<'c> for ColumnValue {
                     }
                 }
             }
-            ColumnMetadata::LongLong { .. } => {
-                ColumnValue::LongLong(input.read_le_i64()?)
-            }
+            ColumnMetadata::LongLong { .. } => ColumnValue::LongLong(input.read_le_i64()?),
             ColumnMetadata::Int24 { .. } => {
                 // here i32 represents i24
                 ColumnValue::Int24(input.read_le_i32()?)
@@ -573,9 +558,7 @@ impl<'c> ReadFromBytesWithContext<'c> for ColumnValue {
                     }
                 }
             }
-            ColumnMetadata::Year { .. } => {
-                ColumnValue::Year(input.read_le_u16()?)
-            }
+            ColumnMetadata::Year { .. } => ColumnValue::Year(input.read_le_u16()?),
             // NewDate,
             ColumnMetadata::Varchar { .. } => {
                 let v = input.read_len_enc_str()?;
@@ -659,7 +642,6 @@ impl<'c> ReadFromBytesWithContext<'c> for ColumnValue {
     }
 }
 
-
 /// Column definition
 ///
 /// reference: https://dev.mysql.com/doc/internals/en/com-query-response.html
@@ -721,7 +703,7 @@ impl<'c> ReadFromBytesWithContext<'_> for ColumnDefinition {
         } else {
             String::new()
         };
-        Ok(ColumnDefinition{
+        Ok(ColumnDefinition {
             catalog,
             schema,
             table,

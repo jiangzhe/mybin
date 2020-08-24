@@ -1,6 +1,6 @@
 use crate::error::{Error, Needed, Result};
 use crate::{ReadBytesExt, ReadFromBytes, WriteToBytes};
-use bytes::{Buf, Bytes, BufMut, BytesMut};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 
 /// read MySQL encoded types
 pub trait ReadMyEnc {
@@ -12,7 +12,7 @@ pub trait ReadMyEnc {
 impl ReadMyEnc for Bytes {
     fn read_len_enc_int(&mut self) -> Result<LenEncInt> {
         if self.remaining() < 1 {
-            return Err(Error::InputIncomplete(Needed::Unknown));
+            return Err(Error::InputIncomplete(Bytes::new(), Needed::Unknown));
         }
         let len = self.read_u8()?;
         match len {
@@ -42,7 +42,10 @@ impl ReadMyEnc for Bytes {
             _ => {
                 let len = lei.to_u64().unwrap() as usize;
                 if self.remaining() < len {
-                    return Err(Error::InputIncomplete(Needed::Size(len - self.remaining())));
+                    return Err(Error::InputIncomplete(
+                        Bytes::new(),
+                        Needed::Size(len - self.remaining()),
+                    ));
                 }
                 let bs = self.split_to(len);
                 Ok(LenEncStr::Bytes(bs))
@@ -169,7 +172,6 @@ pub enum LenEncStr {
 }
 
 impl LenEncStr {
-
     pub fn null(&self) -> bool {
         match self {
             Self::Null => true,
@@ -227,18 +229,18 @@ impl WriteToBytes for LenEncStr {
             LenEncStr::Null => {
                 out.put_u8(0xfb);
                 1
-            },
+            }
             LenEncStr::Err => {
                 out.put_u8(0xff);
                 1
-            },
+            }
             LenEncStr::Bytes(bs) => {
                 let len = bs.remaining();
                 let lei = LenEncInt::from(len as u64);
                 let lei_len = lei.write_to(out)?;
                 out.put(bs);
                 lei_len + len
-            },
+            }
         };
         Ok(len)
     }

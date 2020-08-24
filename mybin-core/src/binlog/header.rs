@@ -1,8 +1,8 @@
 use super::LogEventTypeCode;
 use bitflags::bitflags;
-use bytes_parser::error::Result;
-use bytes_parser::{ReadFromBytes, ReadBytesExt};
 use bytes::Bytes;
+use bytes_parser::error::Result;
+use bytes_parser::{ReadBytesExt, ReadFromBytes};
 
 #[derive(Debug, Clone)]
 pub struct EventHeaderV1 {

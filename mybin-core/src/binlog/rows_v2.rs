@@ -1,10 +1,10 @@
 //! meaningful data structures and parsing logic of RowsEventV2
 use crate::col::{ColumnMetadata, ColumnValue};
-use crate::util::{bitmap_index, bitmap_mark, bitmap_iter};
+use crate::util::{bitmap_index, bitmap_iter, bitmap_mark};
+use bytes::{Buf, Bytes};
 use bytes_parser::error::{Error, Result};
 use bytes_parser::my::ReadMyEnc;
-use bytes_parser::{ReadFromBytes, ReadFromBytesWithContext, ReadBytesExt};
-use bytes::{Buf, Bytes};
+use bytes_parser::{ReadBytesExt, ReadFromBytes, ReadFromBytesWithContext};
 
 /// Data of WriteRowsEventV2
 ///
@@ -23,7 +23,10 @@ pub struct WriteRowsDataV2 {
 
 impl WriteRowsDataV2 {
     pub fn rows(&self, col_metas: &[ColumnMetadata]) -> Result<RowsV2> {
-        RowsV2::read_with_ctx(&mut self.payload.clone(), (self.extra_data_len as usize, col_metas))
+        RowsV2::read_with_ctx(
+            &mut self.payload.clone(),
+            (self.extra_data_len as usize, col_metas),
+        )
     }
 
     pub fn into_rows(mut self, col_metas: &[ColumnMetadata]) -> Result<RowsV2> {
@@ -59,7 +62,10 @@ pub struct UpdateRowsDataV2 {
 
 impl UpdateRowsDataV2 {
     pub fn rows(&self, col_metas: &[ColumnMetadata]) -> Result<UpdateRowsV2> {
-        UpdateRowsV2::read_with_ctx(&mut self.payload.clone(), (self.extra_data_len as usize, col_metas))
+        UpdateRowsV2::read_with_ctx(
+            &mut self.payload.clone(),
+            (self.extra_data_len as usize, col_metas),
+        )
     }
 
     pub fn into_rows(mut self, col_metas: &[ColumnMetadata]) -> Result<UpdateRowsV2> {
@@ -92,7 +98,10 @@ pub struct DeleteRowsDataV2 {
 
 impl DeleteRowsDataV2 {
     pub fn rows(&self, col_metas: &[ColumnMetadata]) -> Result<RowsV2> {
-        RowsV2::read_with_ctx(&mut self.payload.clone(), (self.extra_data_len as usize, col_metas))
+        RowsV2::read_with_ctx(
+            &mut self.payload.clone(),
+            (self.extra_data_len as usize, col_metas),
+        )
     }
 
     pub fn into_rows(mut self, col_metas: &[ColumnMetadata]) -> Result<RowsV2> {
@@ -121,12 +130,13 @@ pub struct RowsV2 {
     pub rows: Vec<Row>,
 }
 
-
-
 impl<'c> ReadFromBytesWithContext<'c> for RowsV2 {
     type Context = (usize, &'c [ColumnMetadata]);
 
-    fn read_with_ctx(input: &mut Bytes, (extra_data_len, col_metas): Self::Context) -> Result<RowsV2> {
+    fn read_with_ctx(
+        input: &mut Bytes,
+        (extra_data_len, col_metas): Self::Context,
+    ) -> Result<RowsV2> {
         let extra_data = input.read_len(extra_data_len - 2)?;
         // all columns
         let n_cols = input.read_len_enc_int()?;
@@ -136,7 +146,10 @@ impl<'c> ReadFromBytesWithContext<'c> for RowsV2 {
         let bitmap_len = (n_cols + 7) >> 3;
         let present_bitmap = input.read_len(bitmap_len as usize)?;
         // present columns
-        let present_cols = bitmap_iter(present_bitmap.as_ref()).take(n_cols as usize).map(|b| if b { 1 } else { 0 }).sum();
+        let present_cols = bitmap_iter(present_bitmap.as_ref())
+            .take(n_cols as usize)
+            .map(|b| if b { 1 } else { 0 })
+            .sum();
         let null_bitmap_len = (present_cols + 7) >> 3;
         let mut rows = Vec::new();
         while input.has_remaining() {
@@ -148,12 +161,16 @@ impl<'c> ReadFromBytesWithContext<'c> for RowsV2 {
                 while !bitmap_index(&col_bitmap, j) {
                     j += 1;
                 }
-                bitmap_mark(&mut col_bitmap, j, !bitmap_index(null_bitmap.as_ref(), i as usize));
+                bitmap_mark(
+                    &mut col_bitmap,
+                    j,
+                    !bitmap_index(null_bitmap.as_ref(), i as usize),
+                );
             }
             let row = Row::read_with_ctx(input, (n_cols as usize, &col_bitmap[..], col_metas))?;
             rows.push(row);
         }
-        Ok(RowsV2{
+        Ok(RowsV2 {
             extra_data,
             n_cols,
             present_bitmap,
@@ -174,7 +191,10 @@ pub struct UpdateRowsV2 {
 impl<'c> ReadFromBytesWithContext<'c> for UpdateRowsV2 {
     type Context = (usize, &'c [ColumnMetadata]);
 
-    fn read_with_ctx(input: &mut Bytes, (extra_data_len, col_metas): Self::Context) -> Result<UpdateRowsV2> {
+    fn read_with_ctx(
+        input: &mut Bytes,
+        (extra_data_len, col_metas): Self::Context,
+    ) -> Result<UpdateRowsV2> {
         let extra_data = input.read_len(extra_data_len - 2)?;
         // all columns
         let n_cols = input.read_len_enc_int()?;
@@ -185,9 +205,15 @@ impl<'c> ReadFromBytesWithContext<'c> for UpdateRowsV2 {
         let before_present_bitmap = input.read_len(bitmap_len as usize)?;
         let after_present_bitmap = input.read_len(bitmap_len as usize)?;
         // before present columns
-        let before_present_cols = bitmap_iter(before_present_bitmap.as_ref()).take(n_cols as usize).map(|b| if b { 1 } else { 0 }).sum();
+        let before_present_cols = bitmap_iter(before_present_bitmap.as_ref())
+            .take(n_cols as usize)
+            .map(|b| if b { 1 } else { 0 })
+            .sum();
         let before_null_bitmap_len = (before_present_cols + 7) >> 3;
-        let after_present_cols = bitmap_iter(after_present_bitmap.as_ref()).take(n_cols as usize).map(|b| if b { 1 } else { 0 }).sum();
+        let after_present_cols = bitmap_iter(after_present_bitmap.as_ref())
+            .take(n_cols as usize)
+            .map(|b| if b { 1 } else { 0 })
+            .sum();
         let after_null_bitmap_len = (after_present_cols + 7) >> 3;
         let mut rows = Vec::new();
         while input.has_remaining() {
@@ -200,9 +226,14 @@ impl<'c> ReadFromBytesWithContext<'c> for UpdateRowsV2 {
                 while !bitmap_index(&before_col_bitmap, j) {
                     j += 1;
                 }
-                bitmap_mark(&mut before_col_bitmap, j, !bitmap_index(before_null_bitmap.as_ref(), i as usize));
+                bitmap_mark(
+                    &mut before_col_bitmap,
+                    j,
+                    !bitmap_index(before_null_bitmap.as_ref(), i as usize),
+                );
             }
-            let before_row = Row::read_with_ctx(input, (n_cols as usize, &before_col_bitmap[..], col_metas))?;
+            let before_row =
+                Row::read_with_ctx(input, (n_cols as usize, &before_col_bitmap[..], col_metas))?;
 
             // after row processing
             let after_null_bitmap = input.read_len(after_null_bitmap_len as usize)?;
@@ -213,12 +244,17 @@ impl<'c> ReadFromBytesWithContext<'c> for UpdateRowsV2 {
                 while !bitmap_index(&after_col_bitmap, j) {
                     j += 1;
                 }
-                bitmap_mark(&mut after_col_bitmap, j, !bitmap_index(after_null_bitmap.as_ref(), i as usize));
+                bitmap_mark(
+                    &mut after_col_bitmap,
+                    j,
+                    !bitmap_index(after_null_bitmap.as_ref(), i as usize),
+                );
             }
-            let after_row = Row::read_with_ctx(input, (n_cols as usize, &after_col_bitmap[..], col_metas))?;
+            let after_row =
+                Row::read_with_ctx(input, (n_cols as usize, &after_col_bitmap[..], col_metas))?;
             rows.push(UpdateRow(before_row.0, after_row.0));
         }
-        Ok(UpdateRowsV2{
+        Ok(UpdateRowsV2 {
             extra_data,
             n_cols,
             before_present_bitmap,
@@ -228,18 +264,13 @@ impl<'c> ReadFromBytesWithContext<'c> for UpdateRowsV2 {
     }
 }
 
-
-
 #[derive(Debug, Clone)]
 pub struct Row(Vec<ColumnValue>);
 
 impl<'c> ReadFromBytesWithContext<'c> for Row {
     type Context = (usize, &'c [u8], &'c [ColumnMetadata]);
 
-    fn read_with_ctx(
-        input: &mut Bytes,
-        (n_cols, col_bm, col_metas): Self::Context,
-    ) -> Result<Row> {
+    fn read_with_ctx(input: &mut Bytes, (n_cols, col_bm, col_metas): Self::Context) -> Result<Row> {
         let mut cols = Vec::with_capacity(n_cols);
         for i in 0..n_cols {
             if bitmap_index(col_bm, i) {
