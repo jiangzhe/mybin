@@ -49,7 +49,7 @@ pub enum ComQueryResponse {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-enum ComQueryState {
+pub enum ComQueryState {
     Pending,
     ColDefs(usize),
     Rows,
@@ -58,7 +58,7 @@ enum ComQueryState {
     Ok,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ComQueryStateMachine {
     col_cnt: usize,
     state: ComQueryState,
@@ -81,10 +81,10 @@ impl ComQueryStateMachine {
         }
     }
 
-    pub fn next(&mut self, input: Bytes) -> Result<ComQueryResponse> {
-        let (ns, resp) = self.next_state(input)?;
-        self.state = ns;
-        Ok(resp)
+    pub fn next(&mut self, input: Bytes) -> Result<(ComQueryState, ComQueryResponse)> {
+        let (state, resp) = self.next_state(input)?;
+        self.state = state.clone();
+        Ok((state, resp))
     }
 
     fn next_state<'a>(&mut self, input: Bytes) -> Result<(ComQueryState, ComQueryResponse)> {

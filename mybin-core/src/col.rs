@@ -39,9 +39,9 @@ pub enum ColumnType {
     NewDecimal,
     // Enum,
     // Set,
-    // TinyBlob,
-    // MediumBlob,
-    // LongBlob,
+    TinyBlob,
+    MediumBlob,
+    LongBlob,
     Blob,
     VarString,
     String,
@@ -80,9 +80,9 @@ impl TryFrom<u8> for ColumnType {
             0xf6 => ColumnType::NewDecimal,
             // 0xf7 => ColumnType::Enum,
             // 0xf8 => ColumnType::Set,
-            // 0xf9 => ColumnType::TinyBlob,
-            // 0xfa => ColumnType::MediumBlob,
-            // 0xfb => ColumnType::LongBlob,
+            0xf9 => ColumnType::TinyBlob,
+            0xfa => ColumnType::MediumBlob,
+            0xfb => ColumnType::LongBlob,
             0xfc => ColumnType::Blob,
             0xfd => ColumnType::VarString,
             0xfe => ColumnType::String,
@@ -132,9 +132,9 @@ impl From<ColumnType> for ColumnTypeCode {
             ColumnType::NewDecimal => ColumnTypeCode(0xf6),
             // ColumnType::Enum => ColumnTypeCode(0xf7),
             // ColumnType::Set => ColumnTypeCode(0xf8),
-            // ColumnType::TinyBlob => ColumnTypeCode(0xf9),
-            // ColumnType::MediumBlob => ColumnTypeCode(0xfa),
-            // ColumnType::LongBlob => ColumnTypeCode(0xfb),
+            ColumnType::TinyBlob => ColumnTypeCode(0xf9),
+            ColumnType::MediumBlob => ColumnTypeCode(0xfa),
+            ColumnType::LongBlob => ColumnTypeCode(0xfb),
             ColumnType::Blob => ColumnTypeCode(0xfc),
             ColumnType::VarString => ColumnTypeCode(0xfd),
             ColumnType::String => ColumnTypeCode(0xfe),
@@ -273,24 +273,15 @@ pub fn parse_col_metas(
             ColumnType::DateTime => ColumnMetadata::DateTime { null },
             ColumnType::Year => ColumnMetadata::Year { null },
             ColumnType::Varchar => {
-                // let max_len =
-                //     col_meta_defs[offset] as u16 + ((col_meta_defs[offset + 1] as u16) << 8);
-                // offset += 2;
                 let max_len = col_meta_defs.read_le_u16()?;
                 ColumnMetadata::Varchar { max_len, null }
             }
             ColumnType::Bit => {
-                // let bits = col_meta_defs[offset];
-                // let bytes = col_meta_defs[offset + 1];
-                // offset += 2;
                 let bits = col_meta_defs.read_u8()?;
                 let bytes = col_meta_defs.read_u8()?;
                 ColumnMetadata::Bit { bits, bytes, null }
             }
             ColumnType::NewDecimal => {
-                // let precision = col_meta_defs[offset];
-                // let decimals = col_meta_defs[offset + 1];
-                // offset += 2;
                 let precision = col_meta_defs.read_u8()?;
                 let decimals = col_meta_defs.read_u8()?;
                 ColumnMetadata::NewDecimal {
@@ -299,16 +290,14 @@ pub fn parse_col_metas(
                     null,
                 }
             }
-            ColumnType::Blob => {
-                // let pack_len = col_meta_defs[offset];
-                // offset += 1;
+            ColumnType::TinyBlob
+            | ColumnType::MediumBlob
+            | ColumnType::LongBlob
+            | ColumnType::Blob => {
                 let pack_len = col_meta_defs.read_u8()?;
                 ColumnMetadata::Blob { pack_len, null }
             }
             ColumnType::VarString => {
-                // let real_type = col_meta_defs[offset];
-                // let bytes = col_meta_defs[offset + 1];
-                // offset += 2;
                 let real_type = col_meta_defs.read_u8()?;
                 let bytes = col_meta_defs.read_u8()?;
                 ColumnMetadata::VarString {

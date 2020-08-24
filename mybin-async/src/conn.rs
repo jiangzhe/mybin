@@ -1,37 +1,45 @@
 use crate::auth_plugin::{AuthPlugin, MysqlNativePassword};
-use crate::binlog_stream::BinlogStream;
 use crate::error::{Error, Result};
+use crate::msg::{RecvMsgFuture, SendMsgFuture};
 use crate::query::Query;
-use crate::recv_msg::RecvMsgFuture;
 use async_net::TcpStream;
 use bytes::{Buf, Bytes, BytesMut};
-use bytes_parser::future::{AsyncReadBytesExt, AsyncWriteBytesExt};
-use bytes_parser::{
-    ReadBytesExt, ReadFromBytes, ReadFromBytesWithContext, WriteBytesExt, WriteToBytes,
-};
+use bytes_parser::{ReadFromBytes, ReadFromBytesWithContext, WriteToBytes};
 use mybin_core::flag::{CapabilityFlags, StatusFlags};
 use mybin_core::handshake::{HandshakeClientResponse41, InitialHandshake};
 use mybin_core::packet::HandshakeMessage;
 use serde_derive::*;
-use smol::io::AsyncWriteExt;
-use std::net::{SocketAddr, ToSocketAddrs};
+// use smol::io::AsyncWriteExt;
+use futures::{AsyncRead, AsyncWrite};
+use std::net::ToSocketAddrs;
 
-#[derive(Debug)]
-pub struct Conn {
-    socket_addr: SocketAddr,
-    pub(crate) stream: TcpStream,
+/// MySQL connection
+///
+/// A generic MySQL connection based on AsyncRead and AsyncWrite.
+#[derive(Debug, Clone)]
+pub struct Conn<S> {
+    pub(crate) stream: S,
     pub(crate) cap_flags: CapabilityFlags,
-    pkt_nr: u8,
     pub(crate) server_status: StatusFlags,
+    pub(crate) pkt_nr: u8,
+}
+
+impl<S> Conn<S> {
+    /// reset packet number to 0
+    ///
+    /// this method should be called before each command sent
+    pub fn reset_pkt_nr(&mut self) {
+        self.pkt_nr = 0;
+    }
 }
 
 #[allow(dead_code)]
-impl Conn {
+impl Conn<TcpStream> {
     /// create a new connection to MySQL
     ///
     /// this method only make the initial connection to MySQL server,
     /// user has to finish the handshake manually
-    pub async fn connect<T: ToSocketAddrs>(addr: T) -> Result<Conn> {
+    pub async fn connect<T: ToSocketAddrs>(addr: T) -> Result<Self> {
         // maybe try all addresses?
         let socket_addr = match addr.to_socket_addrs()?.next() {
             Some(addr) => addr,
@@ -40,12 +48,54 @@ impl Conn {
         let stream = TcpStream::connect(socket_addr).await?;
         log::debug!("connected to MySQL: {}", socket_addr);
         Ok(Conn {
-            socket_addr,
             stream,
             cap_flags: CapabilityFlags::empty(),
             pkt_nr: 0,
             server_status: StatusFlags::empty(),
         })
+    }
+}
+
+impl<S> Conn<S>
+where
+    S: AsyncRead + Unpin,
+{
+    /// receive message from MySQL server
+    ///
+    /// this method will concat mutliple packets if payload too large.
+    pub fn recv_msg<'s>(&'s mut self) -> RecvMsgFuture<'s, S> {
+        RecvMsgFuture::new(self)
+    }
+}
+
+impl<S> Conn<S>
+where
+    S: AsyncWrite + Unpin,
+{
+    /// send message to MySQL server
+    ///
+    /// this method will split message into multiple packets if payload too large.
+    pub fn send_msg<'a, T>(&'a mut self, msg: T) -> SendMsgFuture<'a, S>
+    where
+        T: WriteToBytes,
+    {
+        SendMsgFuture::new(self, msg)
+    }
+}
+
+#[allow(dead_code)]
+impl<S> Conn<S>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    /// create new connection given an already connected stream and client/server status
+    pub fn new(stream: S, cap_flags: CapabilityFlags, server_status: StatusFlags) -> Self {
+        Conn {
+            stream,
+            cap_flags,
+            server_status,
+            pkt_nr: 0,
+        }
     }
 
     /// process the initial handshake with MySQL server,
@@ -128,89 +178,14 @@ impl Conn {
         }
         Ok(())
     }
+}
 
-    /// receive message from MySQL server
-    ///
-    /// this method will concat mutliple packets if payload too large.
-    pub async fn recv_msg(&mut self) -> Result<Bytes> {
-        let mut buf = BytesMut::new();
-        loop {
-            let payload_len = self.stream.read_le_u24().await?;
-            let seq_id = self.stream.read_u8().await?;
-            log::debug!(
-                "receive packet: payload_len={}, seq_id={}",
-                payload_len,
-                seq_id
-            );
-            if seq_id != self.pkt_nr {
-                return Err(Error::PacketError(format!(
-                    "Get server packet out of order: {} != {}",
-                    seq_id, self.pkt_nr
-                )));
-            }
-            self.pkt_nr += 1;
-            self.stream
-                .read_len_out(payload_len as usize, &mut buf)
-                .await?;
-            // read multiple packets if payload larger than or equal to 2^24-1
-            // https://dev.mysql.com/doc/internals/en/sending-more-than-16mbyte.html
-            if payload_len < 0xffffff {
-                break;
-            }
-        }
-        Ok(buf.freeze())
-    }
-
-    /// future to receive message for internal use
-    pub(crate) fn recv_msg_fut<'s, 'o>(
-        &'s mut self,
-        out: &'o mut BytesMut,
-    ) -> RecvMsgFuture<'s, 'o> {
-        RecvMsgFuture::new(&mut self.stream, out)
-    }
-
-    /// send message to MySQL server
-    ///
-    /// this method will split message into multiple packets if payload too large.
-    pub async fn send_msg<'a, T>(&mut self, msg: T) -> Result<()>
-    where
-        T: WriteToBytes,
-    {
-        let mut buf = BytesMut::new();
-        msg.write_to(&mut buf)?;
-        let mut chunk_size = 0;
-        // let mut seq_id = 0;
-        for chunk in buf.bytes().chunks(0xffffff) {
-            chunk_size = chunk.len();
-            self.stream.write_le_u24(chunk_size as u32).await?;
-            self.stream.write_u8(self.pkt_nr).await?;
-            self.stream.write_all(chunk).await?;
-            // seq_id += 1;
-            self.pkt_nr += 1;
-        }
-        if chunk_size == 0xffffff {
-            // send empty chunk to confirm the end
-            self.stream.write_le_u24(0).await?;
-            self.stream.write_u8(self.pkt_nr).await?;
-            self.pkt_nr += 1;
-        }
-        Ok(())
-    }
-
-    pub fn query<S: Into<String>>(&mut self, qry: S) -> Query {
+impl<S> Conn<S>
+where
+    S: AsyncRead + AsyncWrite + Clone + Unpin,
+{
+    pub fn query(&mut self) -> Query<S> {
         Query::new(self)
-    }
-
-    /// consume the connection and return the binlog stream
-    pub async fn request_binlog_stream(mut self) -> Result<BinlogStream> {
-        todo!()
-    }
-
-    /// reset packet number to 0
-    ///
-    /// this method should be called before each command sent
-    pub fn reset_pkt_nr(&mut self) {
-        self.pkt_nr = 0;
     }
 }
 
@@ -236,21 +211,19 @@ pub struct ConnOpts {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
 
     #[smol_potat::test]
     async fn test_conn_and_handshake() {
-        use super::*;
-        use mybin_core::ComQuery;
-
-        env_logger::init();
-
         let mut conn = Conn::connect("127.0.0.1:13306").await.unwrap();
-        conn.handshake(ConnOpts{
+        conn.handshake(conn_opts()).await.unwrap();
+    }
+
+    fn conn_opts() -> ConnOpts {
+        ConnOpts {
             username: "root".to_owned(),
             password: "password".to_owned(),
             database: "".to_owned(),
-        }).await.unwrap();
-
-        // conn.query(ComQuery::new("set @master_binlog_checksum = @@global.binlog_checksum")).await.unwrap();
+        }
     }
 }

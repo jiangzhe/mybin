@@ -19,6 +19,8 @@ pub enum Error {
     SqlError(SqlError),
     #[error("utf8 error: {0}")]
     Utf8Error(#[from] std::string::FromUtf8Error),
+    #[error("binlog stream not ended")]
+    BinlogStreamNotEnded,
 }
 
 #[derive(Debug, Clone)]

@@ -98,14 +98,14 @@ impl WriteToBytes for HandshakeClientResponse41 {
         // character set 8:9
         len += out.write_u8(self.charset)?;
         // reserved 23 bytes 9:32
-        len += out.write_bytes(&[0u8; 23])?;
+        len += out.write_bytes(&[0u8; 23][..])?;
         // null-terminated username
         len += out.write_bytes(self.username.as_bytes())?;
         len += out.write_u8(0)?;
         // len-encoded auth response
         let auth_response_len = LenEncInt::from(self.auth_response.len() as u64);
         len += auth_response_len.write_to(out)?;
-        len += out.write_bytes(&self.auth_response)?;
+        len += out.write_bytes(&self.auth_response[..])?;
         // null-terminated database if connect with db
         if self
             .capability_flags
@@ -145,7 +145,8 @@ impl Default for HandshakeClientResponse41 {
     fn default() -> Self {
         HandshakeClientResponse41 {
             capability_flags: CapabilityFlags::default(),
-            max_packet_size: 1024 * 1024 * 1024,
+            // max length of three-byte word
+            max_packet_size: 0xffffff,
             // by default use utf-8
             charset: 33,
             username: String::new(),

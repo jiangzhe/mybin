@@ -6,6 +6,7 @@ pub mod flag;
 pub mod handshake;
 pub mod packet;
 pub mod query;
+pub mod register_slave;
 pub mod resultset;
 mod util;
 
