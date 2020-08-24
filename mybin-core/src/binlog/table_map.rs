@@ -1,9 +1,9 @@
 use crate::col::*;
+use bytes::{Buf, Bytes};
 use bytes_parser::error::{Error, Result};
 use bytes_parser::my::ReadMyEnc;
-use bytes_parser::{ReadFromBytes, ReadBytesExt};
+use bytes_parser::{ReadBytesExt, ReadFromBytes};
 use std::convert::TryFrom;
-use bytes::{Buf, Bytes};
 
 /// Data of TableMapEvent
 ///

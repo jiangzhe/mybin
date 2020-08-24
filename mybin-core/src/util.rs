@@ -24,10 +24,7 @@ pub(crate) fn bitmap_mark(bitmap: &mut [u8], idx: usize, mark: bool) {
 }
 
 pub fn bitmap_iter(bits: &[u8]) -> BitmapIter {
-    BitmapIter{
-        bits,
-        idx: 0,
-    }
+    BitmapIter { bits, idx: 0 }
 }
 
 pub struct BitmapIter<'a> {
@@ -50,8 +47,6 @@ impl Iterator for BitmapIter<'_> {
     }
 }
 
-
-
 pub(crate) fn checksum_crc32(bytes: &[u8]) -> u32 {
     let mut hasher = CRCu32::crc32();
     hasher.digest(bytes);
@@ -71,16 +66,24 @@ mod tests {
     #[test]
     fn test_bitmap_iter() {
         let single_zeros = [0u8];
-        let sum = bitmap_iter(&single_zeros).map(|b| if b { 1 } else { 0 }).sum();
+        let sum = bitmap_iter(&single_zeros)
+            .map(|b| if b { 1 } else { 0 })
+            .sum();
         assert_eq!(0, sum);
         let single_ones = [0xff_u8];
-        let sum = bitmap_iter(&single_ones).map(|b| if b { 1 } else { 0 }).sum();
+        let sum = bitmap_iter(&single_ones)
+            .map(|b| if b { 1 } else { 0 })
+            .sum();
         assert_eq!(8, sum);
         let multi_zeros = [0u8, 0, 0];
-        let sum = bitmap_iter(&multi_zeros).map(|b| if b { 1 } else { 0 }).sum();
+        let sum = bitmap_iter(&multi_zeros)
+            .map(|b| if b { 1 } else { 0 })
+            .sum();
         assert_eq!(0, sum);
         let multi_ones = [0xff_u8, 0xff, 0xff];
-        let sum = bitmap_iter(&multi_ones).map(|b| if b { 1 } else { 0 }).sum();
+        let sum = bitmap_iter(&multi_ones)
+            .map(|b| if b { 1 } else { 0 })
+            .sum();
         assert_eq!(24, sum);
     }
 }

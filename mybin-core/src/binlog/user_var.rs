@@ -1,7 +1,7 @@
-use bytes_parser::error::{Result, Error};
-use bytes_parser::{ReadBytesExt, ReadFromBytes};
-use bytes::{Buf, Bytes};
 use bitflags::bitflags;
+use bytes::{Buf, Bytes};
+use bytes_parser::error::{Error, Result};
+use bytes_parser::{ReadBytesExt, ReadFromBytes};
 
 /// Data of UserVarEvent
 ///
@@ -53,8 +53,9 @@ impl ReadFromBytes for UserVarValue {
         } else {
             0
         };
-        let flags = UserVarFlags::from_bits(flags)
-            .ok_or_else(|| Error::ConstraintError(format!("invalid user var flags {:02x}", flags)))?;
+        let flags = UserVarFlags::from_bits(flags).ok_or_else(|| {
+            Error::ConstraintError(format!("invalid user var flags {:02x}", flags))
+        })?;
         Ok(UserVarValue {
             value_type,
             charset_num,

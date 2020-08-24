@@ -1,8 +1,8 @@
 use super::header::EventHeader;
 use super::*;
 use crate::util::checksum_crc32;
-use bytes_parser::{ReadFromBytes, ReadBytesExt};
-use bytes::{Buf,Bytes};
+use bytes::{Buf, Bytes};
+use bytes_parser::{ReadBytesExt, ReadFromBytes};
 // use bytes_parser::error::{Result, Error};
 use crate::error::{Error, Result};
 
@@ -68,7 +68,8 @@ impl ParserV4 {
 
     /// create parser from given format description event
     pub fn from_fde(fde: &FormatDescriptionEvent) -> Self {
-        let post_header_lengths = post_header_lengths_from_raw(fde.data.post_header_lengths.as_ref());
+        let post_header_lengths =
+            post_header_lengths_from_raw(fde.data.post_header_lengths.as_ref());
         let checksum = fde.data.checksum_flag == 1;
         ParserV4::new(post_header_lengths, checksum)
     }
@@ -87,30 +88,26 @@ impl ParserV4 {
         let header = EventHeader::read_from(input)?;
         let mut raw_data = input.read_len(header.data_len() as usize)?;
         let data = FormatDescriptionData::read_from(&mut raw_data)?;
-        Ok(Self::from_fde(&FormatDescriptionEvent{header, data}))
+        Ok(Self::from_fde(&FormatDescriptionEvent { header, data }))
     }
 
     // parse the event starting from given offset
     // if validate_checksum is set to true, will
     // verify crc32 checksum if possible
     // for any non-supported event, returns None
-    pub fn parse_event(
-        &self,
-        input: &mut Bytes,
-        validate_checksum: bool,
-    ) -> Result<Option<Event>> {
+    pub fn parse_event(&self, input: &mut Bytes, validate_checksum: bool) -> Result<Option<Event>> {
         if self.checksum && validate_checksum {
             // do not consume original input for checksum
             let header = EventHeader::read_from(&mut input.clone())?;
             let mut raw_data = (&mut input.clone()).read_len(header.event_len as usize)?;
-            let mut checksum_data = raw_data.split_off(raw_data.remaining()-4);
+            let mut checksum_data = raw_data.split_off(raw_data.remaining() - 4);
             let expected = checksum_data.read_le_u32()?;
             let actual = checksum_crc32(raw_data.as_ref());
             if expected != actual {
                 return Err(Error::BinlogChecksumMismatch(expected, actual));
             }
         }
-        
+
         let header = EventHeader::read_from(input)?;
         let mut raw_data = input.read_len(header.data_len() as usize)?;
         if self.checksum {
@@ -119,97 +116,128 @@ impl ParserV4 {
         }
         let event = match LogEventType::from(header.type_code) {
             // UnknownEvent not supported
-            LogEventType::StartEventV3 => {
-                Event::StartEventV3(RawEvent{header: header, data: StartData::read_from(&mut raw_data)?})
-            }
-            LogEventType::QueryEvent => {
-                Event::QueryEvent(RawEvent{header: header, data: QueryData::read_from(&mut raw_data)?})
-            }
-            LogEventType::StopEvent => {
-                Event::StopEvent(RawEvent{header: header, data: ()})
-            }
-            LogEventType::RotateEvent => {
-                Event::RotateEvent(RawEvent{header: header, data: RotateData::read_from(&mut raw_data)?})
-            }
-            LogEventType::IntvarEvent => {
-                Event::IntvarEvent(RawEvent{header: header, data: IntvarData::read_from(&mut raw_data)?})
-            }
-            LogEventType::LoadEvent => {
-                Event::LoadEvent(RawEvent{header: header, data: LoadData::read_from(&mut raw_data)?})
-            }
+            LogEventType::StartEventV3 => Event::StartEventV3(RawEvent {
+                header: header,
+                data: StartData::read_from(&mut raw_data)?,
+            }),
+            LogEventType::QueryEvent => Event::QueryEvent(RawEvent {
+                header: header,
+                data: QueryData::read_from(&mut raw_data)?,
+            }),
+            LogEventType::StopEvent => Event::StopEvent(RawEvent {
+                header: header,
+                data: (),
+            }),
+            LogEventType::RotateEvent => Event::RotateEvent(RawEvent {
+                header: header,
+                data: RotateData::read_from(&mut raw_data)?,
+            }),
+            LogEventType::IntvarEvent => Event::IntvarEvent(RawEvent {
+                header: header,
+                data: IntvarData::read_from(&mut raw_data)?,
+            }),
+            LogEventType::LoadEvent => Event::LoadEvent(RawEvent {
+                header: header,
+                data: LoadData::read_from(&mut raw_data)?,
+            }),
             // SlaveEvent not supported
-            LogEventType::CreateFileEvent => {
-                Event::CreateFileEvent(RawEvent{header: header, data: CreateFileData::read_from(&mut raw_data)?})
-            }
-            LogEventType::AppendBlockEvent => {
-                Event::AppendBlockEvent(RawEvent{header: header, data: AppendBlockData::read_from(&mut raw_data)?})
-            }
-            LogEventType::ExecLoadEvent => {
-                Event::ExecLoadEvent(RawEvent{header: header, data: ExecLoadData::read_from(&mut raw_data)?})
-            }
-            LogEventType::DeleteFileEvent => {
-                Event::DeleteFileEvent(RawEvent{header: header, data: DeleteFileData::read_from(&mut raw_data)?})
-            }
-            LogEventType::NewLoadEvent => {
-                Event::NewLoadEvent(RawEvent{header: header, data: NewLoadData::read_from(&mut raw_data)?})
-            }
-            LogEventType::RandEvent => {
-                Event::RandEvent(RawEvent{header: header, data: RandData::read_from(&mut raw_data)?})
-            }
-            LogEventType::UserVarEvent => {
-                Event::UserVarEvent(RawEvent{header: header, data: UserVarData::read_from(&mut raw_data)?})
-            }
-            LogEventType::FormatDescriptionEvent => {
-                Event::FormatDescriptionEvent(RawEvent{header: header, data: FormatDescriptionData::read_from(&mut raw_data)?})
-            }
-            LogEventType::XidEvent => Event::XidEvent(RawEvent{header: header, data: XidData::read_from(&mut raw_data)?}),
-            LogEventType::BeginLoadQueryEvent => {
-                Event::BeginLoadQueryEvent(RawEvent{header: header, data: BeginLoadQueryData::read_from(&mut raw_data)?})
-            }
-            LogEventType::ExecuteLoadQueryEvent => {
-                Event::ExecuteLoadQueryEvent(RawEvent{header: header, data: ExecuteLoadQueryData::read_from(&mut raw_data)?})
-            }
-            LogEventType::TableMapEvent => {
-                Event::TableMapEvent(RawEvent{header: header, data: TableMapData::read_from(&mut raw_data)?})
-            }
+            LogEventType::CreateFileEvent => Event::CreateFileEvent(RawEvent {
+                header: header,
+                data: CreateFileData::read_from(&mut raw_data)?,
+            }),
+            LogEventType::AppendBlockEvent => Event::AppendBlockEvent(RawEvent {
+                header: header,
+                data: AppendBlockData::read_from(&mut raw_data)?,
+            }),
+            LogEventType::ExecLoadEvent => Event::ExecLoadEvent(RawEvent {
+                header: header,
+                data: ExecLoadData::read_from(&mut raw_data)?,
+            }),
+            LogEventType::DeleteFileEvent => Event::DeleteFileEvent(RawEvent {
+                header: header,
+                data: DeleteFileData::read_from(&mut raw_data)?,
+            }),
+            LogEventType::NewLoadEvent => Event::NewLoadEvent(RawEvent {
+                header: header,
+                data: NewLoadData::read_from(&mut raw_data)?,
+            }),
+            LogEventType::RandEvent => Event::RandEvent(RawEvent {
+                header: header,
+                data: RandData::read_from(&mut raw_data)?,
+            }),
+            LogEventType::UserVarEvent => Event::UserVarEvent(RawEvent {
+                header: header,
+                data: UserVarData::read_from(&mut raw_data)?,
+            }),
+            LogEventType::FormatDescriptionEvent => Event::FormatDescriptionEvent(RawEvent {
+                header: header,
+                data: FormatDescriptionData::read_from(&mut raw_data)?,
+            }),
+            LogEventType::XidEvent => Event::XidEvent(RawEvent {
+                header: header,
+                data: XidData::read_from(&mut raw_data)?,
+            }),
+            LogEventType::BeginLoadQueryEvent => Event::BeginLoadQueryEvent(RawEvent {
+                header: header,
+                data: BeginLoadQueryData::read_from(&mut raw_data)?,
+            }),
+            LogEventType::ExecuteLoadQueryEvent => Event::ExecuteLoadQueryEvent(RawEvent {
+                header: header,
+                data: ExecuteLoadQueryData::read_from(&mut raw_data)?,
+            }),
+            LogEventType::TableMapEvent => Event::TableMapEvent(RawEvent {
+                header: header,
+                data: TableMapData::read_from(&mut raw_data)?,
+            }),
             // WriteRowsEventV0 not supported
             // UpdateRowsEventV0 not supported
             // DeleteRowsEventV0 not supported
-            LogEventType::WriteRowsEventV1 => {
-                Event::WriteRowsEventV1(RawEvent{header: header, data: WriteRowsDataV1::read_from(&mut raw_data)?})
-            }
-            LogEventType::UpdateRowsEventV1 => {
-                Event::UpdateRowsEventV1(RawEvent{header: header, data: UpdateRowsDataV1::read_from(&mut raw_data)?})
-            }
-            LogEventType::DeleteRowsEventV1 => {
-                Event::DeleteRowsEventV1(RawEvent{header: header, data: DeleteRowsDataV1::read_from(&mut raw_data)?})
-            }
-            LogEventType::IncidentEvent => {
-                Event::IncidentEvent(RawEvent{header: header, data: IncidentData::read_from(&mut raw_data)?})
-            }
-            LogEventType::HeartbeatLogEvent => {
-                Event::HeartbeatLogEvent(RawEvent{header: header, data: ()})
-            }
+            LogEventType::WriteRowsEventV1 => Event::WriteRowsEventV1(RawEvent {
+                header: header,
+                data: WriteRowsDataV1::read_from(&mut raw_data)?,
+            }),
+            LogEventType::UpdateRowsEventV1 => Event::UpdateRowsEventV1(RawEvent {
+                header: header,
+                data: UpdateRowsDataV1::read_from(&mut raw_data)?,
+            }),
+            LogEventType::DeleteRowsEventV1 => Event::DeleteRowsEventV1(RawEvent {
+                header: header,
+                data: DeleteRowsDataV1::read_from(&mut raw_data)?,
+            }),
+            LogEventType::IncidentEvent => Event::IncidentEvent(RawEvent {
+                header: header,
+                data: IncidentData::read_from(&mut raw_data)?,
+            }),
+            LogEventType::HeartbeatLogEvent => Event::HeartbeatLogEvent(RawEvent {
+                header: header,
+                data: (),
+            }),
             // IgnorableLogEvent not supported
             // RowsQueryLogEvent not supported
-            LogEventType::WriteRowsEventV2 => {
-                Event::WriteRowsEventV2(RawEvent{header: header, data: WriteRowsDataV2::read_from(&mut raw_data)?})
-            }
-            LogEventType::UpdateRowsEventV2 => {
-                Event::UpdateRowsEventV2(RawEvent{header: header, data: UpdateRowsDataV2::read_from(&mut raw_data)?})
-            }
-            LogEventType::DeleteRowsEventV2 => {
-                Event::DeleteRowsEventV2(RawEvent{header: header, data: DeleteRowsDataV2::read_from(&mut raw_data)?})
-            }
-            LogEventType::GtidLogEvent => {
-                Event::GtidLogEvent(RawEvent{header: header, data: GtidLogData::read_from(&mut raw_data)?})
-            }
-            LogEventType::AnonymousGtidLogEvent => {
-                Event::AnonymousGtidLogEvent(RawEvent{header: header, data: AnonymousGtidLogData::read_from(&mut raw_data)?})
-            }
-            LogEventType::PreviousGtidsLogEvent => {
-                Event::PreviousGtidsLogEvent(RawEvent{header: header, data: PreviousGtidsLogData::read_from(&mut raw_data)?})
-            }
+            LogEventType::WriteRowsEventV2 => Event::WriteRowsEventV2(RawEvent {
+                header: header,
+                data: WriteRowsDataV2::read_from(&mut raw_data)?,
+            }),
+            LogEventType::UpdateRowsEventV2 => Event::UpdateRowsEventV2(RawEvent {
+                header: header,
+                data: UpdateRowsDataV2::read_from(&mut raw_data)?,
+            }),
+            LogEventType::DeleteRowsEventV2 => Event::DeleteRowsEventV2(RawEvent {
+                header: header,
+                data: DeleteRowsDataV2::read_from(&mut raw_data)?,
+            }),
+            LogEventType::GtidLogEvent => Event::GtidLogEvent(RawEvent {
+                header: header,
+                data: GtidLogData::read_from(&mut raw_data)?,
+            }),
+            LogEventType::AnonymousGtidLogEvent => Event::AnonymousGtidLogEvent(RawEvent {
+                header: header,
+                data: AnonymousGtidLogData::read_from(&mut raw_data)?,
+            }),
+            LogEventType::PreviousGtidsLogEvent => Event::PreviousGtidsLogEvent(RawEvent {
+                header: header,
+                data: PreviousGtidsLogData::read_from(&mut raw_data)?,
+            }),
             // TransactionContextEvent not supported
             // ViewChangeEvent not supported
             // XaPrepareLogEvent not supported
@@ -233,7 +261,7 @@ impl ParserV4 {
         let mut input = input.clone();
         let header = EventHeader::read_from(&mut input.clone())?;
         let mut raw_data = (&mut input).read_len(header.event_len as usize)?;
-        let mut checksum_data = raw_data.split_off(raw_data.remaining()-4);
+        let mut checksum_data = raw_data.split_off(raw_data.remaining() - 4);
         let expected = checksum_data.read_le_u32()?;
         let actual = checksum_crc32(raw_data.as_ref());
         if expected != actual {
@@ -309,10 +337,7 @@ mod tests {
             LogEventType::FormatDescriptionEvent,
             LogEventType::from(header.type_code)
         );
-        println!(
-            "post header lengths: {}",
-            fdd.post_header_lengths.len()
-        );
+        println!("post header lengths: {}", fdd.post_header_lengths.len());
         for i in 0..fdd.post_header_lengths.len() {
             println!(
                 "{:?}: {}",
@@ -330,10 +355,7 @@ mod tests {
         assert_eq!(18, post_header_length(&fdd, LogEventType::LoadEvent));
         assert_eq!(0, post_header_length(&fdd, LogEventType::SlaveEvent));
         assert_eq!(4, post_header_length(&fdd, LogEventType::CreateFileEvent));
-        assert_eq!(
-            4,
-            post_header_length(&fdd, LogEventType::AppendBlockEvent)
-        );
+        assert_eq!(4, post_header_length(&fdd, LogEventType::AppendBlockEvent));
         assert_eq!(4, post_header_length(&fdd, LogEventType::ExecLoadEvent));
         assert_eq!(4, post_header_length(&fdd, LogEventType::DeleteFileEvent));
         assert_eq!(18, post_header_length(&fdd, LogEventType::NewLoadEvent));
@@ -353,35 +375,14 @@ mod tests {
             post_header_length(&fdd, LogEventType::ExecuteLoadQueryEvent)
         );
         assert_eq!(8, post_header_length(&fdd, LogEventType::TableMapEvent));
-        assert_eq!(
-            0,
-            post_header_length(&fdd, LogEventType::DeleteRowsEventV0)
-        );
-        assert_eq!(
-            0,
-            post_header_length(&fdd, LogEventType::UpdateRowsEventV0)
-        );
-        assert_eq!(
-            0,
-            post_header_length(&fdd, LogEventType::WriteRowsEventV0)
-        );
-        assert_eq!(
-            8,
-            post_header_length(&fdd, LogEventType::DeleteRowsEventV1)
-        );
-        assert_eq!(
-            8,
-            post_header_length(&fdd, LogEventType::UpdateRowsEventV1)
-        );
-        assert_eq!(
-            8,
-            post_header_length(&fdd, LogEventType::WriteRowsEventV1)
-        );
+        assert_eq!(0, post_header_length(&fdd, LogEventType::DeleteRowsEventV0));
+        assert_eq!(0, post_header_length(&fdd, LogEventType::UpdateRowsEventV0));
+        assert_eq!(0, post_header_length(&fdd, LogEventType::WriteRowsEventV0));
+        assert_eq!(8, post_header_length(&fdd, LogEventType::DeleteRowsEventV1));
+        assert_eq!(8, post_header_length(&fdd, LogEventType::UpdateRowsEventV1));
+        assert_eq!(8, post_header_length(&fdd, LogEventType::WriteRowsEventV1));
         assert_eq!(2, post_header_length(&fdd, LogEventType::IncidentEvent));
-        assert_eq!(
-            0,
-            post_header_length(&fdd, LogEventType::HeartbeatLogEvent)
-        );
+        assert_eq!(0, post_header_length(&fdd, LogEventType::HeartbeatLogEvent));
         // 5.5 does not have v2 row events
         // assert_eq!(10, post_header_length(&event, LogEventType::WriteRowsEventV2));
         // assert_eq!(10, post_header_length(&event, LogEventType::DeleteRowsEventV2));
@@ -402,10 +403,7 @@ mod tests {
             LogEventType::FormatDescriptionEvent,
             LogEventType::from(header.type_code)
         );
-        println!(
-            "post header lengths: {}",
-            fdd.post_header_lengths.len()
-        );
+        println!("post header lengths: {}", fdd.post_header_lengths.len());
         for i in 1..fdd.post_header_lengths.len() {
             println!(
                 "{:?}: {}",
@@ -431,10 +429,7 @@ mod tests {
         // 8
         assert_eq!(4, post_header_length(&fdd, LogEventType::CreateFileEvent));
         // 9
-        assert_eq!(
-            4,
-            post_header_length(&fdd, LogEventType::AppendBlockEvent)
-        );
+        assert_eq!(4, post_header_length(&fdd, LogEventType::AppendBlockEvent));
         // 10
         assert_eq!(4, post_header_length(&fdd, LogEventType::ExecLoadEvent));
         // 11
@@ -468,57 +463,27 @@ mod tests {
         // 19
         assert_eq!(8, post_header_length(&fdd, LogEventType::TableMapEvent));
         // 20
-        assert_eq!(
-            0,
-            post_header_length(&fdd, LogEventType::WriteRowsEventV0)
-        );
+        assert_eq!(0, post_header_length(&fdd, LogEventType::WriteRowsEventV0));
         // 21
-        assert_eq!(
-            0,
-            post_header_length(&fdd, LogEventType::UpdateRowsEventV0)
-        );
+        assert_eq!(0, post_header_length(&fdd, LogEventType::UpdateRowsEventV0));
         // 22
-        assert_eq!(
-            0,
-            post_header_length(&fdd, LogEventType::DeleteRowsEventV0)
-        );
+        assert_eq!(0, post_header_length(&fdd, LogEventType::DeleteRowsEventV0));
         // 23
-        assert_eq!(
-            8,
-            post_header_length(&fdd, LogEventType::WriteRowsEventV1)
-        );
+        assert_eq!(8, post_header_length(&fdd, LogEventType::WriteRowsEventV1));
         // 24
-        assert_eq!(
-            8,
-            post_header_length(&fdd, LogEventType::UpdateRowsEventV1)
-        );
+        assert_eq!(8, post_header_length(&fdd, LogEventType::UpdateRowsEventV1));
         // 25
-        assert_eq!(
-            8,
-            post_header_length(&fdd, LogEventType::DeleteRowsEventV1)
-        );
+        assert_eq!(8, post_header_length(&fdd, LogEventType::DeleteRowsEventV1));
         // 26
         assert_eq!(2, post_header_length(&fdd, LogEventType::IncidentEvent));
         // 27
-        assert_eq!(
-            0,
-            post_header_length(&fdd, LogEventType::HeartbeatLogEvent)
-        );
+        assert_eq!(0, post_header_length(&fdd, LogEventType::HeartbeatLogEvent));
         // 28
-        assert_eq!(
-            0,
-            post_header_length(&fdd, LogEventType::IgnorableLogEvent)
-        );
+        assert_eq!(0, post_header_length(&fdd, LogEventType::IgnorableLogEvent));
         // 29
-        assert_eq!(
-            0,
-            post_header_length(&fdd, LogEventType::RowsQueryLogEvent)
-        );
+        assert_eq!(0, post_header_length(&fdd, LogEventType::RowsQueryLogEvent));
         // 30
-        assert_eq!(
-            10,
-            post_header_length(&fdd, LogEventType::WriteRowsEventV2)
-        );
+        assert_eq!(10, post_header_length(&fdd, LogEventType::WriteRowsEventV2));
         // 31
         assert_eq!(
             10,
@@ -547,15 +512,9 @@ mod tests {
             post_header_length(&fdd, LogEventType::TransactionContextEvent)
         );
         // 37
-        assert_eq!(
-            52,
-            post_header_length(&fdd, LogEventType::ViewChangeEvent)
-        );
+        assert_eq!(52, post_header_length(&fdd, LogEventType::ViewChangeEvent));
         // 38
-        assert_eq!(
-            0,
-            post_header_length(&fdd, LogEventType::XaPrepareLogEvent)
-        );
+        assert_eq!(0, post_header_length(&fdd, LogEventType::XaPrepareLogEvent));
 
         println!("{:#?}", fdd);
         Ok(())
@@ -605,7 +564,7 @@ mod tests {
         // third event is StopEvent
         let se = pv4.parse_event(input, true)?.unwrap();
         println!("{:#?}", se);
-        Ok(()) 
+        Ok(())
     }
 
     // 3 events:
@@ -620,7 +579,9 @@ mod tests {
         let re = pv4.parse_event(input, true)?;
         let re: RotateEvent = re.unwrap().try_into()?;
         println!("{:#?}", re);
-        dbg!(String::from_utf8_lossy(re.data.next_binlog_filename.as_ref()));
+        dbg!(String::from_utf8_lossy(
+            re.data.next_binlog_filename.as_ref()
+        ));
         Ok(())
     }
 

@@ -1,6 +1,6 @@
-use bytes_parser::error::Result;
-use bytes_parser::{ReadFromBytes, ReadBytesExt};
 use bytes::{Buf, Bytes};
+use bytes_parser::error::Result;
+use bytes_parser::{ReadBytesExt, ReadFromBytes};
 
 /// Data of RotateEvent
 ///

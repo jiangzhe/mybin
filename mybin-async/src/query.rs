@@ -1,14 +1,14 @@
-use crate::error::{Result, Error, SqlError};
 use crate::conn::Conn;
+use crate::error::{Error, Result, SqlError};
+use bytes::Buf;
 use mybin_core::query::{ComQuery, ComQueryResponse, ComQueryStateMachine};
 use mybin_core::resultset::TextRow;
-use smol::stream::Stream;
+use pin_project::pin_project;
 use smol::future::Future;
 use smol::ready;
+use smol::stream::Stream;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use pin_project::pin_project;
-use bytes::Buf;
 
 #[derive(Debug)]
 pub struct Query<'a> {
@@ -17,15 +17,14 @@ pub struct Query<'a> {
 }
 
 impl<'a> Query<'a> {
-
     pub fn new(conn: &'a mut Conn) -> Self {
         let cap_flags = conn.cap_flags.clone();
-        Query{
+        Query {
             conn,
             sm: ComQueryStateMachine::new(cap_flags),
         }
     }
-    
+
     pub async fn exec<S: Into<String>>(mut self, qry: S) -> Result<()> {
         let qry = ComQuery::new(qry);
         let mut sm = ComQueryStateMachine::new(self.conn.cap_flags.clone());
@@ -36,13 +35,13 @@ impl<'a> Query<'a> {
             let resp = sm.next(msg)?;
             match resp {
                 ComQueryResponse::Err(err) => {
-                    return Err(Error::SqlError(SqlError{
+                    return Err(Error::SqlError(SqlError {
                         error_code: err.error_code,
                         sql_state_marker: err.sql_state_marker,
                         sql_state: String::from_utf8(Vec::from(err.sql_state.bytes()))?,
                         error_message: String::from_utf8(Vec::from(err.error_message.bytes()))?,
                     }));
-                },
+                }
                 ComQueryResponse::Ok(_) => {
                     // currently ignore status_flags, session_state_changes
                     return Ok(());
@@ -56,7 +55,11 @@ impl<'a> Query<'a> {
         }
     }
 
-    pub async fn query<'b, S: Into<String>>(mut self, qry: S, buf: Vec<u8>) -> Result<QueryResultSet<'a>> {
+    pub async fn query<'b, S: Into<String>>(
+        mut self,
+        qry: S,
+        buf: Vec<u8>,
+    ) -> Result<QueryResultSet<'a>> {
         let qry = ComQuery::new(qry);
         let mut sm = ComQueryStateMachine::new(self.conn.cap_flags.clone());
         self.conn.send_msg(qry).await?;
@@ -64,13 +67,13 @@ impl<'a> Query<'a> {
         log::debug!("{:?}", msg);
         match sm.next(msg)? {
             ComQueryResponse::Err(err) => {
-                return Err(Error::SqlError(SqlError{
+                return Err(Error::SqlError(SqlError {
                     error_code: err.error_code,
                     sql_state_marker: err.sql_state_marker,
                     sql_state: String::from_utf8(Vec::from(err.sql_state.bytes()))?,
                     error_message: String::from_utf8(Vec::from(err.error_message.bytes()))?,
                 }));
-            },
+            }
             // ComQueryResponse::Ok(_) => {
             //     return Ok(QueryResultSet{
             //         conn: self.conn,
@@ -133,6 +136,5 @@ impl<'c> Stream for QueryResultSet<'c> {
         //         return Poll::Ready(None);
         //     }
         // }
-        
     }
 }

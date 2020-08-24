@@ -1,5 +1,5 @@
-use thiserror::Error;
 use bytes::Bytes;
+use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum Error {

@@ -1,12 +1,12 @@
-use smol::stream::Stream;
-use smol::ready;
-use std::pin::Pin;
-use std::future::Future;
-use std::task::{Context, Poll};
 use crate::conn::Conn;
 use crate::error::Result;
+use smol::ready;
+use smol::stream::Stream;
+use std::future::Future;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
-/// wrapper of Conn instance to provide readable 
+/// wrapper of Conn instance to provide readable
 /// stream of binlog
 pub struct BinlogStream {
     conn: Conn,

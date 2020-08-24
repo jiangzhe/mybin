@@ -1,9 +1,9 @@
 use crate::flag::*;
 use crate::handshake::AuthSwitchRequest;
+use bytes::{Buf, Bytes};
 use bytes_parser::error::{Error, Needed, Result};
 use bytes_parser::my::ReadMyEnc;
-use bytes_parser::{ReadFromBytes, ReadFromBytesWithContext, ReadBytesExt};
-use bytes::{Buf, Bytes};
+use bytes_parser::{ReadBytesExt, ReadFromBytes, ReadFromBytesWithContext};
 
 /// MySQL packet
 ///
@@ -47,12 +47,9 @@ pub enum HandshakeMessage {
 impl<'c> ReadFromBytesWithContext<'c> for HandshakeMessage {
     type Context = &'c CapabilityFlags;
 
-    fn read_with_ctx(
-        input: &mut Bytes,
-        cap_flags: Self::Context,
-    ) -> Result<Self> {
+    fn read_with_ctx(input: &mut Bytes, cap_flags: Self::Context) -> Result<Self> {
         if !input.has_remaining() {
-            return Err(Error::InputIncomplete(Needed::Unknown));
+            return Err(Error::InputIncomplete(Bytes::new(), Needed::Unknown));
         }
         match input[0] {
             0x00 => {
@@ -100,10 +97,12 @@ impl<'c> ReadFromBytesWithContext<'c> for OkPacket {
         // header can be either 0x00 or 0xfe
         let header = input.read_u8()?;
         let affected_rows = input.read_len_enc_int()?;
-        let affected_rows = affected_rows.to_u64()
+        let affected_rows = affected_rows
+            .to_u64()
             .ok_or_else(|| Error::ConstraintError("invalid affected rows".to_owned()))?;
         let last_insert_id = input.read_len_enc_int()?;
-        let last_insert_id = last_insert_id.to_u64()
+        let last_insert_id = last_insert_id
+            .to_u64()
             .ok_or_else(|| Error::ConstraintError("invalid last insert id".to_owned()))?;
         let status_flags = if cap_flags.contains(CapabilityFlags::PROTOCOL_41)
             || cap_flags.contains(CapabilityFlags::TRANSACTIONS)
@@ -121,7 +120,8 @@ impl<'c> ReadFromBytesWithContext<'c> for OkPacket {
         };
         let info = if cap_flags.contains(CapabilityFlags::SESSION_TRACK) {
             let info = input.read_len_enc_str()?;
-            info.into_bytes().ok_or_else(|| Error::ConstraintError("invalid info".to_owned()))?
+            info.into_bytes()
+                .ok_or_else(|| Error::ConstraintError("invalid info".to_owned()))?
         } else {
             input.split_to(input.remaining())
         };
@@ -129,7 +129,8 @@ impl<'c> ReadFromBytesWithContext<'c> for OkPacket {
             && status_flags.contains(StatusFlags::SESSION_STATE_CHANGED)
         {
             let session_state_changes = input.read_len_enc_str()?;
-            session_state_changes.into_bytes()
+            session_state_changes
+                .into_bytes()
                 .ok_or_else(|| Error::ConstraintError("invalid session state changes".to_owned()))?
         } else {
             Bytes::new()
@@ -206,7 +207,9 @@ impl<'c> ReadFromBytesWithContext<'c> for EofPacket {
         let (warnings, status_flags) = if cap_flags.contains(CapabilityFlags::PROTOCOL_41) {
             let warnings = input.read_le_u16()?;
             let status_flags = input.read_le_u16()?;
-            let status_flags = StatusFlags::from_bits(status_flags).ok_or_else(|| Error::ConstraintError(format!("invalid status flags {}", status_flags)))?;
+            let status_flags = StatusFlags::from_bits(status_flags).ok_or_else(|| {
+                Error::ConstraintError(format!("invalid status flags {}", status_flags))
+            })?;
             (warnings, status_flags)
         } else {
             (0, StatusFlags::empty())
@@ -237,8 +240,7 @@ mod tests {
     fn test_ok_packet() {
         let input: Vec<u8> = vec![0, 0, 0, 2, 0, 0, 0];
         let mut input = (&input[..]).to_bytes();
-        let ok = OkPacket::read_with_ctx(&mut input, &CapabilityFlags::PROTOCOL_41)
-            .unwrap();
+        let ok = OkPacket::read_with_ctx(&mut input, &CapabilityFlags::PROTOCOL_41).unwrap();
         dbg!(ok);
     }
 
@@ -260,8 +262,8 @@ mod tests {
             108, 45, 98, 105, 110, 46, 48, 48, 48, 48, 48, 49, 39, 32, 97, 116, 32, 49, 50, 51, 46,
         ];
         let mut input = (&input[..]).to_bytes();
-        let err = ErrPacket::read_with_ctx(&mut input, (&CapabilityFlags::PROTOCOL_41, true))
-            .unwrap();
+        let err =
+            ErrPacket::read_with_ctx(&mut input, (&CapabilityFlags::PROTOCOL_41, true)).unwrap();
         dbg!(err);
     }
 }

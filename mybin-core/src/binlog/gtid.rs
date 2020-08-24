@@ -1,7 +1,7 @@
 //! gtid related events and parsing logic
-use bytes_parser::error::{Error, Result};
-use bytes_parser::{ReadFromBytes, ReadBytesExt};
 use bytes::{Buf, Bytes};
+use bytes_parser::error::{Error, Result};
+use bytes_parser::{ReadBytesExt, ReadFromBytes};
 use linked_hash_map::LinkedHashMap;
 
 /// Data of GtidEvent
@@ -58,7 +58,7 @@ pub struct AnonymousGtidLogData {
 impl ReadFromBytes for AnonymousGtidLogData {
     fn read_from(input: &mut Bytes) -> Result<Self> {
         let gld = GtidLogData::read_from(input)?;
-        Ok(AnonymousGtidLogData{
+        Ok(AnonymousGtidLogData {
             gtid_flags: gld.gtid_flags,
             encoded_sid: gld.encoded_sid,
             encoded_gno: gld.encoded_gno,

@@ -1,20 +1,18 @@
 //! essential parsing of bytes
 //!
 //! inspired by nom parser combinator (https://github.com/Geal/nom)
-pub mod take;
 pub mod error;
+pub mod future;
 pub mod my;
-pub mod number;
-pub mod number_async;
 pub mod util;
 
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 pub use error::*;
-use bytes::{Buf, Bytes, BufMut, BytesMut};
 
 /// global empty byte array as place holder
 pub const EMPTY_BYTE_ARRAY: [u8; 0] = [];
 
-pub trait ReadFromBytesWithContext<'c> 
+pub trait ReadFromBytesWithContext<'c>
 where
     Self: Sized,
 {
@@ -31,7 +29,6 @@ where
 }
 
 pub trait ReadBytesExt {
-
     fn read_u8(&mut self) -> Result<u8>;
 
     fn read_i8(&mut self) -> Result<i8> {
@@ -96,43 +93,52 @@ pub trait ReadBytesExt {
 }
 
 impl ReadBytesExt for Bytes {
-
     fn read_u8(&mut self) -> Result<u8> {
         if self.remaining() < 1 {
-            return Err(Error::InputIncomplete(Needed::Size(1)));
+            return Err(Error::InputIncomplete(Bytes::new(), Needed::Size(1)));
         }
         Ok(self.get_u8())
     }
 
     fn read_le_u16(&mut self) -> Result<u16> {
         if self.remaining() < 2 {
-            return Err(Error::InputIncomplete(Needed::Size(2 - self.remaining())));
+            return Err(Error::InputIncomplete(
+                Bytes::new(),
+                Needed::Size(2 - self.remaining()),
+            ));
         }
         Ok(self.get_u16_le())
     }
 
     fn read_le_u24(&mut self) -> Result<u32> {
         if self.remaining() < 3 {
-            return Err(Error::InputIncomplete(Needed::Size(3 - self.remaining())));
+            return Err(Error::InputIncomplete(
+                Bytes::new(),
+                Needed::Size(3 - self.remaining()),
+            ));
         }
         let bs = self.bytes();
-        let r = bs[0] as u32
-            + ((bs[1] as u32) << 8)
-            + ((bs[2] as u32) << 16);
+        let r = bs[0] as u32 + ((bs[1] as u32) << 8) + ((bs[2] as u32) << 16);
         self.advance(3);
         Ok(r)
     }
 
     fn read_le_u32(&mut self) -> Result<u32> {
         if self.remaining() < 4 {
-            return Err(Error::InputIncomplete(Needed::Size(4 - self.remaining())));
+            return Err(Error::InputIncomplete(
+                Bytes::new(),
+                Needed::Size(4 - self.remaining()),
+            ));
         }
         Ok(self.get_u32_le())
     }
 
     fn read_le_u48(&mut self) -> Result<u64> {
         if self.remaining() < 6 {
-            return Err(Error::InputIncomplete(Needed::Size(6 - self.remaining())));
+            return Err(Error::InputIncomplete(
+                Bytes::new(),
+                Needed::Size(6 - self.remaining()),
+            ));
         }
         let bs = self.bytes();
         let r = bs[0] as u64
@@ -147,35 +153,50 @@ impl ReadBytesExt for Bytes {
 
     fn read_le_u64(&mut self) -> Result<u64> {
         if self.remaining() < 8 {
-            return Err(Error::InputIncomplete(Needed::Size(8 - self.remaining())));
+            return Err(Error::InputIncomplete(
+                Bytes::new(),
+                Needed::Size(8 - self.remaining()),
+            ));
         }
         Ok(self.get_u64_le())
     }
 
     fn read_le_u128(&mut self) -> Result<u128> {
         if self.remaining() < 16 {
-            return Err(Error::InputIncomplete(Needed::Size(16 - self.remaining())));
+            return Err(Error::InputIncomplete(
+                Bytes::new(),
+                Needed::Size(16 - self.remaining()),
+            ));
         }
         Ok(self.get_u128_le())
     }
 
     fn read_le_f32(&mut self) -> Result<f32> {
         if self.remaining() < 4 {
-            return Err(Error::InputIncomplete(Needed::Size(4 - self.remaining())));
+            return Err(Error::InputIncomplete(
+                Bytes::new(),
+                Needed::Size(4 - self.remaining()),
+            ));
         }
         Ok(self.get_f32_le())
     }
 
     fn read_le_f64(&mut self) -> Result<f64> {
         if self.remaining() < 8 {
-            return Err(Error::InputIncomplete(Needed::Size(4 - self.remaining())));
+            return Err(Error::InputIncomplete(
+                Bytes::new(),
+                Needed::Size(4 - self.remaining()),
+            ));
         }
         Ok(self.get_f64_le())
     }
 
     fn read_len(&mut self, len: usize) -> Result<Bytes> {
         if self.remaining() < len {
-            return Err(Error::InputIncomplete(Needed::Size(len - self.remaining())));
+            return Err(Error::InputIncomplete(
+                Bytes::new(),
+                Needed::Size(len - self.remaining()),
+            ));
         }
         Ok(self.split_to(len))
     }
@@ -186,16 +207,15 @@ impl ReadBytesExt for Bytes {
             let bs = if inclusive {
                 self.split_to(end)
             } else {
-                let bs = self.split_to(end-1);
+                let bs = self.split_to(end - 1);
                 self.advance(1);
                 bs
             };
             return Ok(bs);
         }
-        Err(Error::InputIncomplete(Needed::Unknown))
+        Err(Error::InputIncomplete(Bytes::new(), Needed::Unknown))
     }
 }
-
 
 pub trait WriteToBytes {
     fn write_to(self, out: &mut BytesMut) -> Result<usize>;
@@ -208,7 +228,6 @@ pub trait WriteToBytesWithContext<'c> {
 }
 
 pub trait WriteBytesExt {
-
     fn write_u8(&mut self, n: u8) -> Result<usize>;
 
     fn write_le_u16(&mut self, n: u16) -> Result<usize>;
@@ -217,7 +236,7 @@ pub trait WriteBytesExt {
 
     fn write_le_u32(&mut self, n: u32) -> Result<usize>;
 
-    fn write_le_u48(&mut self, n: u32) -> Result<usize>;
+    fn write_le_u48(&mut self, n: u64) -> Result<usize>;
 
     fn write_le_u64(&mut self, n: u64) -> Result<usize>;
 
@@ -231,7 +250,6 @@ pub trait WriteBytesExt {
 }
 
 impl WriteBytesExt for BytesMut {
-
     fn write_u8(&mut self, n: u8) -> Result<usize> {
         self.put_u8(n);
         Ok(1)
@@ -252,7 +270,7 @@ impl WriteBytesExt for BytesMut {
         Ok(4)
     }
 
-    fn write_le_u48(&mut self, n: u32) -> Result<usize> {
+    fn write_le_u48(&mut self, n: u64) -> Result<usize> {
         self.put(&n.to_le_bytes()[..6]);
         Ok(6)
     }
@@ -280,5 +298,127 @@ impl WriteBytesExt for BytesMut {
     fn write_bytes(&mut self, bs: &[u8]) -> Result<usize> {
         self.put(bs);
         Ok(bs.len())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::Result;
+    use bytes::Buf;
+
+    #[test]
+    fn test_u8() -> Result<()> {
+        // read
+        let orig = vec![1u8];
+        let mut input = &orig[..];
+        let input = &mut input.to_bytes();
+        let success = input.read_u8()?;
+        assert_eq!(1, success);
+        let fail = input.read_u8();
+        dbg!(fail.unwrap_err());
+        // write
+        let mut v = BytesMut::new();
+        v.write_u8(success).unwrap();
+        assert_eq!(vec![1], v);
+        Ok(())
+    }
+
+    #[test]
+    fn test_le_u16() -> Result<()> {
+        // read
+        let orig = vec![1u8, 2, 3];
+        let mut input = &orig[..];
+        let input = &mut input.to_bytes();
+        let success = input.read_le_u16()?;
+        assert_eq!(1 + (2u16 << 8), success);
+        let fail = input.read_le_u16();
+        dbg!(fail.unwrap_err());
+        // write
+        let mut v = BytesMut::new();
+        v.write_le_u16(success).unwrap();
+        assert_eq!(vec![1, 2], v);
+        Ok(())
+    }
+
+    #[test]
+    fn test_le_u24() -> Result<()> {
+        // read
+        let orig = vec![1, 2, 3, 4];
+        let mut input = &orig[..];
+        let input = &mut input.to_bytes();
+        let success = input.read_le_u24()?;
+        assert_eq!(1u32 + (2u32 << 8) + (3u32 << 16), success);
+        let fail = input.read_le_u24();
+        dbg!(fail.unwrap_err());
+        // write
+        let mut v = BytesMut::new();
+        v.write_le_u24(success).unwrap();
+        assert_eq!(vec![1, 2, 3], v);
+        Ok(())
+    }
+
+    #[test]
+    fn test_le_u32() -> Result<()> {
+        // read
+        let orig = vec![1u8, 2, 3, 4, 5];
+        let mut input = &orig[..];
+        let input = &mut input.to_bytes();
+        let success = input.read_le_u32()?;
+        assert_eq!(1u32 + (2u32 << 8) + (3u32 << 16) + (4u32 << 24), success);
+        let fail = input.read_le_u32();
+        dbg!(fail.unwrap_err());
+        // write
+        let mut v = BytesMut::new();
+        v.write_le_u32(success).unwrap();
+        assert_eq!(vec![1, 2, 3, 4], v);
+        Ok(())
+    }
+
+    #[test]
+    fn test_le_u48() -> Result<()> {
+        // read
+        let input = vec![1u8, 2, 3, 4, 1, 2, 3, 4];
+        let mut input = &input[..];
+        let input = &mut input.to_bytes();
+        let success = input.read_le_u48()?;
+        assert_eq!(
+            1u64 + (2u64 << 8) + (3u64 << 16) + (4u64 << 24) + (1u64 << 32) + (2u64 << 40),
+            success
+        );
+        let fail = input.read_le_u48();
+        dbg!(fail.unwrap_err());
+        // write
+        let mut v = BytesMut::new();
+        v.write_le_u48(success).unwrap();
+        assert_eq!(vec![1, 2, 3, 4, 1, 2], v);
+        Ok(())
+    }
+
+    #[test]
+    fn test_le_u64() -> Result<()> {
+        // read
+        let orig = vec![1, 2, 3, 4, 1, 2, 3, 4, 1, 2, 3, 4];
+        let mut input = &orig[..];
+        let input = &mut input.to_bytes();
+        let success = input.read_le_u64()?;
+        assert_eq!(
+            1u64 + (2u64 << 8)
+                + (3u64 << 16)
+                + (4u64 << 24)
+                + (1u64 << 32)
+                + (2u64 << 40)
+                + (3u64 << 48)
+                + (4u64 << 56),
+            success
+        );
+        let fail = input.read_le_u64();
+        dbg!(fail.unwrap_err());
+        // write
+        // write
+        let mut v = BytesMut::new();
+        v.write_le_u64(success).unwrap();
+        assert_eq!(vec![1, 2, 3, 4, 1, 2, 3, 4], v);
+        Ok(())
     }
 }

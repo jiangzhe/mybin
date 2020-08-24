@@ -1,19 +1,20 @@
 use crate::auth_plugin::{AuthPlugin, MysqlNativePassword};
-use crate::bytes::AsyncReadBytes;
-use crate::error::{Error, Result};
-use crate::number::{AsyncReadNumber, AsyncWriteNumber};
-use crate::recv_msg::{RecvMsg, RecvMsgFuture};
 use crate::binlog_stream::BinlogStream;
+use crate::error::{Error, Result};
+use crate::query::Query;
+use crate::recv_msg::RecvMsgFuture;
 use async_net::TcpStream;
-use bytes_parser::{ReadFromBytes, ReadFromBytesWithContext, WriteToBytes, ReadBytesExt, WriteBytesExt};
+use bytes::{Buf, Bytes, BytesMut};
+use bytes_parser::future::{AsyncReadBytesExt, AsyncWriteBytesExt};
+use bytes_parser::{
+    ReadBytesExt, ReadFromBytes, ReadFromBytesWithContext, WriteBytesExt, WriteToBytes,
+};
 use mybin_core::flag::{CapabilityFlags, StatusFlags};
 use mybin_core::handshake::{HandshakeClientResponse41, InitialHandshake};
 use mybin_core::packet::HandshakeMessage;
-use crate::query::Query;
 use serde_derive::*;
 use smol::io::AsyncWriteExt;
 use std::net::{SocketAddr, ToSocketAddrs};
-use bytes::{Buf, Bytes, BytesMut};
 
 #[derive(Debug)]
 pub struct Conn {
@@ -59,9 +60,12 @@ impl Conn {
             String::from_utf8_lossy(handshake.server_version.bytes()),
             handshake.connection_id,
         );
-        log::debug!("auth_plugin={}, auth_data_1={:?}, auth_data_2={:?}", 
-            String::from_utf8_lossy(handshake.auth_plugin_name.bytes()), 
-            handshake.auth_plugin_data_1, handshake.auth_plugin_data_2);
+        log::debug!(
+            "auth_plugin={}, auth_data_1={:?}, auth_data_2={:?}",
+            String::from_utf8_lossy(handshake.auth_plugin_name.bytes()),
+            handshake.auth_plugin_data_1,
+            handshake.auth_plugin_data_2
+        );
         let mut seed = vec![];
         seed.extend(handshake.auth_plugin_data_1);
         seed.extend(handshake.auth_plugin_data_2);
@@ -80,7 +84,7 @@ impl Conn {
         // disable ssl currently
         self.cap_flags.remove(CapabilityFlags::SSL);
         // by default use mysql_native_password auth_plugin
-        let (auth_plugin_name, auth_response) = 
+        let (auth_plugin_name, auth_response) =
             gen_auth_resp(&opts.username, &opts.password, &seed)?;
 
         if !opts.database.is_empty() {
@@ -146,7 +150,7 @@ impl Conn {
             }
             self.pkt_nr += 1;
             self.stream
-                .take_out(payload_len as usize, &mut buf)
+                .read_len_out(payload_len as usize, &mut buf)
                 .await?;
             // read multiple packets if payload larger than or equal to 2^24-1
             // https://dev.mysql.com/doc/internals/en/sending-more-than-16mbyte.html
@@ -158,7 +162,10 @@ impl Conn {
     }
 
     /// future to receive message for internal use
-    pub(crate) fn recv_msg_fut<'s, 'o>(&'s mut self, out: &'o mut BytesMut) -> RecvMsgFuture<'s, 'o> {
+    pub(crate) fn recv_msg_fut<'s, 'o>(
+        &'s mut self,
+        out: &'o mut BytesMut,
+    ) -> RecvMsgFuture<'s, 'o> {
         RecvMsgFuture::new(&mut self.stream, out)
     }
 
@@ -170,7 +177,7 @@ impl Conn {
         T: WriteToBytes,
     {
         let mut buf = BytesMut::new();
-        msg.write_to(&mut buf);
+        msg.write_to(&mut buf)?;
         let mut chunk_size = 0;
         // let mut seq_id = 0;
         for chunk in buf.bytes().chunks(0xffffff) {
@@ -211,7 +218,7 @@ fn gen_auth_resp(username: &str, password: &str, seed: &[u8]) -> Result<(String,
     let mut seed = seed;
     if let Some(0x00) = seed.last() {
         // remove trailing 0x00 byte
-        seed = &seed[..seed.len()-1];
+        seed = &seed[..seed.len() - 1];
     }
     let mut ap = MysqlNativePassword::new();
     ap.set_credential(username, password);
@@ -219,7 +226,6 @@ fn gen_auth_resp(username: &str, password: &str, seed: &[u8]) -> Result<(String,
     ap.next(&seed, &mut auth_response)?;
     Ok(("mysql_native_password".to_owned(), auth_response))
 }
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnOpts {
@@ -246,6 +252,5 @@ mod tests {
         // }).await.unwrap();
 
         // conn.query(ComQuery::new("set @master_binlog_checksum = @@global.binlog_checksum")).await.unwrap();
-
     }
 }

@@ -1,8 +1,8 @@
 //! start event and format description event
 use super::{LogEventType, LogEventTypeCode};
-use bytes_parser::{ReadFromBytes, ReadBytesExt};
-use bytes_parser::Result;
 use bytes::{Buf, Bytes};
+use bytes_parser::Result;
+use bytes_parser::{ReadBytesExt, ReadFromBytes};
 
 /// Data of StartEvent
 ///
@@ -15,7 +15,6 @@ pub struct StartData {
 }
 
 impl ReadFromBytes for StartData {
-
     fn read_from(input: &mut Bytes) -> Result<Self> {
         let binlog_version = input.read_le_u16()?;
         let mut server_version = input.read_len(50)?;
@@ -60,7 +59,7 @@ impl ReadFromBytes for FormatDescriptionData {
         // 57(2+50+4+1) bytes consumed
         // actually there are several random-value bytes at end of the payload
         // but that does not affect post header lengths of existing events
-        
+
         // before mysql 5.6.1, there is no checksum so the data len is
         // same as total size of all 5 fields
         // but from 5.6.1, there is 5 additional bytes at end of the
