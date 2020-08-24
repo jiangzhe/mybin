@@ -238,18 +238,18 @@ pub struct ConnOpts {
 mod tests {
 
     #[smol_potat::test]
-    async fn test_real_conn() {
-        // use super::*;
-        // use mybin_core::ComQuery;
+    async fn test_conn_and_handshake() {
+        use super::*;
+        use mybin_core::ComQuery;
 
-        // env_logger::init();
+        env_logger::init();
 
-        // let mut conn = Conn::connect("127.0.0.1:13306").await.unwrap();
-        // conn.handshake(ConnOpts{
-        //     username: "root".to_owned(),
-        //     password: "password".to_owned(),
-        //     database: "".to_owned(),
-        // }).await.unwrap();
+        let mut conn = Conn::connect("127.0.0.1:13306").await.unwrap();
+        conn.handshake(ConnOpts{
+            username: "root".to_owned(),
+            password: "password".to_owned(),
+            database: "".to_owned(),
+        }).await.unwrap();
 
         // conn.query(ComQuery::new("set @master_binlog_checksum = @@global.binlog_checksum")).await.unwrap();
     }
