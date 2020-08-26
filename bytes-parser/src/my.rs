@@ -367,7 +367,7 @@ mod tests {
     }
 
     #[test]
-    fn test_bytes_len_enc_str() {
+    fn test_bytes_len_enc_str_valid() {
         // read
         let orig = b"\x05hello";
         let mut bs = (&orig[..]).to_bytes();
@@ -377,5 +377,14 @@ mod tests {
         let mut encoded = BytesMut::new();
         les.write_to(&mut encoded).unwrap();
         assert_eq!(orig, encoded.as_ref());
+    }
+
+    #[test]
+    fn test_bytes_len_enc_str_invalid() {
+        // realet orig = b"\x05hello";
+        let orig = b"\x05hell";
+        let mut bs = (&orig[..]).to_bytes();
+        let fail = bs.read_len_enc_str();
+        assert!(fail.is_err());
     }
 }

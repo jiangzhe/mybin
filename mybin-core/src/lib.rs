@@ -15,14 +15,7 @@ pub use crate::error::{Error, Result};
 pub use crate::query::*;
 use std::convert::TryFrom;
 
-// pub mod prelude {
-//     pub use bytes_parser::number::ReadNumber;
-//     pub use bytes_parser::take::TakeBytes;
-//     pub use bytes_parser::my::ReadMyEncoding;
-//     pub use bytes_parser::{ReadFrom, ReadWithContext, WriteTo, WriteWithContext};
-// }
-
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Command {
     Sleep,
     Quit,

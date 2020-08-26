@@ -12,7 +12,7 @@ jobs:
     
     services:
       mysql:
-        image: mysql:5.7.30
+        image: jiangz/mysql:5.7.30-binlog
         ports:
           - 13306:3306
         env:
