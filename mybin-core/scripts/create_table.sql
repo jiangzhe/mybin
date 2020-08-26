@@ -29,12 +29,12 @@ CREATE TABLE typetest (
     c28 BLOB,
     c29 TEXT CHARACTER SET latin1 COLLATE latin1_general_cs,
     c30 TEXT CHARACTER SET utf8,
-    c31 TEXT BINARY,
+    c31 TEXT BINARY
 );
 
-// todo
+-- todo
 insert into typetest values (
-    -100.2,
+    -100.0,
     -5,
     18,
     -4892,
@@ -55,12 +55,14 @@ insert into typetest values (
     '2012-06-07 15:38:46.092000',
     2021,
     'hello, world', 
-    b'hello, java',
+    'hello, java',
     b'1000110001100001',
     123456789.22,
     _binary 'hello, tinyblob',
     _binary 'hello, mediumblob',
     _binary 'hello, longblob',
     _binary 'hello, blob',
-    
-)
+    'hello, latin1',
+    'hello, utf8',
+    'hello, binary'
+);

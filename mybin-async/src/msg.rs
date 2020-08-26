@@ -6,6 +6,7 @@ use futures::{ready, AsyncRead, AsyncWrite};
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
+use std::sync::atomic::Ordering;
 
 // internal struct to concat multiple packets
 // #[derive(Debug)]
@@ -75,13 +76,14 @@ where
                     match ready!(Pin::new(&mut seq_fut).poll(cx)) {
                         Ok(n) => {
                             // self.conn.pkt_nr = n;
-                            if n != self.conn.pkt_nr {
+                            let pkt_nr = self.conn.pkt_nr.as_ref().load(Ordering::SeqCst);
+                            if n != pkt_nr {
                                 return Poll::Ready(Err(Error::PacketError(format!(
                                     "Get server packet out of order: {} != {}",
-                                    n, self.conn.pkt_nr
+                                    n, pkt_nr
                                 ))));
                             }
-                            self.conn.pkt_nr += 1;
+                            self.conn.pkt_nr.as_ref().fetch_add(1, Ordering::SeqCst);
                             self.state = MsgState::Payload;
                         }
                         Err(e) => return Poll::Ready(Err(e.into())),
@@ -109,7 +111,7 @@ where
                                 log::debug!(
                                     "completed packet: total_len={}, pkt_nr={}",
                                     total_len,
-                                    conn.pkt_nr
+                                    conn.pkt_nr.load(Ordering::SeqCst)
                                 );
                                 let msg = out.split_to(out.remaining()).freeze();
                                 return Poll::Ready(Ok(msg));
@@ -188,7 +190,7 @@ where
                 }
                 MsgState::Seq => {
                     // write seq as u8
-                    let n = self.conn.pkt_nr;
+                    let n = self.conn.pkt_nr.load(Ordering::SeqCst);
                     let mut seq_fut = WriteU8Future {
                         writer: &mut self.conn.stream,
                         n,
@@ -196,7 +198,7 @@ where
                     match ready!(Pin::new(&mut seq_fut).poll(cx)) {
                         Ok(_) => {
                             self.state = MsgState::Payload;
-                            self.conn.pkt_nr += 1;
+                            self.conn.pkt_nr.fetch_add(1, Ordering::SeqCst);
                         }
                         Err(e) => return Poll::Ready(Err(e.into())),
                     }

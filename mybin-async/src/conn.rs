@@ -12,6 +12,8 @@ use serde_derive::*;
 // use smol::io::AsyncWriteExt;
 use futures::{AsyncRead, AsyncWrite};
 use std::net::ToSocketAddrs;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 /// MySQL connection
 ///
@@ -21,15 +23,15 @@ pub struct Conn<S> {
     pub(crate) stream: S,
     pub(crate) cap_flags: CapabilityFlags,
     pub(crate) server_status: StatusFlags,
-    pub(crate) pkt_nr: u8,
+    pub(crate) pkt_nr: Arc<AtomicU8>,
 }
 
 impl<S> Conn<S> {
     /// reset packet number to 0
     ///
     /// this method should be called before each command sent
-    pub fn reset_pkt_nr(&mut self) {
-        self.pkt_nr = 0;
+    pub fn reset_pkt_nr(&self) {
+        self.pkt_nr.as_ref().store(0, Ordering::SeqCst);
     }
 }
 
@@ -50,7 +52,7 @@ impl Conn<TcpStream> {
         Ok(Conn {
             stream,
             cap_flags: CapabilityFlags::empty(),
-            pkt_nr: 0,
+            pkt_nr: Arc::new(AtomicU8::new(0)),
             server_status: StatusFlags::empty(),
         })
     }
@@ -75,10 +77,13 @@ where
     /// send message to MySQL server
     ///
     /// this method will split message into multiple packets if payload too large.
-    pub fn send_msg<'a, T>(&'a mut self, msg: T) -> SendMsgFuture<'a, S>
+    pub fn send_msg<'a, T>(&'a mut self, msg: T, reset_pkt_nr: bool) -> SendMsgFuture<'a, S>
     where
         T: WriteToBytes,
     {
+        if reset_pkt_nr {
+            self.reset_pkt_nr();
+        }
         SendMsgFuture::new(self, msg)
     }
 }
@@ -94,7 +99,7 @@ where
             stream,
             cap_flags,
             server_status,
-            pkt_nr: 0,
+            pkt_nr: Arc::new(AtomicU8::new(0)),
         }
     }
 
@@ -149,7 +154,7 @@ where
             auth_plugin_name,
             ..Default::default()
         };
-        self.send_msg(client_resp).await?;
+        self.send_msg(client_resp, false).await?;
         let cap_flags = self.cap_flags.clone();
         let mut msg = self.recv_msg().await?;
         // todo: handle auth switch request

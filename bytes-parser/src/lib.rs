@@ -44,7 +44,7 @@ pub trait ReadBytesExt {
     fn read_le_u24(&mut self) -> Result<u32>;
 
     fn read_le_i24(&mut self) -> Result<i32> {
-        self.read_le_u32().map(|n| {
+        self.read_le_u24().map(|n| {
             if n & 0x80_0000_u32 != 0 {
                 (n | 0xff00_0000_u32) as i32
             } else {
@@ -246,19 +246,31 @@ pub trait WriteToBytesWithContext<'c> {
 pub trait WriteBytesExt {
     fn write_u8(&mut self, n: u8) -> Result<usize>;
 
+    fn write_i8(&mut self, n: i8) -> Result<usize>;
+
     fn write_le_u16(&mut self, n: u16) -> Result<usize>;
+
+    fn write_le_i16(&mut self, n: i16) -> Result<usize>;
 
     fn write_le_u24(&mut self, n: u32) -> Result<usize>;
 
+    fn write_le_i24(&mut self, n: i32) -> Result<usize>;
+
     fn write_le_u32(&mut self, n: u32) -> Result<usize>;
 
+    fn write_le_i32(&mut self, n: i32) -> Result<usize>;
+
     fn write_le_u48(&mut self, n: u64) -> Result<usize>;
+
+    fn write_le_i48(&mut self, n: i64) -> Result<usize>;
 
     fn write_le_u64(&mut self, n: u64) -> Result<usize>;
 
     fn write_le_i64(&mut self, n: i64) -> Result<usize>;
 
     fn write_le_u128(&mut self, n: u128) -> Result<usize>;
+
+    fn write_le_i128(&mut self, n: i128) -> Result<usize>;
 
     fn write_le_f32(&mut self, n: f32) -> Result<usize>;
 
@@ -275,12 +287,32 @@ impl WriteBytesExt for BytesMut {
         Ok(1)
     }
 
+    fn write_i8(&mut self, n: i8) -> Result<usize> {
+        self.put_i8(n);
+        Ok(1)
+    }
+
     fn write_le_u16(&mut self, n: u16) -> Result<usize> {
         self.put_u16_le(n);
         Ok(2)
     }
 
+    fn write_le_i16(&mut self, n: i16) -> Result<usize> {
+        self.put_i16_le(n);
+        Ok(2)
+    }
+
     fn write_le_u24(&mut self, n: u32) -> Result<usize> {
+        self.put(&n.to_le_bytes()[..3]);
+        Ok(3)
+    }
+
+    fn write_le_i24(&mut self, n: i32) -> Result<usize> {
+        let n = if n < 0 {
+            (n as u32) | 0xff80_0000
+        } else {
+            n as u32
+        };
         self.put(&n.to_le_bytes()[..3]);
         Ok(3)
     }
@@ -290,7 +322,22 @@ impl WriteBytesExt for BytesMut {
         Ok(4)
     }
 
+    fn write_le_i32(&mut self, n: i32) -> Result<usize> {
+        self.put_i32_le(n);
+        Ok(4)
+    }
+
     fn write_le_u48(&mut self, n: u64) -> Result<usize> {
+        self.put(&n.to_le_bytes()[..6]);
+        Ok(6)
+    }
+
+    fn write_le_i48(&mut self, n: i64) -> Result<usize> {
+        let n = if n < 0 {
+            (n as u64) | 0xffff_8000_0000_0000_u64
+        } else {
+            n as u64
+        };
         self.put(&n.to_le_bytes()[..6]);
         Ok(6)
     }
@@ -307,6 +354,11 @@ impl WriteBytesExt for BytesMut {
 
     fn write_le_u128(&mut self, n: u128) -> Result<usize> {
         self.put_u128_le(n);
+        Ok(16)
+    }
+
+    fn write_le_i128(&mut self, n: i128) -> Result<usize> {
+        self.put_i128_le(n);
         Ok(16)
     }
 
@@ -351,6 +403,24 @@ mod tests {
         Ok(())
     }
 
+
+    #[test]
+    fn test_i8() -> Result<()> {
+        // read
+        let orig = vec![-20i8 as u8];
+        let mut input = &orig[..];
+        let input = &mut input.to_bytes();
+        let success = input.read_i8()?;
+        assert_eq!(-20, success);
+        let fail = input.read_u8();
+        dbg!(fail.unwrap_err());
+        // write
+        let mut v = BytesMut::new();
+        v.write_i8(success).unwrap();
+        assert_eq!(vec![-20i8 as u8], v);
+        Ok(())
+    }
+
     #[test]
     fn test_le_u16() -> Result<()> {
         // read
@@ -365,6 +435,23 @@ mod tests {
         let mut v = BytesMut::new();
         v.write_le_u16(success).unwrap();
         assert_eq!(vec![1, 2], v);
+        Ok(())
+    }
+
+    #[test]
+    fn test_le_i16() -> Result<()> {
+        // read
+        let orig = Vec::from((-200i16 as u16).to_le_bytes());
+        let mut input = &orig[..];
+        let input = &mut input.to_bytes();
+        let success = input.read_le_i16()?;
+        assert_eq!(-200, success);
+        let fail = input.read_le_i16();
+        dbg!(fail.unwrap_err());
+        // write
+        let mut v = BytesMut::new();
+        v.write_le_i16(success).unwrap();
+        assert_eq!(orig, v);
         Ok(())
     }
 
@@ -386,6 +473,23 @@ mod tests {
     }
 
     #[test]
+    fn test_le_i24() -> Result<()> {
+        // read
+        let orig = Vec::from(&(-200000i32 as u32 | 0xff80_0000).to_le_bytes()[..3]);
+        let mut input = &orig[..];
+        let input = &mut input.to_bytes();
+        let success = input.read_le_i24()?;
+        assert_eq!(-200000, success);
+        let fail = input.read_le_i24();
+        dbg!(fail.unwrap_err());
+        // write
+        let mut v = BytesMut::new();
+        v.write_le_i24(success).unwrap();
+        assert_eq!(orig, v);
+        Ok(())
+    }
+
+    #[test]
     fn test_le_u32() -> Result<()> {
         // read
         let orig = vec![1u8, 2, 3, 4, 5];
@@ -399,6 +503,23 @@ mod tests {
         let mut v = BytesMut::new();
         v.write_le_u32(success).unwrap();
         assert_eq!(vec![1, 2, 3, 4], v);
+        Ok(())
+    }
+
+    #[test]
+    fn test_le_i32() -> Result<()> {
+        // read
+        let orig = Vec::from((-20000000i32 as u32).to_le_bytes());
+        let mut input = &orig[..];
+        let input = &mut input.to_bytes();
+        let success = input.read_le_i32()?;
+        assert_eq!(-20000000, success);
+        let fail = input.read_le_i32();
+        dbg!(fail.unwrap_err());
+        // write
+        let mut v = BytesMut::new();
+        v.write_le_i32(success).unwrap();
+        assert_eq!(orig, v);
         Ok(())
     }
 
@@ -419,6 +540,23 @@ mod tests {
         let mut v = BytesMut::new();
         v.write_le_u48(success).unwrap();
         assert_eq!(vec![1, 2, 3, 4, 1, 2], v);
+        Ok(())
+    }
+
+    #[test]
+    fn test_le_i48() -> Result<()> {
+        // read
+        let orig = Vec::from(&(-2000000000i64 as u64 | 0xffff_8000_0000_0000).to_le_bytes()[..6]);
+        let mut input = &orig[..];
+        let input = &mut input.to_bytes();
+        let success = input.read_le_i48()?;
+        assert_eq!(-2000000000i64, success);
+        let fail = input.read_le_i48();
+        dbg!(fail.unwrap_err());
+        // write
+        let mut v = BytesMut::new();
+        v.write_le_i48(success).unwrap();
+        assert_eq!(orig, v);
         Ok(())
     }
 
@@ -446,6 +584,57 @@ mod tests {
         let mut v = BytesMut::new();
         v.write_le_u64(success).unwrap();
         assert_eq!(vec![1, 2, 3, 4, 1, 2, 3, 4], v);
+        Ok(())
+    }
+
+    #[test]
+    fn test_le_i64() -> Result<()> {
+        // read
+        let orig = Vec::from((-200000000000i64 as u64).to_le_bytes());
+        let mut input = &orig[..];
+        let input = &mut input.to_bytes();
+        let success = input.read_le_i64()?;
+        assert_eq!(-200000000000i64, success);
+        let fail = input.read_le_i64();
+        dbg!(fail.unwrap_err());
+        // write
+        let mut v = BytesMut::new();
+        v.write_le_i64(success).unwrap();
+        assert_eq!(orig, v);
+        Ok(())
+    }
+
+    #[test]
+    fn test_le_u128() -> Result<()> {
+        // read
+        let orig = Vec::from(200000000000200000000000_u128.to_le_bytes());
+        let mut input = &orig[..];
+        let input = &mut input.to_bytes();
+        let success = input.read_le_u128()?;
+        assert_eq!(200000000000200000000000_u128, success);
+        let fail = input.read_le_u128();
+        dbg!(fail.unwrap_err());
+        // write
+        let mut v = BytesMut::new();
+        v.write_le_u128(success).unwrap();
+        assert_eq!(orig, v);
+        Ok(())
+    }
+
+    #[test]
+    fn test_le_i128() -> Result<()> {
+        // read
+        let orig = Vec::from((-200000000000200000000000_i128 as u128).to_le_bytes());
+        let mut input = &orig[..];
+        let input = &mut input.to_bytes();
+        let success = input.read_le_i128()?;
+        assert_eq!(-200000000000200000000000_i128, success);
+        let fail = input.read_le_i128();
+        dbg!(fail.unwrap_err());
+        // write
+        let mut v = BytesMut::new();
+        v.write_le_i128(success).unwrap();
+        assert_eq!(orig, v);
         Ok(())
     }
 }
