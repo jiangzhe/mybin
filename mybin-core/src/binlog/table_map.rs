@@ -53,9 +53,9 @@ impl<'a> TableMapData {
 struct RawTableMap {
     pub schema_name: Bytes,
     pub table_name: Bytes,
-    pub column_count: u64,
-    pub column_defs: Bytes,
-    pub column_meta_defs: Bytes,
+    pub col_cnt: u64,
+    pub col_defs: Bytes,
+    pub col_meta_defs: Bytes,
     pub null_bitmap: Bytes,
 }
 
@@ -70,26 +70,26 @@ impl ReadFromBytes for RawTableMap {
         let table_name = input.read_len(table_name_len as usize)?;
         input.read_len(1)?;
         // 5+1+1
-        let column_count = input.read_len_enc_int()?;
-        let column_count = column_count
+        let col_cnt = input.read_len_enc_int()?;
+        let col_cnt = col_cnt
             .to_u64()
             .ok_or_else(|| Error::ConstraintError("error column count".to_owned()))?;
-        let column_defs = input.read_len(column_count as usize)?;
+        let col_defs = input.read_len(col_cnt as usize)?;
         // 1+2
-        let column_meta_defs_length = input.read_len_enc_int()?;
-        let column_meta_defs_length = column_meta_defs_length
+        let col_meta_defs_len = input.read_len_enc_int()?;
+        let col_meta_defs_len = col_meta_defs_len
             .to_u64()
             .ok_or_else(|| Error::ConstraintError("error column meta def length".to_owned()))?;
-        let column_meta_defs = input.read_len(column_meta_defs_length as usize)?;
+        let col_meta_defs = input.read_len(col_meta_defs_len as usize)?;
         // 1+2
-        let bitmap_len = (column_count + 7) / 8u64;
+        let bitmap_len = (col_cnt + 7) / 8u64;
         let null_bitmap = input.read_len(bitmap_len as usize)?;
         Ok(RawTableMap {
             schema_name,
             table_name,
-            column_count,
-            column_defs,
-            column_meta_defs,
+            col_cnt,
+            col_defs,
+            col_meta_defs,
             null_bitmap,
         })
     }
@@ -99,24 +99,26 @@ impl ReadFromBytes for RawTableMap {
 pub struct TableMap {
     pub schema_name: String,
     pub table_name: String,
-    pub col_metas: Vec<ColumnMetadata>,
+    pub col_metas: ColumnMetas,
+    pub null_bitmap: Vec<u8>,
 }
 
 impl TryFrom<RawTableMap> for TableMap {
     type Error = crate::error::Error;
-    fn try_from(mut raw: RawTableMap) -> crate::error::Result<Self> {
+    fn try_from(raw: RawTableMap) -> crate::error::Result<Self> {
+        use bytes_parser::ReadFromBytesWithContext;
         let schema_name = String::from_utf8(Vec::from(raw.schema_name.as_ref()))?;
         let table_name = String::from_utf8(Vec::from(raw.table_name.as_ref()))?;
-        let col_metas = parse_col_metas(
-            raw.column_count as usize,
-            &mut raw.column_meta_defs,
-            raw.column_defs.as_ref(),
-            raw.null_bitmap.as_ref(),
+        let null_bitmap = Vec::from(raw.null_bitmap.bytes());
+        let col_metas = ColumnMetas::read_with_ctx(
+            &mut raw.col_meta_defs.clone(),
+            (raw.col_cnt as usize, raw.col_defs.bytes()),
         )?;
         Ok(TableMap {
             schema_name,
             table_name,
             col_metas,
+            null_bitmap,
         })
     }
 }

@@ -1,8 +1,8 @@
 use super::Command;
 use bitflags::bitflags;
-use bytes::{BytesMut, Buf, Bytes};
-use bytes_parser::error::{Result, Error};
-use bytes_parser::{WriteBytesExt, WriteToBytes, ReadBytesExt, ReadFromBytes};
+use bytes::{Buf, Bytes, BytesMut};
+use bytes_parser::error::{Error, Result};
+use bytes_parser::{ReadBytesExt, ReadFromBytes, WriteBytesExt, WriteToBytes};
 
 /// Request a binlog network stream from master
 /// starting a given postion
@@ -43,7 +43,7 @@ impl ComBinlogDump {
 
 impl Default for ComBinlogDump {
     fn default() -> Self {
-        ComBinlogDump{
+        ComBinlogDump {
             cmd: Command::BinlogDump,
             binlog_pos: 4,
             flags: 0,
@@ -58,14 +58,18 @@ impl ReadFromBytes for ComBinlogDump {
         use std::convert::TryFrom;
 
         let cmd = input.read_u8()?;
-        let cmd = Command::try_from(cmd)
-            .map_err(|_| Error::ConstraintError(format!("invalid command code expected=0x12, actual={:02x}", cmd)))?;
+        let cmd = Command::try_from(cmd).map_err(|_| {
+            Error::ConstraintError(format!(
+                "invalid command code expected=0x12, actual={:02x}",
+                cmd
+            ))
+        })?;
         let binlog_pos = input.read_le_u32()?;
         let flags = input.read_le_u16()?;
         let server_id = input.read_le_u32()?;
         let binlog_filename = input.split_to(input.remaining());
         let binlog_filename = String::from_utf8(Vec::from(binlog_filename.bytes()))?;
-        Ok(ComBinlogDump{
+        Ok(ComBinlogDump {
             cmd,
             binlog_pos,
             flags,
@@ -102,7 +106,6 @@ pub struct ComBinlogDumpGtid {
 }
 
 impl ComBinlogDumpGtid {
-    
     pub fn binlog_pos(mut self, binlog_pos: u64) -> Self {
         self.binlog_pos = binlog_pos;
         self
@@ -151,7 +154,7 @@ impl ComBinlogDumpGtid {
 
 impl Default for ComBinlogDumpGtid {
     fn default() -> Self {
-        ComBinlogDumpGtid{
+        ComBinlogDumpGtid {
             cmd: Command::BinlogDumpGtid,
             binlog_pos: 4,
             binlog_filename: String::new(),
@@ -167,11 +170,16 @@ impl ReadFromBytes for ComBinlogDumpGtid {
         use std::convert::TryFrom;
 
         let cmd = input.read_u8()?;
-        let cmd = Command::try_from(cmd)
-            .map_err(|_| Error::ConstraintError(format!("invalid command code expected=0x1e, actual={:02x}", cmd)))?;
+        let cmd = Command::try_from(cmd).map_err(|_| {
+            Error::ConstraintError(format!(
+                "invalid command code expected=0x1e, actual={:02x}",
+                cmd
+            ))
+        })?;
         let flags = input.read_le_u16()?;
-        let flags = BinlogDumpGtidFlags::from_bits(flags)
-            .ok_or_else(|| Error::ConstraintError(format!("invalid binlog dump gtid flags {:04x}", flags)))?;
+        let flags = BinlogDumpGtidFlags::from_bits(flags).ok_or_else(|| {
+            Error::ConstraintError(format!("invalid binlog dump gtid flags {:04x}", flags))
+        })?;
         let server_id = input.read_le_u32()?;
         let binlog_filename_len = input.read_le_u32()?;
         let binlog_filename = input.read_len(binlog_filename_len as usize)?;
@@ -182,7 +190,7 @@ impl ReadFromBytes for ComBinlogDumpGtid {
         } else {
             SidData::empty()
         };
-        Ok(ComBinlogDumpGtid{
+        Ok(ComBinlogDumpGtid {
             cmd,
             flags,
             server_id,
@@ -230,7 +238,6 @@ impl SidData {
 }
 
 impl ReadFromBytes for SidData {
-
     fn read_from(input: &mut Bytes) -> Result<Self> {
         let data_size = input.read_le_u32()?;
         let mut data = Vec::with_capacity(data_size as usize);
@@ -272,10 +279,7 @@ impl ReadFromBytes for SidRange {
             let end = input.read_le_i64()?;
             intervals.push((start, end));
         }
-        Ok(SidRange{
-            sid,
-            intervals,
-        })
+        Ok(SidRange { sid, intervals })
     }
 }
 
@@ -323,23 +327,28 @@ mod tests {
             .non_block(true)
             .server_id(123)
             .use_gtid(true)
-            .sid(SidRange{
+            .sid(SidRange {
                 sid: 456,
                 intervals: vec![(1, 5)],
             });
-            
+
         let mut buf = BytesMut::new();
         dump_gtid.write_to(&mut buf).unwrap();
 
         let decoded = ComBinlogDumpGtid::read_from(&mut buf.freeze()).unwrap();
         assert_eq!(Command::BinlogDumpGtid, decoded.cmd);
-        assert!(decoded.flags.contains(BinlogDumpGtidFlags::NON_BLOCK | BinlogDumpGtidFlags::THROUGH_GTID));
+        assert!(decoded
+            .flags
+            .contains(BinlogDumpGtidFlags::NON_BLOCK | BinlogDumpGtidFlags::THROUGH_GTID));
         assert_eq!("mysql-bin.000001", decoded.binlog_filename);
         assert_eq!(4, decoded.binlog_pos);
         assert_eq!(123, decoded.server_id);
-        assert_eq!(SidData(vec![SidRange{
-            sid: 456,
-            intervals: vec![(1, 5)],
-        }]), decoded.sid_data);
+        assert_eq!(
+            SidData(vec![SidRange {
+                sid: 456,
+                intervals: vec![(1, 5)],
+            }]),
+            decoded.sid_data
+        );
     }
 }

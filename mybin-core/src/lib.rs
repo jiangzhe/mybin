@@ -8,6 +8,8 @@ pub mod packet;
 pub mod query;
 pub mod register_slave;
 pub mod resultset;
+pub mod row;
+
 mod util;
 
 pub use crate::binlog_dump::*;

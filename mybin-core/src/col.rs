@@ -1,5 +1,5 @@
 //! defines structure and metadata for mysql columns
-use crate::util::bitmap_index;
+use bitflags::bitflags;
 use bytes::Bytes;
 use bytes_parser::error::{Error, Result};
 use bytes_parser::my::{LenEncStr, ReadMyEnc};
@@ -143,200 +143,150 @@ impl From<ColumnType> for ColumnTypeCode {
     }
 }
 
-/// flattened column metadata
 #[derive(Debug, Clone)]
-pub enum ColumnMetadata {
-    Decimal {
-        null: bool,
-    },
-    Tiny {
-        null: bool,
-    },
-    Short {
-        null: bool,
-    },
-    Long {
-        null: bool,
-    },
-    Float {
-        pack_len: u8,
-        null: bool,
-    },
-    Double {
-        pack_len: u8,
-        null: bool,
-    },
-    Null {
-        null: bool,
-    },
-    Timestamp {
-        null: bool,
-    },
-    LongLong {
-        null: bool,
-    },
-    Int24 {
-        null: bool,
-    },
-    Date {
-        null: bool,
-    },
-    Time {
-        null: bool,
-    },
-    DateTime {
-        null: bool,
-    },
-    Year {
-        null: bool,
-    },
+pub struct ColumnMetas(pub Vec<ColumnMeta>);
+
+impl<'c> ReadFromBytesWithContext<'c> for ColumnMetas {
+    // bitmap may be longer than the size
+    type Context = (usize, &'c [u8]);
+    fn read_with_ctx(input: &mut Bytes, (col_cnt, col_defs): Self::Context) -> Result<Self> {
+        let mut col_metas = Vec::with_capacity(col_cnt);
+        for i in 0..col_cnt {
+            let col_type = ColumnType::try_from(col_defs[i])?;
+            let col_meta = ColumnMeta::read_with_ctx(input, col_type)?;
+            col_metas.push(col_meta);
+        }
+        Ok(ColumnMetas(col_metas))
+    }
+}
+
+impl std::ops::Deref for ColumnMetas {
+    type Target = [ColumnMeta];
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for ColumnMetas {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum ColumnMeta {
+    Decimal,
+    Tiny,
+    Short,
+    Long,
+    Float { pack_len: u8 },
+    Double { pack_len: u8 },
+    Null,
+    Timestamp,
+    LongLong,
+    Int24,
+    Date,
+    Time,
+    DateTime,
+    Year,
     // NewDate,
-    Varchar {
-        max_len: u16,
-        null: bool,
-    },
-    Bit {
-        bits: u8,
-        bytes: u8,
-        null: bool,
-    },
+    Varchar { max_len: u16 },
+    Bit { bits: u8, bytes: u8 },
     // Timestamp2,
     // DateTime2,
     // Time2,
     // Json,
-    NewDecimal {
-        precision: u8,
-        decimals: u8,
-        null: bool,
-    },
+    NewDecimal { precision: u8, decimals: u8 },
     // Enum,
     // Set,
     // TinyBlob,
     // MediumBlob,
     // LongBlob,
-    Blob {
-        pack_len: u8,
-        null: bool,
-    },
-    VarString {
-        real_type: u8,
-        bytes: u8,
-        null: bool,
-    },
-    String {
-        str_type: u8,
-        bytes: u8,
-        null: bool,
-    },
-    Geometry {
-        pack_len: u8,
-        null: bool,
-    },
+    Blob { pack_len: u8 },
+    VarString { real_type: u8, bytes: u8 },
+    String { str_type: u8, bytes: u8 },
+    Geometry { pack_len: u8 },
 }
 
-/// will consume all given bytes
-pub fn parse_col_metas(
-    col_cnt: usize,
-    col_meta_defs: &mut Bytes,
-    col_defs: &[u8],
-    null_bitmap: &[u8],
-) -> Result<Vec<ColumnMetadata>> {
-    // debug_assert_eq!(col_cnt, col_defs.len());
-    // debug_assert_eq!((col_cnt + 7) >> 3, null_bitmap.len());
-    let mut result = Vec::with_capacity(col_cnt);
-    // let mut offset = 0;
-    for i in 0..col_cnt {
-        let null = bitmap_index(null_bitmap, i);
-        let col_meta = match ColumnType::try_from(col_defs[i])? {
-            ColumnType::Decimal => ColumnMetadata::Decimal { null },
-            ColumnType::Tiny => ColumnMetadata::Tiny { null },
-            ColumnType::Short => ColumnMetadata::Short { null },
-            ColumnType::Long => ColumnMetadata::Long { null },
+impl ReadFromBytesWithContext<'_> for ColumnMeta {
+    type Context = ColumnType;
+
+    fn read_with_ctx(input: &mut Bytes, col_type: Self::Context) -> Result<Self> {
+        let col_meta = match col_type {
+            ColumnType::Decimal => ColumnMeta::Decimal,
+            ColumnType::Tiny => ColumnMeta::Tiny,
+            ColumnType::Short => ColumnMeta::Short,
+            ColumnType::Long => ColumnMeta::Long,
             ColumnType::Float => {
-                // let pack_len = col_meta_defs[offset];
-                // offset += 1;
-                let pack_len = col_meta_defs.read_u8()?;
-                ColumnMetadata::Float { pack_len, null }
+                let pack_len = input.read_u8()?;
+                ColumnMeta::Float { pack_len }
             }
             ColumnType::Double => {
-                // let pack_len = col_meta_defs[offset];
-                // offset += 1;
-                let pack_len = col_meta_defs.read_u8()?;
-                ColumnMetadata::Double { pack_len, null }
+                let pack_len = input.read_u8()?;
+                ColumnMeta::Double { pack_len }
             }
-            ColumnType::Null => ColumnMetadata::Null { null },
-            ColumnType::Timestamp => ColumnMetadata::Timestamp { null },
-            ColumnType::LongLong => ColumnMetadata::LongLong { null },
-            ColumnType::Int24 => ColumnMetadata::Int24 { null },
-            ColumnType::Date => ColumnMetadata::Date { null },
-            ColumnType::Time => ColumnMetadata::Time { null },
-            ColumnType::DateTime => ColumnMetadata::DateTime { null },
-            ColumnType::Year => ColumnMetadata::Year { null },
+            ColumnType::Null => ColumnMeta::Null,
+            ColumnType::Timestamp => ColumnMeta::Timestamp,
+            ColumnType::LongLong => ColumnMeta::LongLong,
+            ColumnType::Int24 => ColumnMeta::Int24,
+            ColumnType::Date => ColumnMeta::Date,
+            ColumnType::Time => ColumnMeta::Time,
+            ColumnType::DateTime => ColumnMeta::DateTime,
+            ColumnType::Year => ColumnMeta::Year,
             ColumnType::Varchar => {
-                let max_len = col_meta_defs.read_le_u16()?;
-                ColumnMetadata::Varchar { max_len, null }
+                let max_len = input.read_le_u16()?;
+                ColumnMeta::Varchar { max_len }
             }
             ColumnType::Bit => {
-                let bits = col_meta_defs.read_u8()?;
-                let bytes = col_meta_defs.read_u8()?;
-                ColumnMetadata::Bit { bits, bytes, null }
+                let bits = input.read_u8()?;
+                let bytes = input.read_u8()?;
+                ColumnMeta::Bit { bits, bytes }
             }
             ColumnType::NewDecimal => {
-                let precision = col_meta_defs.read_u8()?;
-                let decimals = col_meta_defs.read_u8()?;
-                ColumnMetadata::NewDecimal {
+                let precision = input.read_u8()?;
+                let decimals = input.read_u8()?;
+                ColumnMeta::NewDecimal {
                     precision,
                     decimals,
-                    null,
                 }
             }
             ColumnType::TinyBlob
             | ColumnType::MediumBlob
             | ColumnType::LongBlob
             | ColumnType::Blob => {
-                let pack_len = col_meta_defs.read_u8()?;
-                ColumnMetadata::Blob { pack_len, null }
+                let pack_len = input.read_u8()?;
+                ColumnMeta::Blob { pack_len }
             }
             ColumnType::VarString => {
-                let real_type = col_meta_defs.read_u8()?;
-                let bytes = col_meta_defs.read_u8()?;
-                ColumnMetadata::VarString {
-                    real_type,
-                    bytes,
-                    null,
-                }
+                let real_type = input.read_u8()?;
+                let bytes = input.read_u8()?;
+                ColumnMeta::VarString { real_type, bytes }
             }
             ColumnType::String => {
-                // let str_type = col_meta_defs[offset];
-                // let bytes = col_meta_defs[offset + 1];
-                // offset += 2;
-                let str_type = col_meta_defs.read_u8()?;
-                let bytes = col_meta_defs.read_u8()?;
-                ColumnMetadata::String {
-                    str_type,
-                    bytes,
-                    null,
-                }
+                let str_type = input.read_u8()?;
+                let bytes = input.read_u8()?;
+                ColumnMeta::String { str_type, bytes }
             }
             ColumnType::Geometry => {
-                // let pack_len = col_meta_defs[offset];
-                // offset += 1;
-                let pack_len = col_meta_defs.read_u8()?;
-                ColumnMetadata::Geometry { pack_len, null }
+                let pack_len = input.read_u8()?;
+                ColumnMeta::Geometry { pack_len }
             }
         };
-        result.push(col_meta);
+        Ok(col_meta)
     }
-    Ok(result)
 }
 
+/// column value parsed from binary protocol
+///
+/// All numeric columns are treated as unsigned.
+/// Use extractor or mapper to get actual value.
 #[derive(Debug, Clone)]
-pub enum ColumnValue {
+pub enum BinaryColumnValue {
     Null,
     Decimal(Bytes),
-    Tiny(i8),
-    Short(i16),
-    Long(i32),
+    Tiny(u8),
+    Short(u16),
+    Long(u32),
     Float(f32),
     Double(f64),
     Timestamp {
@@ -347,8 +297,8 @@ pub enum ColumnValue {
         minute: u8,
         second: u8,
     },
-    LongLong(i64),
-    Int24(i32),
+    LongLong(u64),
+    Int24(u32),
     Date {
         year: u16,
         month: u8,
@@ -381,33 +331,33 @@ pub enum ColumnValue {
     Geometry(Bytes),
 }
 
-impl<'c> ReadFromBytesWithContext<'c> for ColumnValue {
-    type Context = &'c ColumnMetadata;
+impl<'c> ReadFromBytesWithContext<'c> for BinaryColumnValue {
+    type Context = &'c ColumnMeta;
 
     fn read_with_ctx(input: &mut Bytes, col_meta: Self::Context) -> Result<Self> {
         let col_val = match col_meta {
-            ColumnMetadata::Decimal { .. } => {
+            ColumnMeta::Decimal => {
                 let v = input.read_len_enc_str()?;
                 match v {
-                    LenEncStr::Null => ColumnValue::Null,
+                    LenEncStr::Null => BinaryColumnValue::Null,
                     LenEncStr::Err => {
                         return Err(Error::ConstraintError("error column value".to_owned()))
                     }
-                    LenEncStr::Bytes(bs) => ColumnValue::Decimal(bs),
+                    LenEncStr::Bytes(bs) => BinaryColumnValue::Decimal(bs),
                 }
             }
-            ColumnMetadata::Tiny { .. } => ColumnValue::Tiny(input.read_i8()?),
-            ColumnMetadata::Short { .. } => ColumnValue::Short(input.read_le_i16()?),
-            ColumnMetadata::Long { .. } => ColumnValue::Long(input.read_le_i32()?),
+            ColumnMeta::Tiny => BinaryColumnValue::Tiny(input.read_u8()?),
+            ColumnMeta::Short => BinaryColumnValue::Short(input.read_le_u16()?),
+            ColumnMeta::Long => BinaryColumnValue::Long(input.read_le_u32()?),
             // todo: pack_len not used?
-            ColumnMetadata::Float { .. } => ColumnValue::Float(input.read_le_f32()?),
+            ColumnMeta::Float { .. } => BinaryColumnValue::Float(input.read_le_f32()?),
             // todo: pack_len not used?
-            ColumnMetadata::Double { .. } => ColumnValue::Double(input.read_le_f64()?),
-            ColumnMetadata::Null { .. } => ColumnValue::Null,
-            ColumnMetadata::Timestamp { .. } => {
+            ColumnMeta::Double { .. } => BinaryColumnValue::Double(input.read_le_f64()?),
+            ColumnMeta::Null => BinaryColumnValue::Null,
+            ColumnMeta::Timestamp => {
                 let len = input.read_u8()?;
                 match len {
-                    0 => ColumnValue::Null,
+                    0 => BinaryColumnValue::Null,
                     7 => {
                         let year = input.read_le_u16()?;
                         let month = input.read_u8()?;
@@ -415,7 +365,7 @@ impl<'c> ReadFromBytesWithContext<'c> for ColumnValue {
                         let hour = input.read_u8()?;
                         let minute = input.read_u8()?;
                         let second = input.read_u8()?;
-                        ColumnValue::Timestamp {
+                        BinaryColumnValue::Timestamp {
                             year,
                             month,
                             day,
@@ -432,20 +382,20 @@ impl<'c> ReadFromBytesWithContext<'c> for ColumnValue {
                     }
                 }
             }
-            ColumnMetadata::LongLong { .. } => ColumnValue::LongLong(input.read_le_i64()?),
-            ColumnMetadata::Int24 { .. } => {
+            ColumnMeta::LongLong => BinaryColumnValue::LongLong(input.read_le_u64()?),
+            ColumnMeta::Int24 => {
                 // here i32 represents i24
-                ColumnValue::Int24(input.read_le_i32()?)
+                BinaryColumnValue::Int24(input.read_le_u32()?)
             }
-            ColumnMetadata::Date { .. } => {
+            ColumnMeta::Date => {
                 let len = input.read_u8()?;
                 match len {
-                    0 => ColumnValue::Null,
+                    0 => BinaryColumnValue::Null,
                     4 => {
                         let year = input.read_le_u16()?;
                         let month = input.read_u8()?;
                         let day = input.read_u8()?;
-                        ColumnValue::Date { year, month, day }
+                        BinaryColumnValue::Date { year, month, day }
                     }
                     _ => {
                         return Err(Error::ConstraintError(format!(
@@ -455,10 +405,10 @@ impl<'c> ReadFromBytesWithContext<'c> for ColumnValue {
                     }
                 }
             }
-            ColumnMetadata::Time { .. } => {
+            ColumnMeta::Time => {
                 let len = input.read_u8()?;
                 match len {
-                    0 => ColumnValue::Null,
+                    0 => BinaryColumnValue::Null,
                     8 => {
                         let negative = input.read_u8()?;
                         let negative = negative == 0x01;
@@ -466,7 +416,7 @@ impl<'c> ReadFromBytesWithContext<'c> for ColumnValue {
                         let hours = input.read_u8()?;
                         let minutes = input.read_u8()?;
                         let seconds = input.read_u8()?;
-                        ColumnValue::Time {
+                        BinaryColumnValue::Time {
                             negative,
                             days,
                             hours,
@@ -483,7 +433,7 @@ impl<'c> ReadFromBytesWithContext<'c> for ColumnValue {
                         let minutes = input.read_u8()?;
                         let seconds = input.read_u8()?;
                         let micro_seconds = input.read_le_u32()?;
-                        ColumnValue::Time {
+                        BinaryColumnValue::Time {
                             negative,
                             days,
                             hours,
@@ -500,10 +450,10 @@ impl<'c> ReadFromBytesWithContext<'c> for ColumnValue {
                     }
                 }
             }
-            ColumnMetadata::DateTime { .. } => {
+            ColumnMeta::DateTime => {
                 let len = input.read_u8()?;
                 match len {
-                    0 => ColumnValue::Null,
+                    0 => BinaryColumnValue::Null,
                     7 => {
                         let year = input.read_le_u16()?;
                         let month = input.read_u8()?;
@@ -511,7 +461,7 @@ impl<'c> ReadFromBytesWithContext<'c> for ColumnValue {
                         let hour = input.read_u8()?;
                         let minute = input.read_u8()?;
                         let second = input.read_u8()?;
-                        ColumnValue::DateTime {
+                        BinaryColumnValue::DateTime {
                             year,
                             month,
                             day,
@@ -529,7 +479,7 @@ impl<'c> ReadFromBytesWithContext<'c> for ColumnValue {
                         let minute = input.read_u8()?;
                         let second = input.read_u8()?;
                         let micro_second = input.read_le_u32()?;
-                        ColumnValue::DateTime {
+                        BinaryColumnValue::DateTime {
                             year,
                             month,
                             day,
@@ -547,38 +497,38 @@ impl<'c> ReadFromBytesWithContext<'c> for ColumnValue {
                     }
                 }
             }
-            ColumnMetadata::Year { .. } => ColumnValue::Year(input.read_le_u16()?),
+            ColumnMeta::Year => BinaryColumnValue::Year(input.read_le_u16()?),
             // NewDate,
-            ColumnMetadata::Varchar { .. } => {
+            ColumnMeta::Varchar { .. } => {
                 let v = input.read_len_enc_str()?;
                 match v {
-                    LenEncStr::Null => ColumnValue::Null,
+                    LenEncStr::Null => BinaryColumnValue::Null,
                     LenEncStr::Err => {
                         return Err(Error::ConstraintError("error decimal".to_owned()))
                     }
-                    LenEncStr::Bytes(bs) => ColumnValue::Varchar(bs),
+                    LenEncStr::Bytes(bs) => BinaryColumnValue::Varchar(bs),
                 }
             }
-            ColumnMetadata::Bit { .. } => {
+            ColumnMeta::Bit { .. } => {
                 let v = input.read_len_enc_str()?;
                 match v {
-                    LenEncStr::Null => ColumnValue::Null,
+                    LenEncStr::Null => BinaryColumnValue::Null,
                     LenEncStr::Err => return Err(Error::ConstraintError("error bit".to_owned())),
-                    LenEncStr::Bytes(bs) => ColumnValue::Bit(bs),
+                    LenEncStr::Bytes(bs) => BinaryColumnValue::Bit(bs),
                 }
             }
             // Timestamp2,
             // DateTime2,
             // Time2,
             // Json,
-            ColumnMetadata::NewDecimal { .. } => {
+            ColumnMeta::NewDecimal { .. } => {
                 let v = input.read_len_enc_str()?;
                 match v {
-                    LenEncStr::Null => ColumnValue::Null,
+                    LenEncStr::Null => BinaryColumnValue::Null,
                     LenEncStr::Err => {
                         return Err(Error::ConstraintError("error newdecimal".to_owned()))
                     }
-                    LenEncStr::Bytes(bs) => ColumnValue::NewDecimal(bs),
+                    LenEncStr::Bytes(bs) => BinaryColumnValue::NewDecimal(bs),
                 }
             }
             // Enum,
@@ -586,49 +536,56 @@ impl<'c> ReadFromBytesWithContext<'c> for ColumnValue {
             // TinyBlob,
             // MediumBlob,
             // LongBlob,
-            ColumnMetadata::Blob { .. } => {
+            ColumnMeta::Blob { .. } => {
                 let v = input.read_len_enc_str()?;
                 match v {
-                    LenEncStr::Null => ColumnValue::Null,
+                    LenEncStr::Null => BinaryColumnValue::Null,
                     LenEncStr::Err => {
                         return Err(Error::ConstraintError("error newdecimal".to_owned()))
                     }
-                    LenEncStr::Bytes(bs) => ColumnValue::Blob(bs),
+                    LenEncStr::Bytes(bs) => BinaryColumnValue::Blob(bs),
                 }
             }
-            ColumnMetadata::VarString { .. } => {
+            ColumnMeta::VarString { .. } => {
                 let v = input.read_len_enc_str()?;
                 match v {
-                    LenEncStr::Null => ColumnValue::Null,
+                    LenEncStr::Null => BinaryColumnValue::Null,
                     LenEncStr::Err => {
                         return Err(Error::ConstraintError("error newdecimal".to_owned()))
                     }
-                    LenEncStr::Bytes(bs) => ColumnValue::VarString(bs),
+                    LenEncStr::Bytes(bs) => BinaryColumnValue::VarString(bs),
                 }
             }
-            ColumnMetadata::String { .. } => {
+            ColumnMeta::String { .. } => {
                 let v = input.read_len_enc_str()?;
                 match v {
-                    LenEncStr::Null => ColumnValue::Null,
+                    LenEncStr::Null => BinaryColumnValue::Null,
                     LenEncStr::Err => {
                         return Err(Error::ConstraintError("error newdecimal".to_owned()))
                     }
-                    LenEncStr::Bytes(bs) => ColumnValue::String(bs),
+                    LenEncStr::Bytes(bs) => BinaryColumnValue::String(bs),
                 }
             }
-            ColumnMetadata::Geometry { .. } => {
+            ColumnMeta::Geometry { .. } => {
                 let v = input.read_len_enc_str()?;
                 match v {
-                    LenEncStr::Null => ColumnValue::Null,
+                    LenEncStr::Null => BinaryColumnValue::Null,
                     LenEncStr::Err => {
                         return Err(Error::ConstraintError("error newdecimal".to_owned()))
                     }
-                    LenEncStr::Bytes(bs) => ColumnValue::Geometry(bs),
+                    LenEncStr::Bytes(bs) => BinaryColumnValue::Geometry(bs),
                 }
             }
         };
         Ok(col_val)
     }
+}
+
+/// column value parsed from text protocol
+#[derive(Debug, Clone)]
+pub enum TextColumnValue {
+    Null,
+    Bytes(Bytes),
 }
 
 /// Column definition
@@ -652,7 +609,7 @@ pub struct ColumnDefinition {
     pub charset: u16,
     pub col_len: u32,
     pub col_type: ColumnType,
-    pub flags: u16,
+    pub flags: ColumnFlags,
     // 0x00, 0x1f, 0x00-0x51
     pub decimals: u8,
     // 2-byte filler
@@ -683,6 +640,8 @@ impl<'c> ReadFromBytesWithContext<'_> for ColumnDefinition {
         let col_type = input.read_u8()?;
         let col_type = ColumnType::try_from(col_type)?;
         let flags = input.read_le_u16()?;
+        let flags = ColumnFlags::from_bits(flags)
+            .ok_or_else(|| Error::ConstraintError(format!("invalid column flags {}", flags)))?;
         let decimals = input.read_u8()?;
         // two bytes filler
         input.read_len(2)?;
@@ -706,5 +665,33 @@ impl<'c> ReadFromBytesWithContext<'_> for ColumnDefinition {
             decimals,
             default_values,
         })
+    }
+}
+
+bitflags! {
+    /// flags of column
+    ///
+    /// the actual column flags is u32, but truncate to u16 to send to client
+    ///
+    /// references:
+    /// https://github.com/mysql/mysql-server/blob/5.7/sql/field.h#L4504
+    /// https://github.com/mysql/mysql-server/blob/5.7/sql/protocol_classic.cc#L1163
+    pub struct ColumnFlags: u16 {
+        const NOT_NULL      = 0x0001;
+        const PRIMARY_KEY   = 0x0002;
+        const UNIQUE_KEY    = 0x0004;
+        const MULTIPLE_KEY  = 0x0008;
+        const BLOB          = 0x0010;
+        const UNSIGNED      = 0x0020;
+        const ZEROFILL      = 0x0040;
+        const BINARY        = 0x0080;
+        const ENUM          = 0x0100;
+        const AUTO_INCREMENT    = 0x0200;
+        const TIMESTAMP     = 0x0400;
+        const SET           = 0x0800;
+        const NO_DEFAULT_VALUE  = 0x1000;
+        const ON_UPDATE_NOW = 0x2000;
+        const NUM           = 0x4000;
+        const PART_KEY      = 0x8000;
     }
 }

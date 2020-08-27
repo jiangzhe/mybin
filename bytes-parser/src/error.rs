@@ -15,6 +15,8 @@ pub enum Error {
     ConstraintError(String),
     #[error("utf8 error: {0}")]
     Utf8Error(#[from] std::string::FromUtf8Error),
+    #[error("utf8 error: {0}")]
+    StrUtf8Error(#[from] std::str::Utf8Error),
 }
 
 #[derive(Debug)]

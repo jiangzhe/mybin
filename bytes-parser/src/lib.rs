@@ -403,7 +403,6 @@ mod tests {
         Ok(())
     }
 
-
     #[test]
     fn test_i8() -> Result<()> {
         // read

@@ -3,7 +3,6 @@ use crate::error::{Error, Result};
 use crate::msg::{RecvMsgFuture, SendMsgFuture};
 use crate::query::Query;
 use async_net::TcpStream;
-use bytes::{Buf, Bytes, BytesMut};
 use bytes_parser::{ReadFromBytes, ReadFromBytesWithContext, WriteToBytes};
 use mybin_core::flag::{CapabilityFlags, StatusFlags};
 use mybin_core::handshake::{HandshakeClientResponse41, InitialHandshake};
@@ -12,8 +11,8 @@ use serde_derive::*;
 // use smol::io::AsyncWriteExt;
 use futures::{AsyncRead, AsyncWrite};
 use std::net::ToSocketAddrs;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::Arc;
 
 /// MySQL connection
 ///
@@ -107,6 +106,7 @@ where
     /// should be called before any other commands
     /// this method will change the connect capability flags
     pub async fn handshake(&mut self, opts: ConnOpts) -> Result<()> {
+        use bytes::Buf;
         let mut msg = self.recv_msg().await?;
         let handshake = InitialHandshake::read_from(&mut msg)?;
         log::debug!(
