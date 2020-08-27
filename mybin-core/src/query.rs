@@ -1,7 +1,7 @@
 use crate::col::ColumnDefinition;
 use crate::flag::CapabilityFlags;
 use crate::packet::{EofPacket, ErrPacket, OkPacket};
-use crate::resultset::TextRow;
+use crate::row::TextRow;
 use crate::Command;
 use bytes::{Buf, Bytes, BytesMut};
 use bytes_parser::error::{Error, Needed, Result};

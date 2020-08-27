@@ -5,8 +5,8 @@ use bytes_parser::WriteToBytes;
 use futures::{ready, AsyncRead, AsyncWrite};
 use std::future::Future;
 use std::pin::Pin;
-use std::task::{Context, Poll};
 use std::sync::atomic::Ordering;
+use std::task::{Context, Poll};
 
 // internal struct to concat multiple packets
 // #[derive(Debug)]

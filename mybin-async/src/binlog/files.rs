@@ -1,5 +1,7 @@
 use crate::conn::Conn;
-use futures::{AsyncRead, AsyncWrite};
+use crate::error::Result;
+use bytes::{Buf, Bytes};
+use futures::{AsyncRead, AsyncWrite, StreamExt};
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -9,13 +11,15 @@ pub struct BinlogFiles<'c, S> {
     conn: &'c mut Conn<S>,
 }
 
-impl<'c, S> Future for BinlogFiles<'c, S>
+impl<'c, S> BinlogFiles<'c, S>
 where
-    S: AsyncRead + AsyncWrite + Unpin,
+    S: AsyncRead + AsyncWrite + Clone + Unpin,
 {
-    type Output = Vec<BinlogFile>;
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        todo!()
+    pub async fn list(&mut self) -> Result<Vec<BinlogFile>> {
+        let mut rs = self.conn.query().qry("SHOW MASTER LOGS").await?;
+        let mut files = vec![];
+        while let Some(row) = rs.next().await {}
+        Ok(files)
     }
 }
 

@@ -2,9 +2,9 @@ use crate::conn::Conn;
 use crate::error::{Error, Result};
 use futures::{AsyncRead, Stream};
 // use std::future::Future;
+use bytes::Bytes;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use bytes::Bytes;
 
 #[derive(Debug, Clone)]
 pub enum BinlogStreamState {
@@ -13,8 +13,6 @@ pub enum BinlogStreamState {
     Receive,
 }
 
-
-
 /// wrapper of Conn instance to provide readable
 /// stream of binlog
 #[derive(Debug)]
@@ -22,8 +20,6 @@ pub struct BinlogStream<S> {
     conn: Conn<S>,
     end: bool,
 }
-
-
 
 impl<S> BinlogStream<S> {
     pub async fn into_conn(self) -> Result<Conn<S>> {

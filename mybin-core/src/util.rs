@@ -53,6 +53,44 @@ pub(crate) fn checksum_crc32(bytes: &[u8]) -> u32 {
     hasher.get_crc()
 }
 
+#[macro_export]
+macro_rules! try_from_text_column_value {
+    ($($struct_name:ident),*) => {
+        $(
+            impl $crate::resultset::FromColumnValue<$crate::col::TextColumnValue> for $struct_name {
+                fn from_value(value: $crate::col::TextColumnValue) -> Result<Option<Self>> {
+                    use bytes::Buf;
+
+                    match value {
+                        TextColumnValue::Null => Ok(None),
+                        TextColumnValue::Bytes(bs) => {
+                            let s = std::str::from_utf8(bs.bytes())?;
+                            Ok(Some(s.parse()?))
+                        }
+                    }
+                }
+            }
+        )*
+    };
+}
+
+#[macro_export]
+macro_rules! try_number_from_binary_column_value {
+    ($num_type:ident, $($enum_variant:ident => $inter_type:ty),+) => {
+        impl $crate::resultset::FromColumnValue<$crate::col::BinaryColumnValue> for $num_type {
+            fn from_value(value: BinaryColumnValue) -> Result<Option<Self>> {
+                match value {
+                    BinaryColumnValue::Null => Ok(None),
+                    $(
+                        BinaryColumnValue::$enum_variant(v) => Ok(Some(v as $inter_type as $num_type)),
+                    )+
+                    _ => Err(Error::column_type_mismatch(stringify!($num_type), &value))
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

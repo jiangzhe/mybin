@@ -1,3 +1,4 @@
+use crate::col::BinaryColumnValue;
 use thiserror::Error;
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -20,4 +21,32 @@ pub enum Error {
     Utf8StrError(#[from] std::str::Utf8Error),
     #[error("parse error: {0}")]
     ParseError(#[from] bytes_parser::error::Error),
+    #[error("parse int error: {0}")]
+    ParseIntError(#[from] std::num::ParseIntError),
+    #[error("parse float error: {0}")]
+    ParseFloatError(#[from] std::num::ParseFloatError),
+    #[error("parse bool error: {0}")]
+    ParseBoolError(#[from] std::str::ParseBoolError),
+    #[error("parse bigdecimal error: {0}")]
+    ParseBigDecimalError(#[from] bigdecimal::ParseBigDecimalError),
+    #[error("parse datetime error: {0}")]
+    ParseDateTimeError(#[from] chrono::ParseError),
+    #[error("parse mysql time error: {0}")]
+    ParseMyTimeError(String),
+    #[error("column type mismatch: {0}")]
+    ColumnTypeMismatch(String),
+    #[error("column index out of bound: {0}")]
+    ColumnIndexOutOfBound(String),
+    #[error("column name not found: {0}")]
+    ColumnNameNotFound(String),
+}
+
+impl Error {
+    pub fn column_type_mismatch<T: AsRef<str>>(expected: T, actual: &BinaryColumnValue) -> Self {
+        Error::ColumnTypeMismatch(format!(
+            "expected={}, actual={:?}",
+            expected.as_ref(),
+            actual
+        ))
+    }
 }
