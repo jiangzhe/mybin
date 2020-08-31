@@ -7,8 +7,9 @@ use bytes_parser::{ReadFromBytes, ReadFromBytesWithContext, WriteToBytes};
 use mybin_core::flag::{CapabilityFlags, StatusFlags};
 use mybin_core::handshake::{HandshakeClientResponse41, InitialHandshake};
 use mybin_core::packet::HandshakeMessage;
+use mybin_core::init_db::ComInitDB;
+use mybin_core::resp::ComResponse;
 use serde_derive::*;
-// use smol::io::AsyncWriteExt;
 use futures::{AsyncRead, AsyncWrite};
 use std::net::ToSocketAddrs;
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -183,6 +184,17 @@ where
         }
         Ok(())
     }
+
+    pub async fn init_db<T: AsRef<str>>(&mut self, db_name: T) -> Result<()> {
+        use std::convert::TryInto;
+        let cmd = ComInitDB::new(db_name);
+        self.send_msg(cmd, true).await?;
+        let mut msg = self.recv_msg().await?;
+        match ComResponse::read_with_ctx(&mut msg, &self.cap_flags)? {
+            ComResponse::Ok(_) => Ok(()),
+            ComResponse::Err(e) => Err(e.try_into()?),
+        }
+    }
 }
 
 impl<S> Conn<S>
@@ -222,6 +234,13 @@ mod tests {
     async fn test_conn_and_handshake() {
         let mut conn = Conn::connect("127.0.0.1:13306").await.unwrap();
         conn.handshake(conn_opts()).await.unwrap();
+    }
+
+    #[smol_potat::test]
+    async fn test_init_db() {
+        let mut conn = Conn::connect("127.0.0.1:13306").await.unwrap();
+        conn.handshake(conn_opts()).await.unwrap();
+        conn.init_db("mysql").await.unwrap();
     }
 
     fn conn_opts() -> ConnOpts {

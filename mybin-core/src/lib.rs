@@ -9,6 +9,8 @@ pub mod query;
 pub mod register_slave;
 pub mod resultset;
 pub mod row;
+pub mod init_db;
+pub mod resp;
 
 mod util;
 
