@@ -4,13 +4,15 @@ use crate::msg::{RecvMsgFuture, SendMsgFuture};
 use crate::query::Query;
 use async_net::TcpStream;
 use bytes_parser::{ReadFromBytes, ReadFromBytesWithContext, WriteToBytes};
+use futures::{AsyncRead, AsyncWrite};
+use mybin_core::col::ColumnDefinition;
+use mybin_core::field_list::{ComFieldList, ComFieldListResponse};
 use mybin_core::flag::{CapabilityFlags, StatusFlags};
 use mybin_core::handshake::{HandshakeClientResponse41, InitialHandshake};
-use mybin_core::packet::HandshakeMessage;
 use mybin_core::init_db::ComInitDB;
+use mybin_core::packet::HandshakeMessage;
 use mybin_core::resp::ComResponse;
 use serde_derive::*;
-use futures::{AsyncRead, AsyncWrite};
 use std::net::ToSocketAddrs;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
@@ -195,6 +197,25 @@ where
             ComResponse::Err(e) => Err(e.try_into()?),
         }
     }
+
+    pub async fn field_list<T: Into<String>, U: Into<String>>(
+        &mut self,
+        table: T,
+        field_wildcard: U,
+    ) -> Result<Vec<ColumnDefinition>> {
+        use std::convert::TryInto;
+        let cmd = ComFieldList::new(table, field_wildcard);
+        self.send_msg(cmd, true).await?;
+        let mut col_defs = Vec::new();
+        loop {
+            let mut msg = self.recv_msg().await?;
+            match ComFieldListResponse::read_with_ctx(&mut msg, (&self.cap_flags, true))? {
+                ComFieldListResponse::Err(err) => return Err(err.try_into()?),
+                ComFieldListResponse::Eof(_) => return Ok(col_defs),
+                ComFieldListResponse::ColDef(col_def) => col_defs.push(col_def),
+            }
+        }
+    }
 }
 
 impl<S> Conn<S>
@@ -237,10 +258,36 @@ mod tests {
     }
 
     #[smol_potat::test]
-    async fn test_init_db() {
+    async fn test_init_db_success() {
         let mut conn = Conn::connect("127.0.0.1:13306").await.unwrap();
         conn.handshake(conn_opts()).await.unwrap();
         conn.init_db("mysql").await.unwrap();
+    }
+
+    #[smol_potat::test]
+    async fn test_init_db_fail() {
+        let mut conn = Conn::connect("127.0.0.1:13306").await.unwrap();
+        conn.handshake(conn_opts()).await.unwrap();
+        let fail = conn.init_db("not_exists").await;
+        dbg!(fail.unwrap_err())
+    }
+
+    #[smol_potat::test]
+    async fn test_field_list_success() {
+        let mut conn = Conn::connect("127.0.0.1:13306").await.unwrap();
+        conn.handshake(conn_opts()).await.unwrap();
+        conn.init_db("mysql").await.unwrap();
+        let col_defs = conn.field_list("user", "%").await.unwrap();
+        dbg!(col_defs);
+    }
+
+    #[smol_potat::test]
+    async fn test_field_list_fail() {
+        let mut conn = Conn::connect("127.0.0.1:13306").await.unwrap();
+        conn.handshake(conn_opts()).await.unwrap();
+        conn.init_db("mysql").await.unwrap();
+        let fail = conn.field_list("not_exists", "%").await;
+        dbg!(fail.unwrap_err());
     }
 
     fn conn_opts() -> ConnOpts {

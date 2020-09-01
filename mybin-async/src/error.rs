@@ -1,7 +1,7 @@
 use bytes::Bytes;
-use thiserror::Error;
 use mybin_core::packet::ErrPacket;
 use std::convert::TryFrom;
+use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -27,7 +27,7 @@ pub enum Error {
 
 impl TryFrom<ErrPacket> for Error {
     type Error = Error;
-    
+
     fn try_from(err: ErrPacket) -> Result<Error> {
         use bytes::Buf;
         let e = Error::SqlError(SqlError {

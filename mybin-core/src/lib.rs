@@ -2,15 +2,16 @@ pub mod binlog;
 pub mod binlog_dump;
 pub mod col;
 pub mod error;
+pub mod field_list;
 pub mod flag;
 pub mod handshake;
+pub mod init_db;
 pub mod packet;
 pub mod query;
 pub mod register_slave;
+pub mod resp;
 pub mod resultset;
 pub mod row;
-pub mod init_db;
-pub mod resp;
 
 mod util;
 
