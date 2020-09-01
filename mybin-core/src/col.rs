@@ -582,11 +582,7 @@ impl<'c> ReadFromBytesWithContext<'c> for BinaryColumnValue {
 }
 
 /// column value parsed from text protocol
-#[derive(Debug, Clone)]
-pub enum TextColumnValue {
-    Null,
-    Bytes(Bytes),
-}
+pub type TextColumnValue = Option<Bytes>;
 
 /// Column definition
 ///

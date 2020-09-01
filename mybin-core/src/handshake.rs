@@ -174,7 +174,7 @@ pub struct AuthSwitchRequest {
 }
 
 impl ReadFromBytes for AuthSwitchRequest {
-    fn read_from(input: &mut Bytes) -> Result<AuthSwitchRequest> {
+    fn read_from(input: &mut Bytes) -> Result<Self> {
         let header = input.read_u8()?;
         if header != 0xfe {
             return Err(Error::ConstraintError(format!(
@@ -188,6 +188,29 @@ impl ReadFromBytes for AuthSwitchRequest {
             header,
             plugin_name,
             auth_plugin_data,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct AuthMoreData {
+    pub header: u8,
+    pub plugin_data: Bytes,
+}
+
+impl ReadFromBytes for AuthMoreData {
+    fn read_from(input: &mut Bytes) -> Result<Self> {
+        let header = input.read_u8()?;
+        if header != 0x01 {
+            return Err(Error::ConstraintError(format!(
+                "message header mismatch: expected=0x01, actual={:02x}",
+                header
+            )));
+        }
+        let plugin_data = input.split_to(input.remaining());
+        Ok(AuthMoreData {
+            header,
+            plugin_data,
         })
     }
 }

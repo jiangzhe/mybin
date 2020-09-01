@@ -131,20 +131,11 @@ where
     fn from_value(value: T) -> Result<Option<Self>>;
 }
 
-impl FromColumnValue<TextColumnValue> for Bytes {
-    fn from_value(value: TextColumnValue) -> Result<Option<Self>> {
-        match value {
-            TextColumnValue::Null => Ok(None),
-            TextColumnValue::Bytes(bs) => Ok(Some(bs)),
-        }
-    }
-}
-
 impl FromColumnValue<TextColumnValue> for NaiveDateTime {
     fn from_value(value: TextColumnValue) -> Result<Option<Self>> {
         match value {
-            TextColumnValue::Null => Ok(None),
-            TextColumnValue::Bytes(bs) => {
+            None => Ok(None),
+            Some(bs) => {
                 let s = std::str::from_utf8(bs.bytes())?;
                 let ts = NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
                     .or_else(|_| NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f"))?;
@@ -157,8 +148,8 @@ impl FromColumnValue<TextColumnValue> for NaiveDateTime {
 impl FromColumnValue<TextColumnValue> for bool {
     fn from_value(value: TextColumnValue) -> Result<Option<Self>> {
         match value {
-            TextColumnValue::Null => Ok(None),
-            TextColumnValue::Bytes(bs) => {
+            None => Ok(None),
+            Some(bs) => {
                 let s = std::str::from_utf8(bs.bytes())?;
                 let v: u8 = s.parse()?;
                 Ok(Some(v == 1))
@@ -260,8 +251,8 @@ impl FromColumnValue<BinaryColumnValue> for MyTime {
 impl FromColumnValue<TextColumnValue> for MyTime {
     fn from_value(value: TextColumnValue) -> Result<Option<Self>> {
         match value {
-            TextColumnValue::Null => Ok(None),
-            TextColumnValue::Bytes(bs) => {
+            None => Ok(None),
+            Some(bs) => {
                 let s = std::str::from_utf8(bs.bytes())?;
                 let s = s.trim_start();
                 // because MySQL time can be negative and more than 24 hours,
@@ -337,8 +328,8 @@ impl FromColumnValue<BinaryColumnValue> for MyI24 {
 impl FromColumnValue<TextColumnValue> for MyI24 {
     fn from_value(value: TextColumnValue) -> Result<Option<Self>> {
         match value {
-            TextColumnValue::Null => Ok(None),
-            TextColumnValue::Bytes(bs) => {
+            None => Ok(None),
+            Some(bs) => {
                 let s = std::str::from_utf8(bs.bytes())?;
                 let n: i32 = s.parse()?;
                 Ok(Some(MyI24(n)))
@@ -365,8 +356,8 @@ impl FromColumnValue<BinaryColumnValue> for MyU24 {
 impl FromColumnValue<TextColumnValue> for MyU24 {
     fn from_value(value: TextColumnValue) -> Result<Option<Self>> {
         match value {
-            TextColumnValue::Null => Ok(None),
-            TextColumnValue::Bytes(bs) => {
+            None => Ok(None),
+            Some(bs) => {
                 let s = std::str::from_utf8(bs.bytes())?;
                 let n: u32 = s.parse()?;
                 Ok(Some(MyU24(n)))
@@ -391,8 +382,8 @@ impl FromColumnValue<BinaryColumnValue> for MyYear {
 impl FromColumnValue<TextColumnValue> for MyYear {
     fn from_value(value: TextColumnValue) -> Result<Option<Self>> {
         match value {
-            TextColumnValue::Null => Ok(None),
-            TextColumnValue::Bytes(bs) => {
+            None => Ok(None),
+            Some(bs) => {
                 let s = std::str::from_utf8(bs.bytes())?;
                 let n: u16 = s.parse()?;
                 Ok(Some(MyYear(n)))
@@ -419,8 +410,8 @@ impl FromColumnValue<BinaryColumnValue> for MyString {
 impl FromColumnValue<TextColumnValue> for MyString {
     fn from_value(value: TextColumnValue) -> Result<Option<Self>> {
         match value {
-            TextColumnValue::Null => Ok(None),
-            TextColumnValue::Bytes(bs) => Ok(Some(MyString(bs))),
+            None => Ok(None),
+            Some(bs) => Ok(Some(MyString(bs))),
         }
     }
 }
@@ -441,8 +432,8 @@ impl FromColumnValue<BinaryColumnValue> for MyBit {
 impl FromColumnValue<TextColumnValue> for MyBit {
     fn from_value(value: TextColumnValue) -> Result<Option<Self>> {
         match value {
-            TextColumnValue::Null => Ok(None),
-            TextColumnValue::Bytes(bs) => Ok(Some(MyBit(bs))),
+            None => Ok(None),
+            Some(bs) => Ok(Some(MyBit(bs))),
         }
     }
 }
@@ -463,8 +454,8 @@ impl FromColumnValue<BinaryColumnValue> for MyBytes {
 impl FromColumnValue<TextColumnValue> for MyBytes {
     fn from_value(value: TextColumnValue) -> Result<Option<Self>> {
         match value {
-            TextColumnValue::Null => Ok(None),
-            TextColumnValue::Bytes(bs) => Ok(Some(MyBytes(bs))),
+            None => Ok(None),
+            Some(bs) => Ok(Some(MyBytes(bs))),
         }
     }
 }
