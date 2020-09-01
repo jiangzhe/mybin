@@ -1,7 +1,7 @@
 use crate::Command;
+use bytes::BytesMut;
 use bytes_parser::error::Result;
 use bytes_parser::{WriteBytesExt, WriteToBytes};
-use bytes::BytesMut;
 
 #[derive(Debug, Clone)]
 pub struct ComInitDB {
@@ -11,7 +11,7 @@ pub struct ComInitDB {
 
 impl ComInitDB {
     pub fn new<T: AsRef<str>>(db_name: T) -> Self {
-        ComInitDB{
+        ComInitDB {
             cmd: Command::InitDB,
             schema_name: db_name.as_ref().to_string(),
         }

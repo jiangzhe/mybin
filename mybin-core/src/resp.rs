@@ -1,9 +1,8 @@
-use crate::packet::{OkPacket, ErrPacket};
 use crate::flag::CapabilityFlags;
-use bytes_parser::error::{Result, Error, Needed};
-use bytes_parser::ReadFromBytesWithContext;
+use crate::packet::{ErrPacket, OkPacket};
 use bytes::{Buf, Bytes};
-
+use bytes_parser::error::{Error, Needed, Result};
+use bytes_parser::ReadFromBytesWithContext;
 
 #[derive(Debug, Clone)]
 pub enum ComResponse {
