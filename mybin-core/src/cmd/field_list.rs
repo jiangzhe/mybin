@@ -2,7 +2,7 @@ use crate::col::ColumnDefinition;
 use crate::flag::CapabilityFlags;
 use crate::packet::{EofPacket, ErrPacket};
 use crate::Command;
-use bytes::{Bytes, BytesMut};
+use bytes::{Buf, Bytes, BytesMut};
 use bytes_parser::error::{Error, Needed, Result};
 use bytes_parser::{ReadFromBytesWithContext, WriteBytesExt, WriteToBytes};
 
@@ -46,7 +46,7 @@ impl<'c> ReadFromBytesWithContext<'c> for ComFieldListResponse {
     type Context = (&'c CapabilityFlags, bool);
 
     fn read_with_ctx(input: &mut Bytes, (cap_flags, sql): Self::Context) -> Result<Self> {
-        if input.is_empty() {
+        if !input.has_remaining() {
             return Err(Error::InputIncomplete(Bytes::new(), Needed::Unknown));
         }
         match input[0] {

@@ -5,7 +5,7 @@ use crate::conn::Conn;
 use crate::error::Result;
 use files::BinlogFiles;
 use futures::{AsyncRead, AsyncWrite};
-use mybin_core::binlog_dump::{BinlogDumpGtidFlags, ComBinlogDumpGtid, SidData, SidRange};
+use mybin_core::cmd::{BinlogDumpGtidFlags, ComBinlogDumpGtid, SidData, SidRange};
 use stream::BinlogStream;
 
 /// extends connection with binlog functionalities

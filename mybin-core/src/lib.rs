@@ -1,23 +1,20 @@
 pub mod binlog;
-pub mod binlog_dump;
+pub mod cmd;
 pub mod col;
 pub mod error;
-pub mod field_list;
 pub mod flag;
 pub mod handshake;
-pub mod init_db;
 pub mod packet;
-pub mod query;
-pub mod register_slave;
+pub mod quit;
 pub mod resp;
 pub mod resultset;
 pub mod row;
 
 mod util;
 
-pub use crate::binlog_dump::*;
+pub use crate::cmd::*;
+pub use crate::cmd::*;
 pub use crate::error::{Error, Result};
-pub use crate::query::*;
 use std::convert::TryFrom;
 
 #[derive(Debug, Clone, PartialEq)]

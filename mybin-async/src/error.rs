@@ -1,6 +1,5 @@
 use bytes::Bytes;
 use mybin_core::packet::ErrPacket;
-use std::convert::TryFrom;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -25,18 +24,23 @@ pub enum Error {
     BinlogStreamNotEnded,
 }
 
-impl TryFrom<ErrPacket> for Error {
-    type Error = Error;
-
-    fn try_from(err: ErrPacket) -> Result<Error> {
+impl From<ErrPacket> for Error {
+    fn from(err: ErrPacket) -> Error {
         use bytes::Buf;
-        let e = Error::SqlError(SqlError {
+        let sql_state = match String::from_utf8(Vec::from(err.sql_state.bytes())) {
+            Ok(sql_state) => sql_state,
+            Err(e) => return e.into(),
+        };
+        let error_message = match String::from_utf8(Vec::from(err.error_message.bytes())) {
+            Ok(error_message) => error_message,
+            Err(e) => return e.into(),
+        };
+        Error::SqlError(SqlError {
             error_code: err.error_code,
             sql_state_marker: err.sql_state_marker,
-            sql_state: String::from_utf8(Vec::from(err.sql_state.bytes()))?,
-            error_message: String::from_utf8(Vec::from(err.error_message.bytes()))?,
-        });
-        Ok(e)
+            sql_state,
+            error_message,
+        })
     }
 }
 

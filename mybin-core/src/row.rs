@@ -16,8 +16,8 @@ impl<'c> ReadFromBytesWithContext<'c> for TextRow {
         for _ in 0..col_cnt {
             let s = input.read_len_enc_str()?;
             match s {
-                LenEncStr::Null => tcvs.push(TextColumnValue::Null),
-                LenEncStr::Bytes(bs) => tcvs.push(TextColumnValue::Bytes(bs)),
+                LenEncStr::Null => tcvs.push(None),
+                LenEncStr::Bytes(bs) => tcvs.push(Some(bs)),
                 LenEncStr::Err => {
                     return Err(Error::ConstraintError(
                         "invalid text column value".to_owned(),

@@ -1,4 +1,4 @@
-use super::Command;
+use crate::Command;
 use bitflags::bitflags;
 use bytes::{Buf, Bytes, BytesMut};
 use bytes_parser::error::{Error, Result};

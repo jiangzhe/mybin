@@ -62,8 +62,8 @@ macro_rules! try_from_text_column_value {
                     use bytes::Buf;
 
                     match value {
-                        TextColumnValue::Null => Ok(None),
-                        TextColumnValue::Bytes(bs) => {
+                        None => Ok(None),
+                        Some(bs) => {
                             let s = std::str::from_utf8(bs.bytes())?;
                             Ok(Some(s.parse()?))
                         }
@@ -89,6 +89,31 @@ macro_rules! try_number_from_binary_column_value {
             }
         }
     }
+}
+
+#[macro_export]
+macro_rules! single_byte_cmd {
+    ($struct_name:ident, $enum_name: ident) => {
+        #[derive(Debug, Clone)]
+        pub struct $struct_name {
+            pub cmd: $crate::Command,
+        }
+
+        impl $struct_name {
+            pub fn new() -> Self {
+                Self {
+                    cmd: $crate::Command::$enum_name,
+                }
+            }
+        }
+
+        impl bytes_parser::WriteToBytes for $struct_name {
+            fn write_to(self, out: &mut bytes::BytesMut) -> bytes_parser::error::Result<usize> {
+                use bytes_parser::WriteBytesExt;
+                out.write_u8(self.cmd.to_byte())
+            }
+        }
+    };
 }
 
 #[cfg(test)]
