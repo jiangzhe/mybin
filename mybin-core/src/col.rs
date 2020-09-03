@@ -1,9 +1,9 @@
 //! defines structure and metadata for mysql columns
 use bitflags::bitflags;
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use bytes_parser::error::{Error, Result};
 use bytes_parser::my::{LenEncStr, ReadMyEnc};
-use bytes_parser::{ReadBytesExt, ReadFromBytesWithContext};
+use bytes_parser::{ReadBytesExt, ReadFromBytesWithContext, WriteBytesExt, WriteToBytes};
 use std::convert::TryFrom;
 
 /// ColumnType defined in binlog
@@ -47,9 +47,6 @@ pub enum ColumnType {
     String,
     Geometry,
 }
-
-#[derive(Debug, Clone, Copy)]
-pub struct ColumnTypeCode(pub u8);
 
 impl TryFrom<u8> for ColumnType {
     type Error = Error;
@@ -98,47 +95,80 @@ impl TryFrom<u8> for ColumnType {
     }
 }
 
-impl TryFrom<ColumnTypeCode> for ColumnType {
-    type Error = Error;
-    fn try_from(code: ColumnTypeCode) -> Result<Self> {
-        ColumnType::try_from(code.0)
-    }
-}
-
-impl From<ColumnType> for ColumnTypeCode {
-    fn from(ct: ColumnType) -> ColumnTypeCode {
+impl From<ColumnType> for u8 {
+    fn from(ct: ColumnType) -> u8 {
         match ct {
-            ColumnType::Decimal => ColumnTypeCode(0x00),
-            ColumnType::Tiny => ColumnTypeCode(0x01),
-            ColumnType::Short => ColumnTypeCode(0x02),
-            ColumnType::Long => ColumnTypeCode(0x03),
-            ColumnType::Float => ColumnTypeCode(0x04),
-            ColumnType::Double => ColumnTypeCode(0x05),
-            ColumnType::Null => ColumnTypeCode(0x06),
-            ColumnType::Timestamp => ColumnTypeCode(0x07),
-            ColumnType::LongLong => ColumnTypeCode(0x08),
-            ColumnType::Int24 => ColumnTypeCode(0x09),
-            ColumnType::Date => ColumnTypeCode(0x0a),
-            ColumnType::Time => ColumnTypeCode(0x0b),
-            ColumnType::DateTime => ColumnTypeCode(0x0c),
-            ColumnType::Year => ColumnTypeCode(0x0d),
+            ColumnType::Decimal => 0x00,
+            ColumnType::Tiny => 0x01,
+            ColumnType::Short => 0x02,
+            ColumnType::Long => 0x03,
+            ColumnType::Float => 0x04,
+            ColumnType::Double => 0x05,
+            ColumnType::Null => 0x06,
+            ColumnType::Timestamp => 0x07,
+            ColumnType::LongLong => 0x08,
+            ColumnType::Int24 => 0x09,
+            ColumnType::Date => 0x0a,
+            ColumnType::Time => 0x0b,
+            ColumnType::DateTime => 0x0c,
+            ColumnType::Year => 0x0d,
             // ColumnType::NewDate => ColumnTypeCode(0x0e),
-            ColumnType::Varchar => ColumnTypeCode(0x0f),
-            ColumnType::Bit => ColumnTypeCode(0x10),
+            ColumnType::Varchar => 0x0f,
+            ColumnType::Bit => 0x10,
             // ColumnType::Timestamp2 => ColumnTypeCode(0x11),
             // ColumnType::DateTime2 => ColumnTypeCode(0x12),
             // ColumnType::Time2 => ColumnTypeCode(0x13),
             // ColumnType::Json => ColumnTypeCode(0xf5),
-            ColumnType::NewDecimal => ColumnTypeCode(0xf6),
+            ColumnType::NewDecimal => 0xf6,
             // ColumnType::Enum => ColumnTypeCode(0xf7),
             // ColumnType::Set => ColumnTypeCode(0xf8),
-            ColumnType::TinyBlob => ColumnTypeCode(0xf9),
-            ColumnType::MediumBlob => ColumnTypeCode(0xfa),
-            ColumnType::LongBlob => ColumnTypeCode(0xfb),
-            ColumnType::Blob => ColumnTypeCode(0xfc),
-            ColumnType::VarString => ColumnTypeCode(0xfd),
-            ColumnType::String => ColumnTypeCode(0xfe),
-            ColumnType::Geometry => ColumnTypeCode(0xff),
+            ColumnType::TinyBlob => 0xf9,
+            ColumnType::MediumBlob => 0xfa,
+            ColumnType::LongBlob => 0xfb,
+            ColumnType::Blob => 0xfc,
+            ColumnType::VarString => 0xfd,
+            ColumnType::String => 0xfe,
+            ColumnType::Geometry => 0xff,
+        }
+    }
+}
+
+impl From<&ColumnMeta> for ColumnType {
+    fn from(src: &ColumnMeta) -> Self {
+        match src {
+            ColumnMeta::Decimal => ColumnType::Decimal,
+            ColumnMeta::Tiny => ColumnType::Tiny,
+            ColumnMeta::Short => ColumnType::Short,
+            ColumnMeta::Long => ColumnType::Long,
+            // todo: pack_len not used?
+            ColumnMeta::Float { .. } => ColumnType::Float,
+            // todo: pack_len not used?
+            ColumnMeta::Double { .. } => ColumnType::Double,
+            ColumnMeta::Null => ColumnType::Null,
+            ColumnMeta::Timestamp => ColumnType::Timestamp,
+            ColumnMeta::LongLong => ColumnType::LongLong,
+            ColumnMeta::Int24 => ColumnType::Int24,
+            ColumnMeta::Date => ColumnType::Date,
+            ColumnMeta::Time => ColumnType::Time,
+            ColumnMeta::DateTime => ColumnType::DateTime,
+            ColumnMeta::Year => ColumnType::Year,
+            // NewDate,
+            ColumnMeta::Varchar { .. } => ColumnType::Varchar,
+            ColumnMeta::Bit { .. } => ColumnType::Bit,
+            // Timestamp2,
+            // DateTime2,
+            // Time2,
+            // Json,
+            ColumnMeta::NewDecimal { .. } => ColumnType::NewDecimal,
+            // Enum,
+            // Set,
+            // TinyBlob,
+            // MediumBlob,
+            // LongBlob,
+            ColumnMeta::Blob { .. } => ColumnType::Blob,
+            ColumnMeta::VarString { .. } => ColumnType::VarString,
+            ColumnMeta::String { .. } => ColumnType::String,
+            ColumnMeta::Geometry { .. } => ColumnType::Geometry,
         }
     }
 }
@@ -307,10 +337,10 @@ pub enum BinaryColumnValue {
     Time {
         negative: bool,
         days: u32,
-        hours: u8,
-        minutes: u8,
-        seconds: u8,
-        micro_seconds: u32,
+        hour: u8,
+        minute: u8,
+        second: u8,
+        micro_second: u32,
     },
     DateTime {
         year: u16,
@@ -331,12 +361,12 @@ pub enum BinaryColumnValue {
     Geometry(Bytes),
 }
 
-impl<'c> ReadFromBytesWithContext<'c> for BinaryColumnValue {
-    type Context = &'c ColumnMeta;
+impl ReadFromBytesWithContext<'_> for BinaryColumnValue {
+    type Context = ColumnType;
 
-    fn read_with_ctx(input: &mut Bytes, col_meta: Self::Context) -> Result<Self> {
-        let col_val = match col_meta {
-            ColumnMeta::Decimal => {
+    fn read_with_ctx(input: &mut Bytes, col_type: Self::Context) -> Result<Self> {
+        let col_val = match col_type {
+            ColumnType::Decimal => {
                 let v = input.read_len_enc_str()?;
                 match v {
                     LenEncStr::Null => BinaryColumnValue::Null,
@@ -346,15 +376,13 @@ impl<'c> ReadFromBytesWithContext<'c> for BinaryColumnValue {
                     LenEncStr::Bytes(bs) => BinaryColumnValue::Decimal(bs),
                 }
             }
-            ColumnMeta::Tiny => BinaryColumnValue::Tiny(input.read_u8()?),
-            ColumnMeta::Short => BinaryColumnValue::Short(input.read_le_u16()?),
-            ColumnMeta::Long => BinaryColumnValue::Long(input.read_le_u32()?),
-            // todo: pack_len not used?
-            ColumnMeta::Float { .. } => BinaryColumnValue::Float(input.read_le_f32()?),
-            // todo: pack_len not used?
-            ColumnMeta::Double { .. } => BinaryColumnValue::Double(input.read_le_f64()?),
-            ColumnMeta::Null => BinaryColumnValue::Null,
-            ColumnMeta::Timestamp => {
+            ColumnType::Tiny => BinaryColumnValue::Tiny(input.read_u8()?),
+            ColumnType::Short => BinaryColumnValue::Short(input.read_le_u16()?),
+            ColumnType::Long => BinaryColumnValue::Long(input.read_le_u32()?),
+            ColumnType::Float => BinaryColumnValue::Float(input.read_le_f32()?),
+            ColumnType::Double => BinaryColumnValue::Double(input.read_le_f64()?),
+            ColumnType::Null => BinaryColumnValue::Null,
+            ColumnType::Timestamp => {
                 let len = input.read_u8()?;
                 match len {
                     0 => BinaryColumnValue::Null,
@@ -382,15 +410,19 @@ impl<'c> ReadFromBytesWithContext<'c> for BinaryColumnValue {
                     }
                 }
             }
-            ColumnMeta::LongLong => BinaryColumnValue::LongLong(input.read_le_u64()?),
-            ColumnMeta::Int24 => {
+            ColumnType::LongLong => BinaryColumnValue::LongLong(input.read_le_u64()?),
+            ColumnType::Int24 => {
                 // here i32 represents i24
                 BinaryColumnValue::Int24(input.read_le_u32()?)
             }
-            ColumnMeta::Date => {
+            ColumnType::Date => {
                 let len = input.read_u8()?;
                 match len {
-                    0 => BinaryColumnValue::Null,
+                    0 => BinaryColumnValue::Date {
+                        year: 0,
+                        month: 0,
+                        day: 0,
+                    },
                     4 => {
                         let year = input.read_le_u16()?;
                         let month = input.read_u8()?;
@@ -405,41 +437,48 @@ impl<'c> ReadFromBytesWithContext<'c> for BinaryColumnValue {
                     }
                 }
             }
-            ColumnMeta::Time => {
+            ColumnType::Time => {
                 let len = input.read_u8()?;
                 match len {
-                    0 => BinaryColumnValue::Null,
+                    0 => BinaryColumnValue::Time {
+                        negative: false,
+                        days: 0,
+                        hour: 0,
+                        minute: 0,
+                        second: 0,
+                        micro_second: 0,
+                    },
                     8 => {
                         let negative = input.read_u8()?;
                         let negative = negative == 0x01;
                         let days = input.read_le_u32()?;
-                        let hours = input.read_u8()?;
-                        let minutes = input.read_u8()?;
-                        let seconds = input.read_u8()?;
+                        let hour = input.read_u8()?;
+                        let minute = input.read_u8()?;
+                        let second = input.read_u8()?;
                         BinaryColumnValue::Time {
                             negative,
                             days,
-                            hours,
-                            minutes,
-                            seconds,
-                            micro_seconds: 0,
+                            hour,
+                            minute,
+                            second,
+                            micro_second: 0,
                         }
                     }
                     12 => {
                         let negative = input.read_u8()?;
                         let negative = negative == 0x01;
                         let days = input.read_le_u32()?;
-                        let hours = input.read_u8()?;
-                        let minutes = input.read_u8()?;
-                        let seconds = input.read_u8()?;
-                        let micro_seconds = input.read_le_u32()?;
+                        let hour = input.read_u8()?;
+                        let minute = input.read_u8()?;
+                        let second = input.read_u8()?;
+                        let micro_second = input.read_le_u32()?;
                         BinaryColumnValue::Time {
                             negative,
                             days,
-                            hours,
-                            minutes,
-                            seconds,
-                            micro_seconds,
+                            hour,
+                            minute,
+                            second,
+                            micro_second,
                         }
                     }
                     _ => {
@@ -450,10 +489,18 @@ impl<'c> ReadFromBytesWithContext<'c> for BinaryColumnValue {
                     }
                 }
             }
-            ColumnMeta::DateTime => {
+            ColumnType::DateTime => {
                 let len = input.read_u8()?;
                 match len {
-                    0 => BinaryColumnValue::Null,
+                    0 => BinaryColumnValue::DateTime {
+                        year: 0,
+                        month: 0,
+                        day: 0,
+                        hour: 0,
+                        minute: 0,
+                        second: 0,
+                        micro_second: 0,
+                    },
                     7 => {
                         let year = input.read_le_u16()?;
                         let month = input.read_u8()?;
@@ -497,9 +544,9 @@ impl<'c> ReadFromBytesWithContext<'c> for BinaryColumnValue {
                     }
                 }
             }
-            ColumnMeta::Year => BinaryColumnValue::Year(input.read_le_u16()?),
+            ColumnType::Year => BinaryColumnValue::Year(input.read_le_u16()?),
             // NewDate,
-            ColumnMeta::Varchar { .. } => {
+            ColumnType::Varchar => {
                 let v = input.read_len_enc_str()?;
                 match v {
                     LenEncStr::Null => BinaryColumnValue::Null,
@@ -509,7 +556,7 @@ impl<'c> ReadFromBytesWithContext<'c> for BinaryColumnValue {
                     LenEncStr::Bytes(bs) => BinaryColumnValue::Varchar(bs),
                 }
             }
-            ColumnMeta::Bit { .. } => {
+            ColumnType::Bit => {
                 let v = input.read_len_enc_str()?;
                 match v {
                     LenEncStr::Null => BinaryColumnValue::Null,
@@ -521,7 +568,7 @@ impl<'c> ReadFromBytesWithContext<'c> for BinaryColumnValue {
             // DateTime2,
             // Time2,
             // Json,
-            ColumnMeta::NewDecimal { .. } => {
+            ColumnType::NewDecimal => {
                 let v = input.read_len_enc_str()?;
                 match v {
                     LenEncStr::Null => BinaryColumnValue::Null,
@@ -536,48 +583,174 @@ impl<'c> ReadFromBytesWithContext<'c> for BinaryColumnValue {
             // TinyBlob,
             // MediumBlob,
             // LongBlob,
-            ColumnMeta::Blob { .. } => {
+            ColumnType::TinyBlob
+            | ColumnType::MediumBlob
+            | ColumnType::LongBlob
+            | ColumnType::Blob => {
                 let v = input.read_len_enc_str()?;
                 match v {
                     LenEncStr::Null => BinaryColumnValue::Null,
-                    LenEncStr::Err => {
-                        return Err(Error::ConstraintError("error newdecimal".to_owned()))
-                    }
+                    LenEncStr::Err => return Err(Error::ConstraintError("error blob".to_owned())),
                     LenEncStr::Bytes(bs) => BinaryColumnValue::Blob(bs),
                 }
             }
-            ColumnMeta::VarString { .. } => {
+            ColumnType::VarString => {
                 let v = input.read_len_enc_str()?;
                 match v {
                     LenEncStr::Null => BinaryColumnValue::Null,
                     LenEncStr::Err => {
-                        return Err(Error::ConstraintError("error newdecimal".to_owned()))
+                        return Err(Error::ConstraintError("error varstring".to_owned()))
                     }
                     LenEncStr::Bytes(bs) => BinaryColumnValue::VarString(bs),
                 }
             }
-            ColumnMeta::String { .. } => {
+            ColumnType::String => {
                 let v = input.read_len_enc_str()?;
                 match v {
                     LenEncStr::Null => BinaryColumnValue::Null,
                     LenEncStr::Err => {
-                        return Err(Error::ConstraintError("error newdecimal".to_owned()))
+                        return Err(Error::ConstraintError("error string".to_owned()))
                     }
                     LenEncStr::Bytes(bs) => BinaryColumnValue::String(bs),
                 }
             }
-            ColumnMeta::Geometry { .. } => {
+            ColumnType::Geometry => {
                 let v = input.read_len_enc_str()?;
                 match v {
                     LenEncStr::Null => BinaryColumnValue::Null,
                     LenEncStr::Err => {
-                        return Err(Error::ConstraintError("error newdecimal".to_owned()))
+                        return Err(Error::ConstraintError("error geometry".to_owned()))
                     }
                     LenEncStr::Bytes(bs) => BinaryColumnValue::Geometry(bs),
                 }
             }
         };
         Ok(col_val)
+    }
+}
+
+impl WriteToBytes for BinaryColumnValue {
+    fn write_to(self, out: &mut BytesMut) -> Result<usize> {
+        let mut len = 0;
+        match self {
+            BinaryColumnValue::Decimal(bs)
+            | BinaryColumnValue::Varchar(bs)
+            | BinaryColumnValue::Bit(bs)
+            | BinaryColumnValue::NewDecimal(bs)
+            | BinaryColumnValue::Blob(bs)
+            | BinaryColumnValue::VarString(bs)
+            | BinaryColumnValue::String(bs)
+            | BinaryColumnValue::Geometry(bs) => {
+                let les: LenEncStr = LenEncStr::Bytes(bs);
+                len += out.write_bytes(les)?;
+            }
+            BinaryColumnValue::Tiny(n) => len += out.write_u8(n)?,
+            BinaryColumnValue::Short(n) => len += out.write_le_u16(n)?,
+            BinaryColumnValue::Long(n) => len += out.write_le_u32(n)?,
+            BinaryColumnValue::Float(n) => len += out.write_le_f32(n)?,
+            BinaryColumnValue::Double(n) => len += out.write_le_f64(n)?,
+            // nothing to append for null value, already indicated in null-bitmap
+            BinaryColumnValue::Null => (),
+            BinaryColumnValue::Timestamp {
+                year,
+                month,
+                day,
+                hour,
+                minute,
+                second,
+            } => {
+                // length of 7
+                len += out.write_u8(7)?;
+                len += out.write_le_u16(year)?;
+                len += out.write_u8(month)?;
+                len += out.write_u8(day)?;
+                len += out.write_u8(hour)?;
+                len += out.write_u8(minute)?;
+                len += out.write_u8(second)?;
+            }
+            BinaryColumnValue::LongLong(n) => len += out.write_le_u64(n)?,
+            // special handling on int24
+            BinaryColumnValue::Int24(n) => len += out.write_le_u32(n)?,
+            BinaryColumnValue::Date { year, month, day } => {
+                // length of 4
+                len += out.write_u8(4)?;
+                len += out.write_le_u16(year)?;
+                len += out.write_u8(month)?;
+                len += out.write_u8(day)?;
+            }
+            BinaryColumnValue::Time {
+                negative,
+                days,
+                hour,
+                minute,
+                second,
+                micro_second,
+            } => {
+                if days | hour as u32 | minute as u32 | second as u32 | micro_second == 0 {
+                    len += out.write_u8(0)?;
+                } else if micro_second == 0 {
+                    len += out.write_u8(8)?;
+                    len += out.write_u8(if negative { 1 } else { 0 })?;
+                    len += out.write_le_u32(days)?;
+                    len += out.write_u8(hour)?;
+                    len += out.write_u8(minute)?;
+                    len += out.write_u8(second)?;
+                } else {
+                    len += out.write_u8(12)?;
+                    len += out.write_u8(if negative { 1 } else { 0 })?;
+                    len += out.write_le_u32(days)?;
+                    len += out.write_u8(hour)?;
+                    len += out.write_u8(minute)?;
+                    len += out.write_u8(second)?;
+                    len += out.write_le_u32(micro_second)?;
+                }
+            }
+            BinaryColumnValue::DateTime {
+                year,
+                month,
+                day,
+                hour,
+                minute,
+                second,
+                micro_second,
+            } => {
+                if year as u32
+                    | month as u32
+                    | day as u32
+                    | hour as u32
+                    | minute as u32
+                    | second as u32
+                    | micro_second
+                    == 0
+                {
+                    len += out.write_u8(0)?;
+                } else if hour as u32 | minute as u32 | second as u32 | micro_second == 0 {
+                    len += out.write_u8(4)?;
+                    len += out.write_le_u16(year)?;
+                    len += out.write_u8(month)?;
+                    len += out.write_u8(day)?;
+                } else if micro_second == 0 {
+                    len += out.write_u8(7)?;
+                    len += out.write_le_u16(year)?;
+                    len += out.write_u8(month)?;
+                    len += out.write_u8(day)?;
+                    len += out.write_u8(hour)?;
+                    len += out.write_u8(minute)?;
+                    len += out.write_u8(second)?;
+                } else {
+                    len += out.write_u8(11)?;
+                    len += out.write_le_u16(year)?;
+                    len += out.write_u8(month)?;
+                    len += out.write_u8(day)?;
+                    len += out.write_u8(hour)?;
+                    len += out.write_u8(minute)?;
+                    len += out.write_u8(second)?;
+                    len += out.write_le_u32(micro_second)?;
+                }
+            }
+            BinaryColumnValue::Year(n) => len += out.write_le_u16(n)?,
+        };
+        Ok(len)
     }
 }
 

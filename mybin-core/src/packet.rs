@@ -108,8 +108,9 @@ impl<'c> ReadFromBytesWithContext<'c> for OkPacket {
             || cap_flags.contains(CapabilityFlags::TRANSACTIONS)
         {
             let status_flags = input.read_le_u16()?;
-            StatusFlags::from_bits(status_flags)
-                .ok_or_else(|| Error::ConstraintError("invalid status flags".to_owned()))?
+            StatusFlags::from_bits(status_flags).ok_or_else(|| {
+                Error::ConstraintError(format!("invalid status flags {:b}", status_flags))
+            })?
         } else {
             StatusFlags::empty()
         };
@@ -208,7 +209,7 @@ impl<'c> ReadFromBytesWithContext<'c> for EofPacket {
             let warnings = input.read_le_u16()?;
             let status_flags = input.read_le_u16()?;
             let status_flags = StatusFlags::from_bits(status_flags).ok_or_else(|| {
-                Error::ConstraintError(format!("invalid status flags {}", status_flags))
+                Error::ConstraintError(format!("invalid status flags {:b}", status_flags))
             })?;
             (warnings, status_flags)
         } else {

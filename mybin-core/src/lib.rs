@@ -1,4 +1,5 @@
 pub mod binlog;
+pub mod bitmap;
 pub mod cmd;
 pub mod col;
 pub mod error;
@@ -9,6 +10,7 @@ pub mod quit;
 pub mod resp;
 pub mod resultset;
 pub mod row;
+pub mod stmt;
 
 mod util;
 

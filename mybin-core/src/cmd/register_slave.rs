@@ -1,3 +1,4 @@
+use crate::resp::ComResponse;
 use crate::Command;
 use bytes::BytesMut;
 use bytes_parser::error::Result;
@@ -13,6 +14,22 @@ pub struct ComRegisterSlave {
     pub slave_port: u16,
     pub replication_rank: u32,
     pub master_id: u32,
+}
+
+impl ComRegisterSlave {
+    pub fn anonymous(server_id: u32) -> Self {
+        // todo
+        Self {
+            cmd: Command::RegisterSlave,
+            server_id,
+            slave_hostname: String::from("abc"),
+            slave_user: String::new(),
+            slave_password: String::new(),
+            slave_port: 0,
+            replication_rank: 0,
+            master_id: 0,
+        }
+    }
 }
 
 impl WriteToBytes for ComRegisterSlave {
@@ -35,3 +52,5 @@ impl WriteToBytes for ComRegisterSlave {
         Ok(len)
     }
 }
+
+pub type ComRegisterSlaveResponse = ComResponse;

@@ -79,6 +79,8 @@ bitflags! {
     pub struct StatusFlags: u16 {
         const STATUS_IN_TRANS           = 0x0001;
         const STATUS_AUTOCOMMIT         = 0x0002;
+        // not in doc but in real response
+        const STATUS_0X0004             = 0x0004;
         const MORE_RESULTS_EXISTS       = 0x0008;
         const STATUS_NO_GOOD_INDEX_USED = 0x0010;
         const STATUS_NO_INDEX_USED      = 0x0020;
@@ -91,5 +93,16 @@ bitflags! {
         const PS_OUT_PARAMS             = 0x1000;
         const STATUS_IN_TRANS_READONLY  = 0x2000;
         const SESSION_STATE_CHANGED     = 0x4000;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_check_status_flag() {
+        let sf = StatusFlags::from_bits(0b0000100101100110_u16).unwrap();
+        dbg!(sf);
     }
 }

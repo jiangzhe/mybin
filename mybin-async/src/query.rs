@@ -1,18 +1,13 @@
 use crate::conn::Conn;
-use crate::error::{Error, Result, SqlError};
-use bytes::{Buf, Bytes, BytesMut};
-use bytes_parser::WriteToBytes;
-use futures::stream::Stream;
-use futures::{ready, AsyncRead, AsyncWrite};
-use mybin_core::cmd::{ComQuery, ComQueryResponse, ComQueryState, ComQueryStateMachine};
-use mybin_core::col::{ColumnDefinition, TextColumnValue};
-use mybin_core::resultset::{ResultSetColExtractor, RowMapper};
-use std::future::Future;
-use std::marker::PhantomData;
-use std::pin::Pin;
-use std::sync::Arc;
-use std::task::{Context, Poll};
+use crate::error::Result;
+use crate::resultset::{new_result_set, ResultSet};
+use bytes_parser::ReadFromBytesWithContext;
+use futures::{AsyncRead, AsyncWrite};
+use mybin_core::cmd::ComQuery;
+use mybin_core::col::TextColumnValue;
+use mybin_core::packet::{ErrPacket, OkPacket};
 
+/// wrapper struct on Conn to provide query functionality
 #[derive(Debug)]
 pub struct Query<'a, S> {
     conn: &'a mut Conn<S>,
@@ -20,310 +15,50 @@ pub struct Query<'a, S> {
 
 impl<'a, S> Query<'a, S>
 where
-    S: AsyncRead + AsyncWrite + Clone + Unpin,
+    S: AsyncRead + AsyncWrite + Unpin,
 {
+    /// construct new query from connection
     pub fn new(conn: &'a mut Conn<S>) -> Self {
         Query { conn }
     }
 
-    pub fn exec<Q: Into<String>>(self, qry: Q) -> QueryExecFuture<'a, S> {
+    /// execute a query
+    /// 
+    /// the query should not return any rows
+    pub async fn exec<Q: Into<String>>(self, qry: Q) -> Result<()> {
+        // let qry = ComQuery::new(qry);
+        // QueryExecFuture::new(self.conn, qry)
         let qry = ComQuery::new(qry);
-        QueryExecFuture::new(self.conn, qry)
+        self.conn.send_msg(qry, true).await?;
+        // handle query like result set
+        loop {
+            let mut msg = self.conn.recv_msg().await?;
+            match msg[0] {
+                0xff => {
+                    let err = ErrPacket::read_with_ctx(&mut msg, (&self.conn.cap_flags, true))?;
+                    return Err(err.into());
+                }
+                0x00 => {
+                    OkPacket::read_with_ctx(&mut msg, &self.conn.cap_flags)?;
+                    return Ok(());
+                }
+                _ => {
+                    log::warn!("execute statement but returns additional data");
+                }
+            }
+        }
     }
 
-    pub fn qry<Q: Into<String>>(self, qry: Q) -> QueryResultSetFuture<'a, S> {
+    pub async fn qry<Q: Into<String>>(self, qry: Q) -> Result<ResultSet<'a, S, TextColumnValue>> {
         let qry = ComQuery::new(qry);
-        QueryResultSetFuture::new(self.conn, qry)
-    }
-}
-
-#[derive(Debug)]
-pub struct QueryExecFuture<'s, S: 's> {
-    conn: &'s mut Conn<S>,
-    qry: Bytes,
-    sm: ComQueryStateMachine,
-    // use PhantomData to prevent concurrent
-    // usage on same connection
-    _marker: PhantomData<&'s S>,
-}
-
-impl<'s, S: 's> QueryExecFuture<'s, S> {
-    pub fn new<Q>(conn: &'s mut Conn<S>, qry: Q) -> Self
-    where
-        Q: WriteToBytes,
-    {
-        let mut bs = BytesMut::new();
-        qry.write_to(&mut bs).unwrap();
-        let cap_flags = conn.cap_flags.clone();
-        QueryExecFuture {
-            conn,
-            qry: bs.freeze(),
-            sm: ComQueryStateMachine::new(cap_flags),
-            _marker: PhantomData,
-        }
-    }
-
-    fn on_msg(&mut self, msg: Bytes) -> Result<bool> {
-        match self.sm.next(msg)? {
-            (_, ComQueryResponse::Err(err)) => {
-                return Err(Error::SqlError(SqlError {
-                    error_code: err.error_code,
-                    sql_state_marker: err.sql_state_marker,
-                    sql_state: String::from_utf8(Vec::from(err.sql_state.bytes()))?,
-                    error_message: String::from_utf8(Vec::from(err.error_message.bytes()))?,
-                }));
-            }
-            (_, ComQueryResponse::Ok(_)) => {
-                return Ok(false);
-            }
-            (ComQueryState::Ok, ComQueryResponse::Eof(_)) => {
-                return Ok(false);
-            }
-            _ => Ok(true),
-        }
-    }
-}
-
-impl<'a, S> Future for QueryExecFuture<'a, S>
-where
-    S: AsyncRead + AsyncWrite + Unpin,
-{
-    type Output = Result<()>;
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        if self.qry.has_remaining() {
-            let qry = self.qry.clone();
-            let mut send_fut = self.conn.send_msg(qry, true);
-            match ready!(Pin::new(&mut send_fut).poll(cx)) {
-                Ok(_) => {
-                    self.qry.clear();
-                }
-                Err(e) => return Poll::Ready(Err(e.into())),
-            }
-        }
-        loop {
-            let mut recv_fut = self.conn.recv_msg();
-            match ready!(Pin::new(&mut recv_fut).poll(cx)) {
-                Ok(msg) => match self.on_msg(msg) {
-                    Err(e) => return Poll::Ready(Err(e)),
-                    Ok(cont) => {
-                        if !cont {
-                            return Poll::Ready(Ok(()));
-                        }
-                    }
-                },
-                Err(e) => {
-                    return Poll::Ready(Err(e.into()));
-                }
-            }
-        }
-    }
-}
-
-/// async result set
-#[derive(Debug)]
-pub struct QueryResultSet<'s, S: 's> {
-    conn: Conn<S>,
-    sm: ComQueryStateMachine,
-    // unchangable col defs
-    pub col_defs: Arc<Vec<ColumnDefinition>>,
-    // use PhantomData to prevent concurrent
-    // usage on same connection
-    _marker: PhantomData<&'s S>,
-}
-
-impl<'s, S: 's> QueryResultSet<'s, S> {
-    /// create a column extractor base on column definitions
-    pub fn extractor(&self) -> ResultSetColExtractor {
-        ResultSetColExtractor::new(&self.col_defs)
-    }
-
-    pub fn map_rows<M>(self, mapper: M) -> MapperResultSet<'s, S, M>
-    where
-        M: RowMapper<TextColumnValue> + Unpin,
-    {
-        let extractor = self.extractor();
-        MapperResultSet {
-            rs: self,
-            mapper,
-            extractor,
-        }
-    }
-}
-
-impl<'s, S: 's> Stream for QueryResultSet<'s, S>
-where
-    S: AsyncRead + Unpin,
-{
-    type Item = Vec<TextColumnValue>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        if self.sm.end() {
-            return Poll::Ready(None);
-        }
-        let Self { conn, sm, .. } = &mut *self;
-        let recv_fut = &mut conn.recv_msg();
-        let mut recv_fut = Pin::new(recv_fut);
-        match ready!(recv_fut.as_mut().poll(cx)) {
-            Ok(msg) => match sm.next(msg) {
-                Ok((_, ComQueryResponse::Eof(_))) | Ok((_, ComQueryResponse::Ok(_))) => {
-                    Poll::Ready(None)
-                }
-                Ok((_, ComQueryResponse::Row(row))) => Poll::Ready(Some(row.0)),
-                other => {
-                    log::warn!("unexpected packet in result set: {:?}", other);
-                    Poll::Ready(None)
-                }
-            },
-            Err(err) => {
-                log::debug!("parse message error: {:?}", err);
-                return Poll::Ready(None);
-            }
-        }
-    }
-}
-
-pub struct MapperResultSet<'s, S: 's, M> {
-    rs: QueryResultSet<'s, S>,
-    mapper: M,
-    extractor: ResultSetColExtractor,
-}
-
-impl<'s, S: 's, M> Stream for MapperResultSet<'s, S, M>
-where
-    S: AsyncRead + Unpin,
-    M: RowMapper<TextColumnValue> + Unpin,
-{
-    type Item = <M as RowMapper<TextColumnValue>>::Output;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        match ready!(Pin::new(&mut self.rs).poll_next(cx)) {
-            Some(row) => {
-                let item = self.mapper.map_row(&self.extractor, row);
-                Poll::Ready(Some(item))
-            }
-            None => Poll::Ready(None),
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct QueryResultSetFuture<'a, S> {
-    conn: &'a mut Conn<S>,
-    qry: Bytes,
-    sm: ComQueryStateMachine,
-    col_defs: Vec<ColumnDefinition>,
-}
-
-impl<'a, S: 'a> QueryResultSetFuture<'a, S> {
-    pub fn new<Q: WriteToBytes>(conn: &'a mut Conn<S>, qry: Q) -> Self
-    where
-        S: Clone,
-    {
-        let mut bs = BytesMut::new();
-        qry.write_to(&mut bs).unwrap();
-        let cap_flags = conn.cap_flags.clone();
-        QueryResultSetFuture {
-            conn: conn,
-            qry: bs.freeze(),
-            sm: ComQueryStateMachine::new(cap_flags),
-            col_defs: vec![],
-        }
-    }
-
-    fn on_msg(&mut self, msg: Bytes) -> Result<bool> {
-        match self.sm.next(msg)? {
-            (_, ComQueryResponse::Err(err)) => {
-                log::debug!("receive error packet: {:?}", err);
-                Err(Error::SqlError(SqlError {
-                    error_code: err.error_code,
-                    sql_state_marker: err.sql_state_marker,
-                    sql_state: String::from_utf8(Vec::from(err.sql_state.bytes()))?,
-                    error_message: String::from_utf8(Vec::from(err.error_message.bytes()))?,
-                }))
-            }
-            (_, ComQueryResponse::Ok(ok)) => {
-                log::debug!("receive ok packet: {:?}", ok);
-                Ok(false)
-            }
-            (_, ComQueryResponse::ColCnt(cnt)) => {
-                log::debug!("receive column count packet: {}", cnt);
-                Ok(true)
-            }
-            (ComQueryState::ColDefs(..), ComQueryResponse::ColDef(col_def)) => {
-                log::debug!("receive column definition packet: {:?}", col_def);
-                self.col_defs.push(col_def);
-                Ok(true)
-            }
-            (ComQueryState::Rows, ComQueryResponse::ColDef(col_def)) => {
-                // DEPRECATE_EOF is enabled, so the EOF following col defs will not
-                // be sent
-                log::debug!("receive the last column definition packet: {:?}", col_def);
-                self.col_defs.push(col_def);
-                Ok(false)
-            }
-            (ComQueryState::Rows, ComQueryResponse::Eof(eof)) => {
-                // DEPRECATE_EOF is not enabled, one EOF follows col defs
-                log::debug!("receive eof packet after column definitions: {:?}", eof);
-                Ok(false)
-            }
-            (_, resp) => {
-                log::debug!("receive unexpected packet: {:?}", resp);
-                Err(Error::PacketError(format!(
-                    "receive unexpected packet: {:?}",
-                    resp
-                )))
-            }
-        }
-    }
-}
-
-impl<'s, S> Future for QueryResultSetFuture<'s, S>
-where
-    S: AsyncRead + AsyncWrite + Clone + Unpin,
-{
-    type Output = Result<QueryResultSet<'s, S>>;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        if self.qry.has_remaining() {
-            let qry = self.qry.clone();
-            let mut send_fut = self.conn.send_msg(qry, true);
-            match ready!(Pin::new(&mut send_fut).poll(cx)) {
-                Ok(_) => {
-                    self.qry.clear();
-                }
-                Err(e) => return Poll::Ready(Err(e.into())),
-            }
-        }
-
-        loop {
-            // let Self { conn, .. } = &mut *self;
-            let mut recv_fut = self.conn.recv_msg();
-            match ready!(Pin::new(&mut recv_fut).as_mut().poll(cx)) {
-                Err(e) => return Poll::Ready(Err(e.into())),
-                Ok(msg) => match self.on_msg(msg) {
-                    Err(e) => return Poll::Ready(Err(e.into())),
-                    Ok(cont) => {
-                        if !cont {
-                            let col_defs = std::mem::replace(&mut self.col_defs, vec![]);
-                            let col_defs = Arc::new(col_defs);
-                            let sm = self.sm.clone();
-                            return Poll::Ready(Ok(QueryResultSet {
-                                conn: self.conn.clone(),
-                                sm,
-                                col_defs,
-                                _marker: PhantomData,
-                            }));
-                        }
-                    }
-                },
-            }
-        }
+        self.conn.send_msg(qry, true).await?;
+        new_result_set(self.conn).await
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::conn::{Conn, ConnOpts};
+    use crate::conn::tests::new_conn;
     use bigdecimal::BigDecimal;
     use chrono::{NaiveDate, NaiveDateTime};
     use futures::stream::StreamExt;
@@ -331,8 +66,7 @@ mod tests {
 
     #[smol_potat::test]
     async fn test_query_set() {
-        let mut conn = Conn::connect("127.0.0.1:13306").await.unwrap();
-        conn.handshake(conn_opts()).await.unwrap();
+        let mut conn = new_conn().await;
         conn.query()
             .exec("set @master_binlog_checksum = @@global.binlog_checksum")
             .await
@@ -341,16 +75,14 @@ mod tests {
 
     #[smol_potat::test]
     async fn test_query_exec_error() {
-        let mut conn = Conn::connect("127.0.0.1:13306").await.unwrap();
-        conn.handshake(conn_opts()).await.unwrap();
+        let mut conn = new_conn().await;
         let fail = conn.query().exec("drop table not_exist_table").await;
         assert!(fail.is_err());
     }
 
     #[smol_potat::test]
     async fn test_query_select_1() {
-        let mut conn = Conn::connect("127.0.0.1:13306").await.unwrap();
-        conn.handshake(conn_opts()).await.unwrap();
+        let mut conn = new_conn().await;
         let mut rs = conn
             .query()
             .qry("select 1, current_timestamp()")
@@ -364,8 +96,7 @@ mod tests {
 
     #[smol_potat::test]
     async fn test_query_select_null() {
-        let mut conn = Conn::connect("127.0.0.1:13306").await.unwrap();
-        conn.handshake(conn_opts()).await.unwrap();
+        let mut conn = new_conn().await;
         let mut rs = conn.query().qry("select null").await.unwrap();
         dbg!(&rs.col_defs);
         while let Some(row) = rs.next().await {
@@ -375,8 +106,7 @@ mod tests {
 
     #[smol_potat::test]
     async fn test_query_select_variable() {
-        let mut conn = Conn::connect("127.0.0.1:13306").await.unwrap();
-        conn.handshake(conn_opts()).await.unwrap();
+        let mut conn = new_conn().await;
         // select variable will return type LongBlob
         let mut rs = conn
             .query()
@@ -391,17 +121,14 @@ mod tests {
 
     #[smol_potat::test]
     async fn test_query_select_error() {
-        let mut conn = Conn::connect("127.0.0.1:13306").await.unwrap();
-        conn.handshake(conn_opts()).await.unwrap();
+        let mut conn = new_conn().await;
         let fail = conn.query().qry("select * from not_exist_table").await;
         dbg!(fail.unwrap_err());
     }
 
     #[smol_potat::test]
     async fn test_query_table_and_column() {
-        // env_logger::init();
-        let mut conn = Conn::connect("127.0.0.1:13306").await.unwrap();
-        conn.handshake(conn_opts()).await.unwrap();
+        let mut conn = new_conn().await;
         // create database
         conn.query()
             .exec(
@@ -452,7 +179,8 @@ mod tests {
             c29 TEXT CHARACTER SET latin1 COLLATE latin1_general_cs,
             c30 TEXT CHARACTER SET utf8,
             c31 TEXT BINARY,
-            c32 BOOLEAN
+            c32 BOOLEAN,
+            c33 CHAR(20)
         )
         "#,
             )
@@ -494,7 +222,8 @@ mod tests {
             'hello, latin1',
             'hello, utf8',
             'hello, binary',
-            true
+            true,
+            'fixed'
         )
         "#,
             )
@@ -577,11 +306,34 @@ mod tests {
     }
 
     #[smol_potat::test]
+    async fn test_result_set_empty() {
+        use futures::StreamExt;
+        let mut conn = new_conn().await;
+        let mut rs = conn
+            .query()
+            .qry("select * from mysql.user where 1 = 0")
+            .await
+            .unwrap();
+        while let Some(row) = rs.next().await {
+            dbg!(row);
+        }
+    }
+
+    #[smol_potat::test]
+    async fn test_result_set_slave_hosts() {
+        use futures::StreamExt;
+        let mut conn = new_conn().await;
+        let mut rs = conn.query().qry("SHOW SLAVE HOSTS").await.unwrap();
+        while let Some(row) = rs.next().await {
+            dbg!(row);
+        }
+    }
+
+    #[smol_potat::test]
     async fn test_result_set_with_extractor() {
         use chrono::NaiveDateTime;
 
-        let mut conn = Conn::connect("127.0.0.1:13306").await.unwrap();
-        conn.handshake(conn_opts()).await.unwrap();
+        let mut conn = new_conn().await;
         let mut rs = conn
             .query()
             .qry("select 1 as id, current_timestamp(6) as ts")
@@ -612,8 +364,7 @@ mod tests {
             name: String,
         }
 
-        let mut conn = Conn::connect("127.0.0.1:13306").await.unwrap();
-        conn.handshake(conn_opts()).await.unwrap();
+        let mut conn = new_conn().await;
         let rs = conn
             .query()
             .qry("select 1 as id, 'hello' as name")
@@ -629,14 +380,6 @@ mod tests {
         );
         while let Some(obj) = rs.next().await {
             dbg!(obj);
-        }
-    }
-
-    fn conn_opts() -> ConnOpts {
-        ConnOpts {
-            username: "root".to_owned(),
-            password: "password".to_owned(),
-            database: "".to_owned(),
         }
     }
 }

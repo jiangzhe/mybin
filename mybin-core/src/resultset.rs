@@ -199,6 +199,45 @@ impl FromColumnValue<BinaryColumnValue> for NaiveDate {
     }
 }
 
+impl FromColumnValue<BinaryColumnValue> for NaiveDateTime {
+    fn from_value(value: BinaryColumnValue) -> Result<Option<Self>> {
+        match value {
+            BinaryColumnValue::Null => Ok(None),
+            BinaryColumnValue::DateTime {
+                year,
+                month,
+                day,
+                hour,
+                minute,
+                second,
+                micro_second,
+            } => Ok(Some(
+                NaiveDate::from_ymd(year as i32, month as u32, day as u32).and_hms_micro(
+                    hour as u32,
+                    minute as u32,
+                    second as u32,
+                    micro_second,
+                ),
+            )),
+            BinaryColumnValue::Timestamp {
+                year,
+                month,
+                day,
+                hour,
+                minute,
+                second,
+            } => Ok(Some(
+                NaiveDate::from_ymd(year as i32, month as u32, day as u32).and_hms(
+                    hour as u32,
+                    minute as u32,
+                    second as u32,
+                ),
+            )),
+            _ => Err(Error::column_type_mismatch("datetime", &value)),
+        }
+    }
+}
+
 impl FromColumnValue<BinaryColumnValue> for BigDecimal {
     fn from_value(value: BinaryColumnValue) -> Result<Option<Self>> {
         match value {
@@ -226,16 +265,16 @@ impl FromColumnValue<BinaryColumnValue> for MyTime {
             BinaryColumnValue::Time {
                 negative,
                 days,
-                hours,
-                minutes,
-                seconds,
-                micro_seconds,
+                hour,
+                minute,
+                second,
+                micro_second,
             } => {
                 let time = NaiveTime::from_hms_micro(
-                    hours as u32,
-                    minutes as u32,
-                    seconds as u32,
-                    micro_seconds,
+                    hour as u32,
+                    minute as u32,
+                    second as u32,
+                    micro_second,
                 );
                 Ok(Some(MyTime {
                     negative,
@@ -399,9 +438,9 @@ impl FromColumnValue<BinaryColumnValue> for MyString {
     fn from_value(value: BinaryColumnValue) -> Result<Option<Self>> {
         match value {
             BinaryColumnValue::Null => Ok(None),
-            BinaryColumnValue::Varchar(bs) | BinaryColumnValue::VarString(bs) => {
-                Ok(Some(MyString(bs)))
-            }
+            BinaryColumnValue::Varchar(bs)
+            | BinaryColumnValue::VarString(bs)
+            | BinaryColumnValue::String(bs) => Ok(Some(MyString(bs))),
             _ => Err(Error::column_type_mismatch("MyString", &value)),
         }
     }
@@ -456,6 +495,26 @@ impl FromColumnValue<TextColumnValue> for MyBytes {
         match value {
             None => Ok(None),
             Some(bs) => Ok(Some(MyBytes(bs))),
+        }
+    }
+}
+
+impl FromColumnValue<BinaryColumnValue> for f32 {
+    fn from_value(value: BinaryColumnValue) -> Result<Option<Self>> {
+        match value {
+            BinaryColumnValue::Null => Ok(None),
+            BinaryColumnValue::Float(n) => Ok(Some(n)),
+            _ => Err(Error::column_type_mismatch("f32", &value)),
+        }
+    }
+}
+
+impl FromColumnValue<BinaryColumnValue> for f64 {
+    fn from_value(value: BinaryColumnValue) -> Result<Option<Self>> {
+        match value {
+            BinaryColumnValue::Null => Ok(None),
+            BinaryColumnValue::Double(n) => Ok(Some(n)),
+            _ => Err(Error::column_type_mismatch("f64", &value)),
         }
     }
 }
