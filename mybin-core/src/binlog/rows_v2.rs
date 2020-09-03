@@ -1,7 +1,7 @@
 //! meaningful data structures and parsing logic of RowsEventV2
+use crate::bitmap;
 use crate::col::{BinaryColumnValue, ColumnMeta};
-use crate::row::Row;
-use crate::util::{bitmap_index, bitmap_iter, bitmap_mark};
+use crate::row::LogRow;
 use bytes::{Buf, Bytes};
 use bytes_parser::error::{Error, Result};
 use bytes_parser::my::ReadMyEnc;
@@ -128,7 +128,7 @@ pub struct RowsV2 {
     pub n_cols: u32,
     // represent before if DELETE, represent after if WRITE
     pub present_bitmap: Bytes,
-    pub rows: Vec<Row>,
+    pub rows: Vec<LogRow>,
 }
 
 impl<'c> ReadFromBytesWithContext<'c> for RowsV2 {
@@ -147,7 +147,7 @@ impl<'c> ReadFromBytesWithContext<'c> for RowsV2 {
         let bitmap_len = (n_cols + 7) >> 3;
         let present_bitmap = input.read_len(bitmap_len as usize)?;
         // present columns
-        let present_cols = bitmap_iter(present_bitmap.as_ref())
+        let present_cols = bitmap::to_iter(present_bitmap.as_ref(), 0)
             .take(n_cols as usize)
             .map(|b| if b { 1 } else { 0 })
             .sum();
@@ -159,16 +159,16 @@ impl<'c> ReadFromBytesWithContext<'c> for RowsV2 {
             let mut col_bitmap = Vec::from(present_bitmap.as_ref());
             let mut j = 0;
             for i in 0..present_cols {
-                while !bitmap_index(&col_bitmap, j) {
+                while !bitmap::index(&col_bitmap, j) {
                     j += 1;
                 }
-                bitmap_mark(
+                bitmap::mark(
                     &mut col_bitmap,
                     j,
-                    !bitmap_index(null_bitmap.as_ref(), i as usize),
+                    !bitmap::index(null_bitmap.as_ref(), i as usize),
                 );
             }
-            let row = Row::read_with_ctx(input, (n_cols as usize, &col_bitmap[..], col_metas))?;
+            let row = LogRow::read_with_ctx(input, (n_cols as usize, &col_bitmap[..], col_metas))?;
             rows.push(row);
         }
         Ok(RowsV2 {
@@ -206,12 +206,12 @@ impl<'c> ReadFromBytesWithContext<'c> for UpdateRowsV2 {
         let before_present_bitmap = input.read_len(bitmap_len as usize)?;
         let after_present_bitmap = input.read_len(bitmap_len as usize)?;
         // before present columns
-        let before_present_cols = bitmap_iter(before_present_bitmap.as_ref())
+        let before_present_cols = bitmap::to_iter(before_present_bitmap.as_ref(), 0)
             .take(n_cols as usize)
             .map(|b| if b { 1 } else { 0 })
             .sum();
         let before_null_bitmap_len = (before_present_cols + 7) >> 3;
-        let after_present_cols = bitmap_iter(after_present_bitmap.as_ref())
+        let after_present_cols = bitmap::to_iter(after_present_bitmap.as_ref(), 0)
             .take(n_cols as usize)
             .map(|b| if b { 1 } else { 0 })
             .sum();
@@ -224,17 +224,17 @@ impl<'c> ReadFromBytesWithContext<'c> for UpdateRowsV2 {
             let mut before_col_bitmap = Vec::from(before_present_bitmap.as_ref());
             let mut j = 0;
             for i in 0..before_present_cols {
-                while !bitmap_index(&before_col_bitmap, j) {
+                while !bitmap::index(&before_col_bitmap, j) {
                     j += 1;
                 }
-                bitmap_mark(
+                bitmap::mark(
                     &mut before_col_bitmap,
                     j,
-                    !bitmap_index(before_null_bitmap.as_ref(), i as usize),
+                    !bitmap::index(before_null_bitmap.as_ref(), i as usize),
                 );
             }
             let before_row =
-                Row::read_with_ctx(input, (n_cols as usize, &before_col_bitmap[..], col_metas))?;
+                LogRow::read_with_ctx(input, (n_cols as usize, &before_col_bitmap[..], col_metas))?;
 
             // after row processing
             let after_null_bitmap = input.read_len(after_null_bitmap_len as usize)?;
@@ -242,17 +242,17 @@ impl<'c> ReadFromBytesWithContext<'c> for UpdateRowsV2 {
             let mut after_col_bitmap = Vec::from(after_present_bitmap.as_ref());
             let mut j = 0;
             for i in 0..after_present_cols {
-                while !bitmap_index(&after_col_bitmap, j) {
+                while !bitmap::index(&after_col_bitmap, j) {
                     j += 1;
                 }
-                bitmap_mark(
+                bitmap::mark(
                     &mut after_col_bitmap,
                     j,
-                    !bitmap_index(after_null_bitmap.as_ref(), i as usize),
+                    !bitmap::index(after_null_bitmap.as_ref(), i as usize),
                 );
             }
             let after_row =
-                Row::read_with_ctx(input, (n_cols as usize, &after_col_bitmap[..], col_metas))?;
+                LogRow::read_with_ctx(input, (n_cols as usize, &after_col_bitmap[..], col_metas))?;
             rows.push(UpdateRow(before_row.0, after_row.0));
         }
         Ok(UpdateRowsV2 {

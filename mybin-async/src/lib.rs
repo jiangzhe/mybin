@@ -4,6 +4,8 @@ mod conn;
 mod error;
 mod msg;
 mod query;
+mod resultset;
+mod stmt;
 
 pub use error::*;
 

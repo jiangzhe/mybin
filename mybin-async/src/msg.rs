@@ -8,14 +8,6 @@ use std::pin::Pin;
 use std::sync::atomic::Ordering;
 use std::task::{Context, Poll};
 
-// internal struct to concat multiple packets
-// #[derive(Debug)]
-// pub struct RecvMsg {
-//     pub total_len: usize,
-//     // next pkt_nr
-//     pub pkt_nr: u8,
-// }
-
 #[derive(Debug, Clone, Copy)]
 enum MsgState {
     Len,

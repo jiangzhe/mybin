@@ -1,7 +1,10 @@
 use crate::auth_plugin::{AuthPlugin, MysqlNativePassword};
 use crate::error::{Error, Result};
 use crate::msg::{RecvMsgFuture, SendMsgFuture};
-use crate::query::{Query, QueryResultSetFuture};
+use crate::query::Query;
+use crate::resultset::new_result_set;
+use crate::resultset::ResultSet;
+use crate::stmt::Stmt;
 use async_net::TcpStream;
 use bytes::{Buf, BytesMut};
 use bytes_parser::{
@@ -9,7 +12,7 @@ use bytes_parser::{
 };
 use futures::{AsyncRead, AsyncWrite};
 use mybin_core::cmd::*;
-use mybin_core::col::ColumnDefinition;
+use mybin_core::col::{ColumnDefinition, TextColumnValue};
 use mybin_core::flag::{CapabilityFlags, StatusFlags};
 use mybin_core::handshake::{ConnectAttr, HandshakeClientResponse41, InitialHandshake};
 use mybin_core::packet::{HandshakeMessage, OkPacket};
@@ -304,8 +307,9 @@ where
         db_name: &str,
         attrs: Vec<ConnectAttr>,
     ) -> Result<()> {
-        // let (auth_plugin_name, auth_response) = gen_auth_resp(username, password, &self.auth_data)?;
-        let cmd = ComChangeUser::new(username, vec![], db_name, "mysql_native_password", vec![]);
+        // send empty auth data in first request
+        // and send read auth data in AuthSwitchResponse
+        let cmd = ComChangeUser::new(username, vec![], db_name, "mysql_native_password", attrs);
         let mut buf = BytesMut::new();
         cmd.write_with_ctx(&mut buf, &self.cap_flags)?;
         self.send_msg(buf.freeze(), true).await?;
@@ -326,6 +330,7 @@ where
         Ok(())
     }
 
+    /// ask the server to terminate a connection
     pub async fn process_kill(&mut self, conn_id: u32) -> Result<()> {
         let cmd = ComProcessKill::new(conn_id);
         self.send_msg(cmd, true).await?;
@@ -336,6 +341,7 @@ where
         }
     }
 
+    /// reset session state
     pub async fn reset_connection(&mut self) -> Result<()> {
         let cmd = ComResetConnection::new();
         self.send_msg(cmd, true).await?;
@@ -345,12 +351,45 @@ where
             ComResetConnectionResponse::Err(err) => Err(err.into()),
         }
     }
-}
 
-impl<S> Conn<S>
-where
-    S: AsyncRead + AsyncWrite + Clone + Unpin,
-{
+    /// enable or disable multiple statements for current connection
+    pub async fn set_multi_stmts(&mut self, multi_stmts: bool) -> Result<()> {
+        let cmd = ComSetOption::new(multi_stmts);
+        self.send_msg(cmd, true).await?;
+        let mut msg = self.recv_msg().await?;
+        match ComSetOptionResponse::read_with_ctx(&mut msg, &self.cap_flags)? {
+            ComSetOptionResponse::Eof(_) => {
+                if multi_stmts {
+                    self.cap_flags.insert(CapabilityFlags::MULTI_STATEMENTS);
+                } else {
+                    self.cap_flags.remove(CapabilityFlags::MULTI_STATEMENTS);
+                }
+                Ok(())
+            }
+            ComSetOptionResponse::Err(err) => Err(err.into()),
+        }
+    }
+
+    /// register a slave at the master
+    ///
+    /// should set slave_uuid before register as slave
+    pub async fn register_slave(&mut self, server_id: u32) -> Result<()> {
+        let cmd = ComRegisterSlave::anonymous(server_id);
+        self.send_msg(cmd, true).await?;
+        let mut msg = self.recv_msg().await?;
+        match ComRegisterSlaveResponse::read_with_ctx(&mut msg, &self.cap_flags)? {
+            ComRegisterSlaveResponse::Ok(_) => Ok(()),
+            ComRegisterSlaveResponse::Err(err) => Err(err.into()),
+        }
+    }
+
+    /// get a list of active threads
+    pub async fn process_info<'a>(&'a mut self) -> Result<ResultSet<'a, S, TextColumnValue>> {
+        let cmd = ComProcessInfo::new();
+        self.send_msg(cmd, true).await?;
+        new_result_set(self).await
+    }
+
     /// provide a handle that could send the server a text-based query that
     /// is executed immediately
     ///
@@ -360,10 +399,8 @@ where
         Query::new(self)
     }
 
-    /// get a list of active threads
-    pub fn process_info<'a>(&'a mut self) -> QueryResultSetFuture<'a, S> {
-        let cmd = ComProcessInfo::new();
-        QueryResultSetFuture::new(self, cmd)
+    pub fn stmt(&mut self) -> Stmt<S> {
+        Stmt::new(self)
     }
 }
 
@@ -393,41 +430,47 @@ pub struct ConnOpts {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+
+    pub(crate) async fn new_conn() -> Conn<async_net::TcpStream> {
+        let opts = ConnOpts {
+            username: "root".to_owned(),
+            password: "password".to_owned(),
+            database: "".to_owned(),
+        };
+        let mut conn = Conn::connect("127.0.0.1:13306").await.unwrap();
+        conn.handshake(opts).await.unwrap();
+        conn
+    }
 
     #[smol_potat::test]
     async fn test_conn_and_handshake() {
-        let mut conn = Conn::connect("127.0.0.1:13306").await.unwrap();
-        conn.handshake(conn_opts()).await.unwrap();
+        new_conn().await;
     }
 
     #[smol_potat::test]
     async fn test_quit() {
-        let mut conn = Conn::connect("127.0.0.1:13306").await.unwrap();
-        conn.handshake(conn_opts()).await.unwrap();
+        let conn = new_conn().await;
         conn.quit().await.unwrap();
     }
 
     #[smol_potat::test]
     async fn test_init_db_success() {
-        let mut conn = Conn::connect("127.0.0.1:13306").await.unwrap();
-        conn.handshake(conn_opts()).await.unwrap();
+        let mut conn = new_conn().await;
         conn.init_db("mysql").await.unwrap();
     }
 
     #[smol_potat::test]
     async fn test_init_db_fail() {
-        let mut conn = Conn::connect("127.0.0.1:13306").await.unwrap();
-        conn.handshake(conn_opts()).await.unwrap();
+        let mut conn = new_conn().await;
         let fail = conn.init_db("not_exists").await;
         dbg!(fail.unwrap_err())
     }
 
     #[smol_potat::test]
     async fn test_field_list_success() {
-        let mut conn = Conn::connect("127.0.0.1:13306").await.unwrap();
-        conn.handshake(conn_opts()).await.unwrap();
+        let mut conn = new_conn().await;
         conn.init_db("mysql").await.unwrap();
         let col_defs = conn.field_list("user", "%").await.unwrap();
         dbg!(col_defs);
@@ -435,8 +478,7 @@ mod tests {
 
     #[smol_potat::test]
     async fn test_field_list_fail() {
-        let mut conn = Conn::connect("127.0.0.1:13306").await.unwrap();
-        conn.handshake(conn_opts()).await.unwrap();
+        let mut conn = new_conn().await;
         conn.init_db("mysql").await.unwrap();
         let fail = conn.field_list("not_exists", "%").await;
         dbg!(fail.unwrap_err());
@@ -445,30 +487,26 @@ mod tests {
     #[smol_potat::test]
     #[should_panic]
     async fn test_create_db_already_deprecated() {
-        let mut conn = Conn::connect("127.0.0.1:13306").await.unwrap();
-        conn.handshake(conn_opts()).await.unwrap();
+        let mut conn = new_conn().await;
         conn.create_db("create_db_test1").await.unwrap();
     }
 
     #[smol_potat::test]
     #[should_panic]
     async fn test_drop_db_already_deprecated() {
-        let mut conn = Conn::connect("127.0.0.1:13306").await.unwrap();
-        conn.handshake(conn_opts()).await.unwrap();
+        let mut conn = new_conn().await;
         conn.drop_db("drop_db_test1").await.unwrap();
     }
 
     #[smol_potat::test]
     async fn test_refresh() {
-        let mut conn = Conn::connect("127.0.0.1:13306").await.unwrap();
-        conn.handshake(conn_opts()).await.unwrap();
+        let mut conn = new_conn().await;
         conn.refresh(RefreshFlags::GRANT).await.unwrap();
     }
 
     #[smol_potat::test]
     async fn test_statistics() {
-        let mut conn = Conn::connect("127.0.0.1:13306").await.unwrap();
-        conn.handshake(conn_opts()).await.unwrap();
+        let mut conn = new_conn().await;
         let stats = conn.statistics().await.unwrap();
         dbg!(stats);
     }
@@ -476,8 +514,7 @@ mod tests {
     #[smol_potat::test]
     async fn test_process_info() {
         use futures::StreamExt;
-        let mut conn = Conn::connect("127.0.0.1:13306").await.unwrap();
-        conn.handshake(conn_opts()).await.unwrap();
+        let mut conn = new_conn().await;
         let mut process_info = conn.process_info().await.unwrap();
         while let Some(row) = process_info.next().await {
             dbg!(row);
@@ -486,48 +523,48 @@ mod tests {
 
     #[smol_potat::test]
     async fn test_process_kill_success() {
+        use bytes::Buf;
         use futures::StreamExt;
-        let mut conn1 = Conn::connect("127.0.0.1:13306").await.unwrap();
-        conn1.handshake(conn_opts()).await.unwrap();
-
-        let mut conn2 = Conn::connect("127.0.0.1:13306").await.unwrap();
-        conn2.handshake(conn_opts()).await.unwrap();
-        let mut process_ids = Vec::new();
-        let mut process_info = conn2.process_info().await.unwrap();
-        while let Some(row) = process_info.next().await {
-            let id = std::str::from_utf8(row[0].as_ref().unwrap().bytes()).unwrap();
-            let id: u32 = id.parse().unwrap();
-            process_ids.push(id);
-        }
-        conn2.process_kill(process_ids[0]).await.unwrap();
+        let mut conn1 = new_conn().await;
+        let mut conn_id_row = conn1
+            .query()
+            .qry("select connection_id()")
+            .await
+            .unwrap()
+            .next()
+            .await
+            .unwrap();
+        let conn_id_bytes = conn_id_row.pop().unwrap().unwrap();
+        let conn_id: u32 = String::from_utf8_lossy(conn_id_bytes.bytes())
+            .parse()
+            .unwrap();
+        log::debug!("connection_id={}", conn_id);
+        let mut conn2 = new_conn().await;
+        conn2.process_kill(conn_id).await.unwrap();
     }
 
     #[smol_potat::test]
     #[should_panic]
     async fn test_process_kill_fail() {
-        let mut conn = Conn::connect("127.0.0.1:13306").await.unwrap();
-        conn.handshake(conn_opts()).await.unwrap();
+        let mut conn = new_conn().await;
         conn.process_kill(38475836).await.unwrap();
     }
 
     #[smol_potat::test]
     async fn test_debug() {
-        let mut conn = Conn::connect("127.0.0.1:13306").await.unwrap();
-        conn.handshake(conn_opts()).await.unwrap();
+        let mut conn = new_conn().await;
         conn.debug().await.unwrap();
     }
 
     #[smol_potat::test]
     async fn test_ping() {
-        let mut conn = Conn::connect("127.0.0.1:13306").await.unwrap();
-        conn.handshake(conn_opts()).await.unwrap();
+        let mut conn = new_conn().await;
         conn.ping().await.unwrap();
     }
 
     #[smol_potat::test]
     async fn test_change_user() {
-        let mut conn = Conn::connect("127.0.0.1:13306").await.unwrap();
-        conn.handshake(conn_opts()).await.unwrap();
+        let mut conn = new_conn().await;
         conn.change_user("root", "password", "", vec![])
             .await
             .unwrap();
@@ -535,16 +572,35 @@ mod tests {
 
     #[smol_potat::test]
     async fn test_reset_connection() {
-        let mut conn = Conn::connect("127.0.0.1:13306").await.unwrap();
-        conn.handshake(conn_opts()).await.unwrap();
+        let mut conn = new_conn().await;
         conn.reset_connection().await.unwrap();
     }
 
-    fn conn_opts() -> ConnOpts {
-        ConnOpts {
-            username: "root".to_owned(),
-            password: "password".to_owned(),
-            database: "".to_owned(),
+    #[smol_potat::test]
+    async fn test_set_multi_stmts() {
+        let mut conn = new_conn().await;
+        conn.set_multi_stmts(true).await.unwrap();
+    }
+
+    #[smol_potat::test]
+    async fn test_register_slave() {
+        use futures::StreamExt;
+        let mut conn = new_conn().await;
+        // set slave_id before register
+        // this is important
+        // otherwise, the query 'SHOW SLAVE HOSTS' will return
+        // malformed result set (missing SLAVE_UUID)
+        conn.query()
+            .exec(format!(
+                "SET @slave_uuid = '{}'",
+                "e919a265-ede3-11ea-8c72-0242ac110002"
+            ))
+            .await
+            .unwrap();
+        conn.register_slave(1234567).await.unwrap();
+        let mut rs = conn.query().qry("SHOW SLAVE HOSTS").await.unwrap();
+        while let Some(row) = rs.next().await {
+            dbg!(row);
         }
     }
 }
