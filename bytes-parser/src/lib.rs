@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! essential parsing of bytes
 //!
 //! inspired by nom parser combinator (https://github.com/Geal/nom)
@@ -8,7 +9,6 @@ pub mod util;
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 pub use error::*;
-use std::convert::TryInto;
 
 /// global empty byte array as place holder
 pub const EMPTY_BYTE_ARRAY: [u8; 0] = [];

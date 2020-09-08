@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 mod auth_plugin;
 mod binlog;
 mod conn;

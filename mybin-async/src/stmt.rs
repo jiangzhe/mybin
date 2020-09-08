@@ -3,11 +3,16 @@ use crate::error::{Error, Needed, Result};
 use crate::resultset::{new_result_set, ResultSet};
 use bytes::{Buf, Bytes};
 use bytes_parser::{ReadFromBytes, ReadFromBytesWithContext};
-use futures::{AsyncRead, AsyncWrite};
-use mybin_core::cmd::{ComStmtExecute, ComStmtPrepare, StmtExecValue, StmtPrepareOk};
+use futures::{ready, AsyncRead, AsyncWrite};
+use mybin_core::cmd::{ComStmtClose, ComStmtExecute, ComStmtPrepare, StmtPrepareOk};
 use mybin_core::col::{BinaryColumnValue, ColumnDefinition};
 use mybin_core::flag::CapabilityFlags;
 use mybin_core::packet::{EofPacket, ErrPacket, OkPacket};
+use mybin_core::stmt::StmtColumnValue;
+use std::future::Future;
+use std::marker::PhantomData;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
 #[derive(Debug)]
 pub struct Stmt<'s, S> {
@@ -94,7 +99,7 @@ impl<'s, S> PreparedStmt<'s, S>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    pub async fn exec(self, params: Vec<StmtExecValue>) -> Result<()> {
+    pub async fn exec(&mut self, params: Vec<StmtColumnValue>) -> Result<()> {
         let cmd = ComStmtExecute::single(self.stmt_id, params);
         self.conn.send_msg(cmd, true).await?;
         loop {
@@ -116,13 +121,71 @@ where
         }
     }
 
+    pub async fn exec_close(mut self, params: Vec<StmtColumnValue>) -> Result<()> {
+        match self.exec(params).await {
+            Ok(_) => {
+                let _ = self.close().await;
+                Ok(())
+            }
+            Err(e) => {
+                let _ = self.close().await;
+                Err(e)
+            }
+        }
+    }
+
+    /// close the statement
+    ///
+    /// close() should be called to release the prepared
+    /// statement on server side
+    pub async fn close(self) -> Result<()> {
+        let cmd = ComStmtClose::new(self.stmt_id);
+        self.conn.send_msg(cmd, true).await
+    }
+}
+
+impl<'s, S> PreparedStmt<'s, S>
+where
+    S: AsyncRead + AsyncWrite + Clone + Unpin,
+{
     pub async fn qry(
         self,
-        params: Vec<StmtExecValue>,
-    ) -> Result<ResultSet<'s, S, BinaryColumnValue>> {
+        params: Vec<StmtColumnValue>,
+    ) -> Result<(ResultSet<'s, S, BinaryColumnValue>, CloseStmtFuture<'s, S>)> {
         let cmd = ComStmtExecute::single(self.stmt_id, params);
         self.conn.send_msg(cmd, true).await?;
-        new_result_set(self.conn).await
+        let close = CloseStmtFuture {
+            conn: self.conn.clone(),
+            stmt_id: self.stmt_id,
+            _marker: PhantomData,
+        };
+        let rs = new_result_set(self.conn).await?;
+        Ok((rs, close))
+    }
+}
+
+/// special handle to close the statement
+#[must_use = "futures do nothing unless you `.await` or poll them"]
+#[derive(Debug)]
+pub struct CloseStmtFuture<'s, S: 's> {
+    conn: Conn<S>,
+    stmt_id: u32,
+    _marker: PhantomData<&'s S>,
+}
+
+impl<'s, S: 's> Future for CloseStmtFuture<'s, S>
+where
+    S: AsyncWrite + Unpin,
+{
+    type Output = Result<()>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let cmd = ComStmtClose::new(self.stmt_id);
+        let mut send_fut = self.conn.send_msg(cmd, true);
+        match ready!(Pin::new(&mut send_fut).poll(cx)) {
+            Ok(_) => Poll::Ready(Ok(())),
+            Err(err) => Poll::Ready(Err(err.into())),
+        }
     }
 }
 
@@ -131,7 +194,7 @@ mod tests {
     use crate::conn::tests::new_conn;
     use bigdecimal::BigDecimal;
     use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
-    use mybin_core::cmd::StmtExecValue;
+    use mybin_core::stmt::StmtColumnValue;
 
     #[smol_potat::test]
     async fn test_stmt_exec_success() {
@@ -156,6 +219,42 @@ mod tests {
     }
 
     #[smol_potat::test]
+    async fn test_stmt_exec_multi() {
+        let mut conn = new_conn().await;
+        conn.query()
+            .exec("create database if not exists bintest1")
+            .await
+            .unwrap();
+        conn.init_db("bintest1").await.unwrap();
+        conn.query()
+            .exec("drop table if exists exec_multi")
+            .await
+            .unwrap();
+        conn.query()
+            .exec("create table exec_multi (id int)")
+            .await
+            .unwrap();
+        let mut stmt = conn
+            .stmt()
+            .prepare("insert into exec_multi (id) values (?)")
+            .await
+            .unwrap();
+        stmt.exec(vec![StmtColumnValue::new_int(1)]).await.unwrap();
+        stmt.exec(vec![StmtColumnValue::new_int(2)]).await.unwrap();
+        stmt.exec(vec![StmtColumnValue::new_int(3)]).await.unwrap();
+        stmt.close().await.unwrap();
+        let count = conn
+            .query()
+            .qry("select * from exec_multi")
+            .await
+            .unwrap()
+            .count()
+            .await
+            .unwrap();
+        assert_eq!(3, count);
+    }
+
+    #[smol_potat::test]
     async fn test_stmt_qry_empty() {
         use futures::StreamExt;
         let mut conn = new_conn().await;
@@ -177,16 +276,18 @@ mod tests {
             .await
             .unwrap();
         log::debug!("stmt prepared");
-        let mut rs = prepared.qry(vec![]).await.unwrap();
+        let (mut rs, close) = prepared.qry(vec![]).await.unwrap();
         while let Some(row) = rs.next().await {
             dbg!(row);
         }
+        close.await.unwrap();
     }
 
     #[smol_potat::test]
     async fn test_stmt_table_and_column() {
+        use bytes::Bytes;
         use futures::StreamExt;
-        use mybin_core::resultset::{MyBit, MyBytes, MyI24, MyString, MyTime, MyU24, MyYear};
+        use mybin_core::resultset::{MyBit, MyI24, MyTime, MyU24, MyYear};
         use std::str::FromStr;
         let mut conn = new_conn().await;
         // create database
@@ -281,46 +382,46 @@ mod tests {
             .await
             .unwrap()
             .exec(vec![
-                StmtExecValue::new_decimal(BigDecimal::from(-100_i64)),
-                StmtExecValue::new_tinyint(-5),
-                StmtExecValue::new_unsigned_tinyint(18),
-                StmtExecValue::new_smallint(-4892),
-                StmtExecValue::new_unsigned_smallint(32003),
-                StmtExecValue::new_int(-159684321),
-                StmtExecValue::new_unsigned_int(2003495865),
-                StmtExecValue::new_float(-0.5),
-                StmtExecValue::new_float(1.5),
-                StmtExecValue::new_double(-0.625),
-                StmtExecValue::new_double(1.625),
-                StmtExecValue::new_timestamp(NaiveDate::from_ymd(2020, 1, 1).and_hms(1, 2, 3)),
-                StmtExecValue::new_bigint(-12948340587434),
-                StmtExecValue::new_unsigned_bigint(9348578923762),
-                StmtExecValue::new_int(-90034),
-                StmtExecValue::new_unsigned_int(87226),
-                StmtExecValue::new_date(NaiveDate::from_ymd(2020, 12, 31)),
-                StmtExecValue::new_time(true, 8, NaiveTime::from_hms(20, 30, 40)),
-                StmtExecValue::new_datetime(
+                StmtColumnValue::new_decimal(BigDecimal::from(-100_i64)),
+                StmtColumnValue::new_tinyint(-5),
+                StmtColumnValue::new_unsigned_tinyint(18),
+                StmtColumnValue::new_smallint(-4892),
+                StmtColumnValue::new_unsigned_smallint(32003),
+                StmtColumnValue::new_int(-159684321),
+                StmtColumnValue::new_unsigned_int(2003495865),
+                StmtColumnValue::new_float(-0.5),
+                StmtColumnValue::new_float(1.5),
+                StmtColumnValue::new_double(-0.625),
+                StmtColumnValue::new_double(1.625),
+                StmtColumnValue::new_timestamp(NaiveDate::from_ymd(2020, 1, 1).and_hms(1, 2, 3)),
+                StmtColumnValue::new_bigint(-12948340587434),
+                StmtColumnValue::new_unsigned_bigint(9348578923762),
+                StmtColumnValue::new_int(-90034),
+                StmtColumnValue::new_unsigned_int(87226),
+                StmtColumnValue::new_date(NaiveDate::from_ymd(2020, 12, 31)),
+                StmtColumnValue::new_time(true, 8, NaiveTime::from_hms(20, 30, 40)),
+                StmtColumnValue::new_datetime(
                     NaiveDate::from_ymd(2012, 6, 7).and_hms_micro(15, 38, 46, 92000),
                 ),
-                StmtExecValue::new_year(2021),
-                StmtExecValue::new_varchar("hello, world"),
-                StmtExecValue::new_varchar("hello, java"),
-                StmtExecValue::new_bit(vec![0b01100001, 0b10001100]),
-                StmtExecValue::new_decimal(BigDecimal::from_str("123456789.22").unwrap()),
-                StmtExecValue::new_blob(b"hello, tinyblob".to_vec()),
-                StmtExecValue::new_blob(b"hello, mediumblob".to_vec()),
-                StmtExecValue::new_blob(b"hello, longblob".to_vec()),
-                StmtExecValue::new_blob(b"hello, blob".to_vec()),
-                StmtExecValue::new_text("hello, latin1"),
-                StmtExecValue::new_text("hello, utf8"),
-                StmtExecValue::new_text("hello, binary"),
-                StmtExecValue::new_bool(true),
-                StmtExecValue::new_char("fixed"),
+                StmtColumnValue::new_year(2021),
+                StmtColumnValue::new_varchar("hello, world"),
+                StmtColumnValue::new_varchar("hello, java"),
+                StmtColumnValue::new_bit(vec![0b01100001, 0b10001100]),
+                StmtColumnValue::new_decimal(BigDecimal::from_str("123456789.22").unwrap()),
+                StmtColumnValue::new_blob(b"hello, tinyblob".to_vec()),
+                StmtColumnValue::new_blob(b"hello, mediumblob".to_vec()),
+                StmtColumnValue::new_blob(b"hello, longblob".to_vec()),
+                StmtColumnValue::new_blob(b"hello, blob".to_vec()),
+                StmtColumnValue::new_text("hello, latin1"),
+                StmtColumnValue::new_text("hello, utf8"),
+                StmtColumnValue::new_text("hello, binary"),
+                StmtColumnValue::new_bool(true),
+                StmtColumnValue::new_char("fixed"),
             ])
             .await
             .unwrap();
         // select data
-        let mut rs = conn
+        let (mut rs, close) = conn
             .stmt()
             .prepare("SELECT * from bintest1.typetest_exec")
             .await
@@ -331,72 +432,73 @@ mod tests {
         let extractor = rs.extractor();
         while let Some(row) = rs.next().await {
             dbg!(&row);
-            let c1: BigDecimal = extractor.get_named_col(&row, "c1").unwrap().unwrap();
+            let c1: BigDecimal = extractor.get_named_col(&row, "c1").unwrap();
             dbg!(c1);
-            let c2: i8 = extractor.get_named_col(&row, "c2").unwrap().unwrap();
+            let c2: i8 = extractor.get_named_col(&row, "c2").unwrap();
             dbg!(c2);
-            let c3: u8 = extractor.get_named_col(&row, "c3").unwrap().unwrap();
+            let c3: u8 = extractor.get_named_col(&row, "c3").unwrap();
             dbg!(c3);
-            let c4: i16 = extractor.get_named_col(&row, "c4").unwrap().unwrap();
+            let c4: i16 = extractor.get_named_col(&row, "c4").unwrap();
             dbg!(c4);
-            let c5: u16 = extractor.get_named_col(&row, "c5").unwrap().unwrap();
+            let c5: u16 = extractor.get_named_col(&row, "c5").unwrap();
             dbg!(c5);
-            let c6: i32 = extractor.get_named_col(&row, "c6").unwrap().unwrap();
+            let c6: i32 = extractor.get_named_col(&row, "c6").unwrap();
             dbg!(c6);
-            let c7: u32 = extractor.get_named_col(&row, "c7").unwrap().unwrap();
+            let c7: u32 = extractor.get_named_col(&row, "c7").unwrap();
             dbg!(c7);
-            let c8: f32 = extractor.get_named_col(&row, "c8").unwrap().unwrap();
+            let c8: f32 = extractor.get_named_col(&row, "c8").unwrap();
             dbg!(c8);
-            let c9: f32 = extractor.get_named_col(&row, "c9").unwrap().unwrap();
+            let c9: f32 = extractor.get_named_col(&row, "c9").unwrap();
             dbg!(c9);
-            let c10: f64 = extractor.get_named_col(&row, "c10").unwrap().unwrap();
+            let c10: f64 = extractor.get_named_col(&row, "c10").unwrap();
             dbg!(c10);
-            let c11: f64 = extractor.get_named_col(&row, "c11").unwrap().unwrap();
+            let c11: f64 = extractor.get_named_col(&row, "c11").unwrap();
             dbg!(c11);
-            let c12: NaiveDateTime = extractor.get_named_col(&row, "c12").unwrap().unwrap();
+            let c12: NaiveDateTime = extractor.get_named_col(&row, "c12").unwrap();
             dbg!(c12);
-            let c13: i64 = extractor.get_named_col(&row, "c13").unwrap().unwrap();
+            let c13: i64 = extractor.get_named_col(&row, "c13").unwrap();
             dbg!(c13);
-            let c14: u64 = extractor.get_named_col(&row, "c14").unwrap().unwrap();
+            let c14: u64 = extractor.get_named_col(&row, "c14").unwrap();
             dbg!(c14);
-            let c15: MyI24 = extractor.get_named_col(&row, "c15").unwrap().unwrap();
+            let c15: MyI24 = extractor.get_named_col(&row, "c15").unwrap();
             dbg!(c15);
-            let c16: MyU24 = extractor.get_named_col(&row, "c16").unwrap().unwrap();
+            let c16: MyU24 = extractor.get_named_col(&row, "c16").unwrap();
             dbg!(c16);
-            let c17: NaiveDate = extractor.get_named_col(&row, "c17").unwrap().unwrap();
+            let c17: NaiveDate = extractor.get_named_col(&row, "c17").unwrap();
             dbg!(c17);
-            let c18: MyTime = extractor.get_named_col(&row, "c18").unwrap().unwrap();
+            let c18: MyTime = extractor.get_named_col(&row, "c18").unwrap();
             dbg!(c18);
-            let c19: NaiveDateTime = extractor.get_named_col(&row, "c19").unwrap().unwrap();
+            let c19: NaiveDateTime = extractor.get_named_col(&row, "c19").unwrap();
             dbg!(c19);
-            let c20: MyYear = extractor.get_named_col(&row, "c20").unwrap().unwrap();
+            let c20: MyYear = extractor.get_named_col(&row, "c20").unwrap();
             dbg!(c20);
-            let c21: MyString = extractor.get_named_col(&row, "c21").unwrap().unwrap();
+            let c21: String = extractor.get_named_col(&row, "c21").unwrap();
             dbg!(c21);
-            let c22: MyString = extractor.get_named_col(&row, "c22").unwrap().unwrap();
+            let c22: String = extractor.get_named_col(&row, "c22").unwrap();
             dbg!(c22);
-            let c23: MyBit = extractor.get_named_col(&row, "c23").unwrap().unwrap();
+            let c23: MyBit = extractor.get_named_col(&row, "c23").unwrap();
             dbg!(c23);
-            let c24: BigDecimal = extractor.get_named_col(&row, "c24").unwrap().unwrap();
+            let c24: BigDecimal = extractor.get_named_col(&row, "c24").unwrap();
             dbg!(c24);
-            let c25: MyBytes = extractor.get_named_col(&row, "c25").unwrap().unwrap();
+            let c25: Bytes = extractor.get_named_col(&row, "c25").unwrap();
             dbg!(c25);
-            let c26: MyBytes = extractor.get_named_col(&row, "c26").unwrap().unwrap();
+            let c26: Bytes = extractor.get_named_col(&row, "c26").unwrap();
             dbg!(c26);
-            let c27: MyBytes = extractor.get_named_col(&row, "c27").unwrap().unwrap();
+            let c27: Bytes = extractor.get_named_col(&row, "c27").unwrap();
             dbg!(c27);
-            let c28: MyBytes = extractor.get_named_col(&row, "c28").unwrap().unwrap();
+            let c28: Bytes = extractor.get_named_col(&row, "c28").unwrap();
             dbg!(c28);
-            let c29: MyBytes = extractor.get_named_col(&row, "c29").unwrap().unwrap();
+            let c29: String = extractor.get_named_col(&row, "c29").unwrap();
             dbg!(c29);
-            let c30: MyBytes = extractor.get_named_col(&row, "c30").unwrap().unwrap();
+            let c30: String = extractor.get_named_col(&row, "c30").unwrap();
             dbg!(c30);
-            let c31: MyBytes = extractor.get_named_col(&row, "c31").unwrap().unwrap();
+            let c31: String = extractor.get_named_col(&row, "c31").unwrap();
             dbg!(c31);
-            let c32: bool = extractor.get_named_col(&row, "c32").unwrap().unwrap();
+            let c32: bool = extractor.get_named_col(&row, "c32").unwrap();
             dbg!(c32);
-            let c33: MyString = extractor.get_named_col(&row, "c33").unwrap().unwrap();
+            let c33: String = extractor.get_named_col(&row, "c33").unwrap();
             dbg!(c33);
         }
+        close.await.unwrap();
     }
 }

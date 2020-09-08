@@ -23,7 +23,7 @@ where
     }
 
     /// execute a query
-    /// 
+    ///
     /// the query should not return any rows
     pub async fn exec<Q: Into<String>>(self, qry: Q) -> Result<()> {
         // let qry = ComQuery::new(qry);
@@ -62,7 +62,7 @@ mod tests {
     use bigdecimal::BigDecimal;
     use chrono::{NaiveDate, NaiveDateTime};
     use futures::stream::StreamExt;
-    use mybin_core::resultset::{MyBit, MyBytes, MyI24, MyString, MyTime, MyU24, MyYear};
+    use mybin_core::resultset::{MyBit, MyI24, MyTime, MyU24, MyYear};
 
     #[smol_potat::test]
     async fn test_query_set() {
@@ -238,70 +238,72 @@ mod tests {
         let extractor = rs.extractor();
         while let Some(row) = rs.next().await {
             dbg!(&row);
-            let c1: BigDecimal = extractor.get_named_col(&row, "c1").unwrap().unwrap();
+            let c1: BigDecimal = extractor.get_named_col(&row, "c1").unwrap();
             dbg!(c1);
-            let c2: i8 = extractor.get_named_col(&row, "c2").unwrap().unwrap();
+            let c2: i8 = extractor.get_named_col(&row, "c2").unwrap();
             dbg!(c2);
-            let c3: u8 = extractor.get_named_col(&row, "c3").unwrap().unwrap();
+            let c3: u8 = extractor.get_named_col(&row, "c3").unwrap();
             dbg!(c3);
-            let c4: i16 = extractor.get_named_col(&row, "c4").unwrap().unwrap();
+            let c4: i16 = extractor.get_named_col(&row, "c4").unwrap();
             dbg!(c4);
-            let c5: u16 = extractor.get_named_col(&row, "c5").unwrap().unwrap();
+            let c5: u16 = extractor.get_named_col(&row, "c5").unwrap();
             dbg!(c5);
-            let c6: i32 = extractor.get_named_col(&row, "c6").unwrap().unwrap();
+            let c6: i32 = extractor.get_named_col(&row, "c6").unwrap();
             dbg!(c6);
-            let c7: u32 = extractor.get_named_col(&row, "c7").unwrap().unwrap();
+            let c7: u32 = extractor.get_named_col(&row, "c7").unwrap();
             dbg!(c7);
-            let c8: f32 = extractor.get_named_col(&row, "c8").unwrap().unwrap();
+            let c8: f32 = extractor.get_named_col(&row, "c8").unwrap();
             dbg!(c8);
-            let c9: f32 = extractor.get_named_col(&row, "c9").unwrap().unwrap();
+            let c9: f32 = extractor.get_named_col(&row, "c9").unwrap();
             dbg!(c9);
-            let c10: f64 = extractor.get_named_col(&row, "c10").unwrap().unwrap();
+            let c10: f64 = extractor.get_named_col(&row, "c10").unwrap();
             dbg!(c10);
-            let c11: f64 = extractor.get_named_col(&row, "c11").unwrap().unwrap();
+            let c11: f64 = extractor.get_named_col(&row, "c11").unwrap();
             dbg!(c11);
-            let c12: NaiveDateTime = extractor.get_named_col(&row, "c12").unwrap().unwrap();
+            let c12: NaiveDateTime = extractor.get_named_col(&row, "c12").unwrap();
             dbg!(c12);
-            let c13: i64 = extractor.get_named_col(&row, "c13").unwrap().unwrap();
+            let c13: i64 = extractor.get_named_col(&row, "c13").unwrap();
             dbg!(c13);
-            let c14: u64 = extractor.get_named_col(&row, "c14").unwrap().unwrap();
+            let c14: u64 = extractor.get_named_col(&row, "c14").unwrap();
             dbg!(c14);
-            let c15: MyI24 = extractor.get_named_col(&row, "c15").unwrap().unwrap();
+            let c15: MyI24 = extractor.get_named_col(&row, "c15").unwrap();
             dbg!(c15);
-            let c16: MyU24 = extractor.get_named_col(&row, "c16").unwrap().unwrap();
+            let c16: MyU24 = extractor.get_named_col(&row, "c16").unwrap();
             dbg!(c16);
-            let c17: NaiveDate = extractor.get_named_col(&row, "c17").unwrap().unwrap();
+            let c17: NaiveDate = extractor.get_named_col(&row, "c17").unwrap();
             dbg!(c17);
-            let c18: MyTime = extractor.get_named_col(&row, "c18").unwrap().unwrap();
+            let c18: MyTime = extractor.get_named_col(&row, "c18").unwrap();
             dbg!(c18);
-            let c19: NaiveDateTime = extractor.get_named_col(&row, "c19").unwrap().unwrap();
+            let c19: NaiveDateTime = extractor.get_named_col(&row, "c19").unwrap();
             dbg!(c19);
-            let c20: MyYear = extractor.get_named_col(&row, "c20").unwrap().unwrap();
+            let c20: MyYear = extractor.get_named_col(&row, "c20").unwrap();
             dbg!(c20);
-            let c21: MyString = extractor.get_named_col(&row, "c21").unwrap().unwrap();
+            let c21: String = extractor.get_named_col(&row, "c21").unwrap();
             dbg!(c21);
-            let c22: MyString = extractor.get_named_col(&row, "c22").unwrap().unwrap();
+            let c22: String = extractor.get_named_col(&row, "c22").unwrap();
             dbg!(c22);
-            let c23: MyBit = extractor.get_named_col(&row, "c23").unwrap().unwrap();
+            let c23: MyBit = extractor.get_named_col(&row, "c23").unwrap();
             dbg!(c23);
-            let c24: BigDecimal = extractor.get_named_col(&row, "c24").unwrap().unwrap();
+            let c24: BigDecimal = extractor.get_named_col(&row, "c24").unwrap();
             dbg!(c24);
-            let c25: MyBytes = extractor.get_named_col(&row, "c25").unwrap().unwrap();
+            let c25: String = extractor.get_named_col(&row, "c25").unwrap();
             dbg!(c25);
-            let c26: MyBytes = extractor.get_named_col(&row, "c26").unwrap().unwrap();
+            let c26: String = extractor.get_named_col(&row, "c26").unwrap();
             dbg!(c26);
-            let c27: MyBytes = extractor.get_named_col(&row, "c27").unwrap().unwrap();
+            let c27: String = extractor.get_named_col(&row, "c27").unwrap();
             dbg!(c27);
-            let c28: MyBytes = extractor.get_named_col(&row, "c28").unwrap().unwrap();
+            let c28: String = extractor.get_named_col(&row, "c28").unwrap();
             dbg!(c28);
-            let c29: MyString = extractor.get_named_col(&row, "c29").unwrap().unwrap();
+            let c29: String = extractor.get_named_col(&row, "c29").unwrap();
             dbg!(c29);
-            let c30: MyString = extractor.get_named_col(&row, "c30").unwrap().unwrap();
+            let c30: String = extractor.get_named_col(&row, "c30").unwrap();
             dbg!(c30);
-            let c31: MyString = extractor.get_named_col(&row, "c31").unwrap().unwrap();
+            let c31: String = extractor.get_named_col(&row, "c31").unwrap();
             dbg!(c31);
-            let c32: bool = extractor.get_named_col(&row, "c32").unwrap().unwrap();
+            let c32: bool = extractor.get_named_col(&row, "c32").unwrap();
             dbg!(c32);
+            let c33: String = extractor.get_named_col(&row, "c33").unwrap();
+            dbg!(c33);
         }
     }
 
@@ -342,13 +344,13 @@ mod tests {
         let extractor = rs.extractor();
         while let Some(row) = rs.next().await {
             dbg!(&row);
-            let id: u32 = extractor.get_col(&row, 0).unwrap().unwrap();
+            let id: u32 = extractor.get_col(&row, 0).unwrap();
             dbg!(id);
-            let named_id: u32 = extractor.get_named_col(&row, "id").unwrap().unwrap();
+            let named_id: u32 = extractor.get_named_col(&row, "id").unwrap();
             dbg!(named_id);
-            let ts: NaiveDateTime = extractor.get_col(&row, 1).unwrap().unwrap();
+            let ts: NaiveDateTime = extractor.get_col(&row, 1).unwrap();
             dbg!(ts);
-            let named_ts: NaiveDateTime = extractor.get_named_col(&row, "ts").unwrap().unwrap();
+            let named_ts: NaiveDateTime = extractor.get_named_col(&row, "ts").unwrap();
             dbg!(named_ts);
         }
     }
@@ -357,7 +359,7 @@ mod tests {
     async fn test_result_set_with_mapper() {
         use bytes::Buf;
         use mybin_core::col::TextColumnValue;
-        use mybin_core::resultset::ResultSetColExtractor;
+        use mybin_core::resultset::ColumnExtractor;
         #[derive(Debug)]
         struct IdAndName {
             id: u32,
@@ -370,14 +372,11 @@ mod tests {
             .qry("select 1 as id, 'hello' as name")
             .await
             .unwrap();
-        let mut rs = rs.map_rows(
-            |extractor: &ResultSetColExtractor, row: Vec<TextColumnValue>| {
-                let id: u32 = extractor.get_named_col(&row, "id").unwrap().unwrap();
-                let name: MyString = extractor.get_named_col(&row, "name").unwrap().unwrap();
-                let name = String::from_utf8(Vec::from(name.0.bytes())).unwrap();
-                IdAndName { id, name }
-            },
-        );
+        let mut rs = rs.map_rows(|extractor: &ColumnExtractor, row: Vec<TextColumnValue>| {
+            let id: u32 = extractor.get_named_col(&row, "id").unwrap();
+            let name: String = extractor.get_named_col(&row, "name").unwrap();
+            IdAndName { id, name }
+        });
         while let Some(obj) = rs.next().await {
             dbg!(obj);
         }

@@ -9,6 +9,7 @@ use bytes_parser::{ReadFromBytesWithContext, WriteBytesExt, WriteToBytes};
 /// get column definitions of a table
 ///
 /// deprecated, use SHOW COLUMNS instead
+#[derive(Debug)]
 pub struct ComFieldList {
     pub cmd: Command,
     pub table: String,
@@ -36,6 +37,7 @@ impl WriteToBytes for ComFieldList {
     }
 }
 
+#[derive(Debug)]
 pub enum ComFieldListResponse {
     ColDef(ColumnDefinition),
     Err(ErrPacket),
