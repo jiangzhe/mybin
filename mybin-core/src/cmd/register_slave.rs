@@ -18,16 +18,28 @@ pub struct ComRegisterSlave {
 
 impl ComRegisterSlave {
     pub fn anonymous(server_id: u32) -> Self {
-        // todo
         Self {
             cmd: Command::RegisterSlave,
             server_id,
-            slave_hostname: String::from("abc"),
+            slave_hostname: String::new(),
             slave_user: String::new(),
             slave_password: String::new(),
             slave_port: 0,
             replication_rank: 0,
             master_id: 0,
+        }
+    }
+
+    pub fn new(server_id: u32, master_id: u32) -> Self {
+        Self {
+            cmd: Command::RegisterSlave,
+            server_id,
+            slave_hostname: String::new(),
+            slave_user: String::new(),
+            slave_password: String::new(),
+            slave_port: 0,
+            replication_rank: 0,
+            master_id,
         }
     }
 }

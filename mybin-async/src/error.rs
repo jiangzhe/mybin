@@ -22,6 +22,12 @@ pub enum Error {
     Utf8Error(#[from] std::string::FromUtf8Error),
     #[error("binlog stream not ended")]
     BinlogStreamNotEnded,
+    #[error("empty result set")]
+    EmptyResultSet,
+    #[error("core error {0}")]
+    CoreError(#[from] mybin_core::error::Error),
+    #[error("custom error {0}")]
+    CustomError(String),
 }
 
 impl From<ErrPacket> for Error {

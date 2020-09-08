@@ -1,9 +1,9 @@
 use crate::auth_plugin::{AuthPlugin, MysqlNativePassword};
+use crate::binlog::{Binlog, BinlogFile, BinlogFileMapper};
 use crate::error::{Error, Result};
 use crate::msg::{RecvMsgFuture, SendMsgFuture};
 use crate::query::Query;
-use crate::resultset::new_result_set;
-use crate::resultset::ResultSet;
+use crate::resultset::{new_result_set, ResultSet};
 use crate::stmt::Stmt;
 use async_net::TcpStream;
 use bytes::{Buf, BytesMut};
@@ -18,7 +18,10 @@ use mybin_core::handshake::{ConnectAttr, HandshakeClientResponse41, InitialHands
 use mybin_core::packet::{HandshakeMessage, OkPacket};
 use mybin_core::quit::ComQuit;
 use mybin_core::resp::ComResponse;
+use mybin_core::resultset::{ColumnExtractor, FromColumnValue, RowMapper};
+use mybin_core::stmt::ToColumnValue;
 use serde_derive::*;
+use std::marker::PhantomData;
 use std::net::ToSocketAddrs;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
@@ -87,8 +90,9 @@ where
     /// this method will split message into multiple packets if payload too large.
     pub fn send_msg<'a, T>(&'a mut self, msg: T, reset_pkt_nr: bool) -> SendMsgFuture<'a, S>
     where
-        T: WriteToBytes,
+        T: WriteToBytes + std::fmt::Debug,
     {
+        log::debug!("send={:?}", msg);
         if reset_pkt_nr {
             self.reset_pkt_nr();
         }
@@ -390,6 +394,119 @@ where
         new_result_set(self).await
     }
 
+    /// get a list of binlog files
+    pub async fn binlog_files(&mut self) -> Result<Vec<BinlogFile>> {
+        use futures::StreamExt;
+        let mut rs = self
+            .query()
+            .qry("SHOW MASTER LOGS")
+            .await?
+            .map_rows(BinlogFileMapper);
+
+        let mut files = vec![];
+        while let Some(file) = rs.next().await {
+            files.push(file?);
+        }
+        Ok(files)
+    }
+
+    /// get variable by name
+    ///
+    /// SQL:
+    /// SHOW VARIABLES like '<name>'
+    pub async fn get_var<T, U>(&mut self, name: U, global: bool) -> Result<Option<T>>
+    where
+        U: AsRef<str>,
+        T: FromColumnValue<TextColumnValue> + Unpin,
+    {
+        let qry = if global {
+            format!("SHOW GLOBAL VARIABLES LIKE '{}'", name.as_ref())
+        } else {
+            format!("SHOW VARIABLES LIKE '{}'", name.as_ref())
+        };
+        let rs = self
+            .query()
+            .qry(qry)
+            .await?
+            .map_rows(VariableMapper::<T> {
+                _marker: PhantomData,
+            })
+            .first_or_none()
+            .await;
+        if let Some(var) = rs {
+            let var = var?;
+            return Ok(Some(var));
+        }
+        Ok(None)
+    }
+
+    /// set variable by name and value
+    ///
+    /// SQL:
+    /// SET @@<name> = <value>
+    pub async fn set_var<T, V>(&mut self, name: T, value: V, global: bool) -> Result<()>
+    where
+        T: AsRef<str>,
+        V: ToColumnValue,
+    {
+        // todo: value must be correct type, not only string
+        let qry = if global {
+            format!("SET @@GLOBAL.{} = ?", name.as_ref())
+        } else {
+            format!("SET @@{} = ?", name.as_ref())
+        };
+        let stmt = self.stmt().prepare(qry).await?;
+        stmt.exec_close(vec![value.to_col()]).await
+    }
+
+    /// get user defined variable by name
+    ///
+    /// SQL:
+    /// SELECT @<name>
+    pub async fn get_user_var<T, U>(&mut self, name: U) -> Result<Option<T>>
+    where
+        U: AsRef<str>,
+        T: FromColumnValue<TextColumnValue> + Unpin,
+    {
+        let rs = self
+            .query()
+            .qry(format!("SELECT @{}", name.as_ref()))
+            .await?
+            .map_rows(
+                |extr: &ColumnExtractor, row: Vec<TextColumnValue>| -> Result<T> {
+                    let val = extr.get_col(&row, 0)?;
+                    Ok(val)
+                },
+            )
+            .first_or_none()
+            .await;
+        if let Some(var) = rs {
+            let var = var?;
+            return Ok(Some(var));
+        }
+        Ok(None)
+    }
+
+    /// set user defined variable
+    ///
+    /// SQL:
+    /// SET @<name> = <value>
+    pub async fn set_user_var<T, V>(&mut self, name: T, value: V) -> Result<()>
+    where
+        T: AsRef<str>,
+        V: ToColumnValue,
+    {
+        let stmt = self
+            .stmt()
+            .prepare(format!("SET @{} = ?", name.as_ref()))
+            .await?;
+        stmt.exec_close(vec![value.to_col()]).await
+    }
+
+    pub fn binlog(&mut self) -> Binlog<S> {
+        Binlog::new(self)
+    }
+
     /// provide a handle that could send the server a text-based query that
     /// is executed immediately
     ///
@@ -427,6 +544,23 @@ pub struct ConnOpts {
     pub username: String,
     pub password: String,
     pub database: String,
+}
+
+#[derive(Debug)]
+pub struct VariableMapper<T> {
+    _marker: PhantomData<T>,
+}
+
+impl<T> RowMapper<TextColumnValue> for VariableMapper<T>
+where
+    T: FromColumnValue<TextColumnValue> + Unpin,
+{
+    type Output = Result<T>;
+
+    fn map_row(&self, extr: &ColumnExtractor, row: Vec<TextColumnValue>) -> Self::Output {
+        let val = extr.get_col(&row, 1)?;
+        Ok(val)
+    }
 }
 
 #[cfg(test)]
@@ -602,5 +736,27 @@ pub(crate) mod tests {
         while let Some(row) = rs.next().await {
             dbg!(row);
         }
+    }
+
+    #[smol_potat::test]
+    async fn test_conn_binlog_files() {
+        let mut conn = new_conn().await;
+        let files = conn.binlog_files().await.unwrap();
+        assert!(!files.is_empty());
+    }
+
+    #[smol_potat::test]
+    async fn test_conn_ops_var() {
+        let mut conn = new_conn().await;
+        let sql_warnings: Option<String> = conn.get_var("SQL_WARNINGS", false).await.unwrap();
+        dbg!(sql_warnings);
+        conn.set_var("SQL_WARNINGS", "OFF".to_owned(), false)
+            .await
+            .unwrap();
+        let max_connections: Option<u32> = conn.get_var("MAX_CONNECTIONS", true).await.unwrap();
+        dbg!(max_connections);
+        conn.set_var("MAX_CONNECTIONS", 500_u32, true)
+            .await
+            .unwrap();
     }
 }

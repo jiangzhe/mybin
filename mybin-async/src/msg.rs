@@ -100,11 +100,12 @@ where
                             if *curr_len < 0xffffff {
                                 // make this future reuseable
                                 *state = MsgState::Len;
-                                log::debug!(
+                                log::trace!(
                                     "completed packet: total_len={}, pkt_nr={}",
                                     total_len,
-                                    conn.pkt_nr.load(Ordering::SeqCst)
+                                    conn.pkt_nr.load(Ordering::SeqCst),
                                 );
+                                log::trace!("data={:?}", out.bytes());
                                 let msg = out.split_to(out.remaining()).freeze();
                                 return Poll::Ready(Ok(msg));
                             }

@@ -10,8 +10,8 @@ pub(crate) fn checksum_crc32(bytes: &[u8]) -> u32 {
 macro_rules! try_from_text_column_value {
     ($($struct_name:ident),*) => {
         $(
-            impl $crate::resultset::FromColumnValue<$crate::col::TextColumnValue> for $struct_name {
-                fn from_value(value: $crate::col::TextColumnValue) -> Result<Option<Self>> {
+            impl $crate::resultset::FromColumnValue<$crate::col::TextColumnValue> for Option<$struct_name> {
+                fn from_col(value: $crate::col::TextColumnValue) -> Result<Self> {
                     use bytes::Buf;
 
                     match value {
@@ -28,10 +28,30 @@ macro_rules! try_from_text_column_value {
 }
 
 #[macro_export]
+macro_rules! try_non_null_column_value {
+    ($value_name:ident => $($struct_name:ident),*) => {
+        $(
+            impl $crate::resultset::FromColumnValue<$crate::col::$value_name> for $struct_name {
+                fn from_col(value: $crate::col::$value_name) -> Result<$struct_name> {
+                    let opt = <Option<$struct_name> as FromColumnValue<$crate::col::$value_name>>::from_col(value)?;
+
+                    match opt {
+                        None => Err($crate::error::Error::NullValueError),
+                        Some(r) => {
+                            Ok(r)
+                        }
+                    }
+                }
+            }
+        )*
+    };
+}
+
+#[macro_export]
 macro_rules! try_number_from_binary_column_value {
     ($num_type:ident, $($enum_variant:ident => $inter_type:ty),+) => {
-        impl $crate::resultset::FromColumnValue<$crate::col::BinaryColumnValue> for $num_type {
-            fn from_value(value: BinaryColumnValue) -> Result<Option<Self>> {
+        impl $crate::resultset::FromColumnValue<$crate::col::BinaryColumnValue> for Option<$num_type> {
+            fn from_col(value: BinaryColumnValue) -> Result<Self> {
                 match value {
                     BinaryColumnValue::Null => Ok(None),
                     $(
@@ -46,7 +66,7 @@ macro_rules! try_number_from_binary_column_value {
 
 #[macro_export]
 macro_rules! single_byte_cmd {
-    ($struct_name:ident, $enum_name: ident) => {
+    ($struct_name:ident, $enum_name:ident) => {
         #[derive(Debug, Clone)]
         pub struct $struct_name {
             pub cmd: $crate::Command,
@@ -67,6 +87,33 @@ macro_rules! single_byte_cmd {
             }
         }
     };
+}
+
+#[macro_export]
+macro_rules! to_stmt_column_value {
+    ($struct_name:ident, $func_name:ident) => {
+        impl $crate::stmt::ToColumnValue for $struct_name {
+            fn to_col(self) -> $crate::stmt::StmtColumnValue {
+                $crate::stmt::StmtColumnValue::$func_name(self)
+            }
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! to_opt_stmt_column_value {
+    ($($struct_name:ident),+) => {
+        $(
+            impl $crate::stmt::ToColumnValue for Option<$struct_name> {
+                fn to_col(self) -> $crate::stmt::StmtColumnValue {
+                    match self {
+                        Some(val) => val.to_col(),
+                        None => $crate::stmt::StmtColumnValue::new_null(),
+                    }
+                }
+            }
+        )+
+    }
 }
 
 #[cfg(test)]

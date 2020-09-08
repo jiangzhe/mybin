@@ -13,7 +13,7 @@ use std::convert::TryFrom;
 ///
 /// several types are missing in binlog, refer to:
 /// https://github.com/mysql/mysql-server/blob/5.7/libbinlogevents/include/rows_event.h#L174
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ColumnType {
     Decimal,
     Tiny,
@@ -310,7 +310,7 @@ impl ReadFromBytesWithContext<'_> for ColumnMeta {
 ///
 /// All numeric columns are treated as unsigned.
 /// Use extractor or mapper to get actual value.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum BinaryColumnValue {
     Null,
     Decimal(Bytes),

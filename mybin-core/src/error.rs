@@ -39,6 +39,8 @@ pub enum Error {
     ColumnIndexOutOfBound(String),
     #[error("column name not found: {0}")]
     ColumnNameNotFound(String),
+    #[error("unexpected null value")]
+    NullValueError,
 }
 
 impl Error {

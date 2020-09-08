@@ -85,10 +85,32 @@ impl ParserV4 {
                 binlog_version
             )));
         }
+        let (pv4, _) = Self::from_fde_bytes(input)?;
+        Ok(pv4)
+    }
+
+    /// create parser from bytes of format description event
+    ///
+    /// this function will additional crc32 code if checksum is enabled
+    pub fn from_fde_bytes(input: &mut Bytes) -> Result<(Self, Option<u32>)> {
         let header = EventHeader::read_from(input)?;
+        // raw data may contains 4 bytes checksum at end
         let mut raw_data = input.read_len(header.data_len() as usize)?;
         let data = FormatDescriptionData::read_from(&mut raw_data)?;
-        Ok(Self::from_fde(&FormatDescriptionEvent { header, data }))
+        let crc32 = if data.checksum_flag == 1 {
+            if raw_data.remaining() < 4 {
+                return Err(Error::BinlogEventError(
+                    "FDE does not have 4-byte checksum but flag enabled".to_owned(),
+                ));
+            }
+            Some(raw_data.read_le_u32()?)
+        } else {
+            None
+        };
+        Ok((
+            Self::from_fde(&FormatDescriptionEvent { header, data }),
+            crc32,
+        ))
     }
 
     // parse the event starting from given offset
