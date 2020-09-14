@@ -21,51 +21,51 @@ pub trait AsyncReadBytesExt: AsyncRead {
     where
         Self: Unpin,
     {
-        ReadLeU16Future(self)
+        ReadLeU16Future::new(self)
     }
 
     fn read_le_u24(&mut self) -> ReadLeU24Future<Self>
     where
         Self: Unpin,
     {
-        ReadLeU24Future(self)
+        ReadLeU24Future::new(self)
     }
 
     fn read_le_u32(&mut self) -> ReadLeU32Future<Self>
     where
         Self: Unpin,
     {
-        ReadLeU32Future(self)
+        ReadLeU32Future::new(self)
     }
 
     fn read_le_u64(&mut self) -> ReadLeU64Future<Self>
     where
         Self: Unpin,
     {
-        ReadLeU64Future(self)
+        ReadLeU64Future::new(self)
     }
 
     fn read_len(&mut self, n: usize) -> ReadLenFuture<Self>
     where
         Self: Unpin,
     {
-        ReadLenFuture { reader: self, n }
+        ReadLenFuture::new(self, n)
     }
 
-    fn read_len_out<'a, 'b>(
-        &'a mut self,
-        n: usize,
-        out: &'b mut BytesMut,
-    ) -> ReadLenOutFuture<'a, 'b, Self>
-    where
-        Self: Unpin,
-    {
-        ReadLenOutFuture {
-            reader: self,
-            n,
-            out,
-        }
-    }
+    // fn read_len_out<'a, 'b>(
+    //     &'a mut self,
+    //     n: usize,
+    //     out: &'b mut BytesMut,
+    // ) -> ReadLenOutFuture<'a, 'b, Self>
+    // where
+    //     Self: Unpin,
+    // {
+    //     ReadLenOutFuture {
+    //         reader: self,
+    //         n,
+    //         out,
+    //     }
+    // }
 
     fn read_until(&mut self, b: u8, inclusive: bool) -> ReadUntilFuture<Self>
     where
@@ -142,88 +142,49 @@ fn to_le_u64(bs: &[u8]) -> u64 {
         + ((bs[7] as u64) << 56)
 }
 
-#[must_use = "futures do nothing unless you `.await` or poll them"]
-pub struct ReadLenOutFuture<'a, 'b, T: Unpin + ?Sized> {
-    pub reader: &'a mut T,
-    pub n: usize,
-    pub out: &'b mut BytesMut,
-}
-
-impl<R: AsyncRead + Unpin + ?Sized> Future for ReadLenOutFuture<'_, '_, R> {
-    type Output = Result<()>;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let Self { reader, n, out } = &mut *self;
-        if *n == 0 {
-            return Poll::Ready(Ok(()));
-        }
-        read_len_out_internal(reader, cx, *n, out)
-    }
-}
-
-fn read_len_out_internal<'a, 'b, R: AsyncRead + Unpin + ?Sized>(
+pub struct ReadLenFuture<'a, R: Unpin + ?Sized> {
     reader: &'a mut R,
-    cx: &mut Context<'_>,
-    required: usize,
-    out: &'b mut BytesMut,
-) -> Poll<Result<()>> {
-    struct Guard<'b> {
-        out: &'b mut BytesMut,
-        len: usize,
-    }
-    impl Drop for Guard<'_> {
-        fn drop(&mut self) {
-            self.out.resize(self.len, 0);
-        }
-    }
-    let len = out.len();
-    let mut g = Guard { out, len };
-    let mut read = 0;
-    g.out.resize(g.len + required, 0);
-    let mut reader = Pin::new(reader);
-    loop {
-        match ready!(reader.as_mut().poll_read(cx, &mut g.out[g.len..])) {
-            Ok(0) => {
-                return Poll::Ready(Err(Error::InputIncomplete(
-                    Bytes::new(),
-                    Needed::Size(required - read),
-                )))
-            }
-            Ok(n) if read + n == required => {
-                g.len += n;
-                return Poll::Ready(Ok(()));
-            }
-            Ok(n) => {
-                read += n;
-                g.len += n;
-            }
-            Err(ref e) if e.kind() == ErrorKind::Interrupted => (),
-            Err(e) => return Poll::Ready(Err(Error::from(e))),
-        }
-    }
+    read: usize,
+    buf: Vec<u8>,
 }
 
-#[must_use = "futures do nothing unless you `.await` or poll them"]
-pub struct ReadLenFuture<'a, T: Unpin + ?Sized> {
-    reader: &'a mut T,
-    n: usize,
+impl<'a, R: AsyncRead + Unpin + ?Sized> ReadLenFuture<'a, R> {
+    pub fn new(reader: &'a mut R, n: usize) -> Self {
+        Self {
+            reader,
+            read: 0,
+            buf: vec![0; n],
+        }
+    }
 }
 
 impl<R: AsyncRead + Unpin + ?Sized> Future for ReadLenFuture<'_, R> {
-    type Output = Result<Bytes>;
+    type Output = Result<Vec<u8>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let Self { reader, n } = &mut *self;
-        if *n == 0 {
-            return Poll::Ready(Ok(Bytes::new()));
+        let Self { reader, read, buf } = &mut *self;
+        if *read == buf.len() {
+            return Poll::Ready(Ok(std::mem::replace(buf, vec![])));
         }
-        let mut out = BytesMut::new();
-        match ready!(read_len_out_internal(reader, cx, *n, &mut out)) {
-            Ok(..) => Poll::Ready(Ok(out.freeze())),
-            Err(Error::InputIncomplete(out, needed)) => {
-                Poll::Ready(Err(Error::InputIncomplete(out, needed)))
+        let mut reader = Pin::new(reader);
+        loop {
+            match ready!(reader.as_mut().poll_read(cx, &mut buf[*read..])) {
+                Ok(0) => {
+                    return Poll::Ready(Err(Error::InputIncomplete(
+                        Bytes::new(),
+                        Needed::Size(buf.len() - *read),
+                    )))
+                }
+                Ok(n) if *read + n == buf.len() => {
+                    *read += n;
+                    return Poll::Ready(Ok(std::mem::replace(buf, vec![])));
+                }
+                Ok(n) => {
+                    *read += n;
+                }
+                Err(ref e) if e.kind() == ErrorKind::Interrupted => (),
+                Err(e) => return Poll::Ready(Err(Error::from(e))),
             }
-            Err(e) => Poll::Ready(Err(e)),
         }
     }
 }
@@ -377,7 +338,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bytes::Buf;
 
     #[smol_potat::test]
     async fn test_read_u8() {
@@ -481,32 +441,27 @@ mod tests {
     }
 
     #[smol_potat::test]
-    async fn test_read_out_0() {
+    async fn test_read_len_0() {
         let bs = [1u8, 2, 3, 4, 5];
         let mut reader = &bs[..];
-        let mut out = BytesMut::new();
-        let _ = reader.read_len_out(0, &mut out).await.unwrap();
-        assert_eq!(Vec::<u8>::new(), out.freeze().bytes());
+        let out = reader.read_len(0).await.unwrap();
+        assert_eq!(Vec::<u8>::new(), out);
     }
 
     #[smol_potat::test]
-    async fn test_take_out_3() {
+    async fn test_read_len_3() {
         let bs = [1u8, 2, 3, 4, 5];
         let mut reader = &bs[..];
-        let mut out = BytesMut::new();
-        let _ = reader.read_len_out(3, &mut out).await.unwrap();
-        assert_eq!(vec![1u8, 2, 3], out.freeze().bytes());
+        let out = reader.read_len(3).await.unwrap();
+        assert_eq!(vec![1u8, 2, 3], out);
     }
 
     #[smol_potat::test]
-    async fn test_take_out_6() {
+    async fn test_read_len_6() {
         let bs = [1u8, 2, 3, 4, 5];
         let mut reader = &bs[..];
-        let mut out = BytesMut::new();
-        let rst = reader.read_len_out(6, &mut out).await;
-        dbg!(&rst);
-        dbg!(out);
-        assert!(rst.is_err());
+        let out = reader.read_len(6).await;
+        dbg!(out.unwrap_err());
     }
 
     #[smol_potat::test]

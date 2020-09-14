@@ -9,7 +9,7 @@ mod query;
 mod rand;
 mod rotate;
 mod rows_v1;
-mod rows_v2;
+pub mod rows_v2;
 mod table_map;
 mod user_var;
 mod util;
@@ -17,7 +17,7 @@ mod xid;
 
 use crate::try_from_event;
 use bytes::Bytes;
-use bytes_parser::error::Result;
+use bytes_parser::error::{Error, Result};
 use bytes_parser::{ReadBytesExt, ReadFromBytes};
 use fde::{FormatDescriptionData, StartData};
 use gtid::{AnonymousGtidLogData, GtidLogData, PreviousGtidsLogData};
@@ -31,6 +31,7 @@ use rand::RandData;
 pub use rotate::RotateData;
 use rows_v1::{DeleteRowsDataV1, UpdateRowsDataV1, WriteRowsDataV1};
 use rows_v2::{DeleteRowsDataV2, UpdateRowsDataV2, WriteRowsDataV2};
+use std::convert::TryFrom;
 use table_map::TableMapData;
 use user_var::UserVarData;
 use xid::XidData;
@@ -76,15 +77,12 @@ pub enum LogEventType {
     TransactionContextEvent,
     ViewChangeEvent,
     XaPrepareLogEvent,
-    Invalid,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct LogEventTypeCode(pub u8);
-
-impl From<u8> for LogEventType {
-    fn from(code: u8) -> LogEventType {
-        match code {
+impl TryFrom<u8> for LogEventType {
+    type Error = Error;
+    fn try_from(code: u8) -> Result<LogEventType> {
+        let ty = match code {
             0 => LogEventType::Unknown,
             1 => LogEventType::StartEventV3,
             2 => LogEventType::QueryEvent,
@@ -130,61 +128,59 @@ impl From<u8> for LogEventType {
             36 => LogEventType::TransactionContextEvent,
             37 => LogEventType::ViewChangeEvent,
             38 => LogEventType::XaPrepareLogEvent,
-            _ => LogEventType::Invalid,
-        }
+            _ => {
+                return Err(Error::ConstraintError(format!(
+                    "invalid event type code {}",
+                    code
+                )))
+            }
+        };
+        Ok(ty)
     }
 }
 
-impl From<LogEventTypeCode> for LogEventType {
-    fn from(type_code: LogEventTypeCode) -> LogEventType {
-        LogEventType::from(type_code.0)
-    }
-}
-
-impl From<LogEventType> for LogEventTypeCode {
-    fn from(event_type: LogEventType) -> LogEventTypeCode {
+impl From<LogEventType> for u8 {
+    fn from(event_type: LogEventType) -> u8 {
         match event_type {
-            LogEventType::Unknown => LogEventTypeCode(0),
-            LogEventType::StartEventV3 => LogEventTypeCode(1),
-            LogEventType::QueryEvent => LogEventTypeCode(2),
-            LogEventType::StopEvent => LogEventTypeCode(3),
-            LogEventType::RotateEvent => LogEventTypeCode(4),
-            LogEventType::IntvarEvent => LogEventTypeCode(5),
-            LogEventType::LoadEvent => LogEventTypeCode(6),
-            LogEventType::SlaveEvent => LogEventTypeCode(7),
-            LogEventType::CreateFileEvent => LogEventTypeCode(8),
-            LogEventType::AppendBlockEvent => LogEventTypeCode(9),
-            LogEventType::ExecLoadEvent => LogEventTypeCode(10),
-            LogEventType::DeleteFileEvent => LogEventTypeCode(11),
-            LogEventType::NewLoadEvent => LogEventTypeCode(12),
-            LogEventType::RandEvent => LogEventTypeCode(13),
-            LogEventType::UserVarEvent => LogEventTypeCode(14),
-            LogEventType::FormatDescriptionEvent => LogEventTypeCode(15),
-            LogEventType::XidEvent => LogEventTypeCode(16),
-            LogEventType::BeginLoadQueryEvent => LogEventTypeCode(17),
-            LogEventType::ExecuteLoadQueryEvent => LogEventTypeCode(18),
-            LogEventType::TableMapEvent => LogEventTypeCode(19),
-            LogEventType::WriteRowsEventV0 => LogEventTypeCode(20),
-            LogEventType::UpdateRowsEventV0 => LogEventTypeCode(21),
-            LogEventType::DeleteRowsEventV0 => LogEventTypeCode(22),
-            LogEventType::WriteRowsEventV1 => LogEventTypeCode(23),
-            LogEventType::UpdateRowsEventV1 => LogEventTypeCode(24),
-            LogEventType::DeleteRowsEventV1 => LogEventTypeCode(25),
-            LogEventType::IncidentEvent => LogEventTypeCode(26),
-            LogEventType::HeartbeatLogEvent => LogEventTypeCode(27),
-            LogEventType::IgnorableLogEvent => LogEventTypeCode(28),
-            LogEventType::RowsQueryLogEvent => LogEventTypeCode(29),
-            LogEventType::WriteRowsEventV2 => LogEventTypeCode(30),
-            LogEventType::UpdateRowsEventV2 => LogEventTypeCode(31),
-            LogEventType::DeleteRowsEventV2 => LogEventTypeCode(32),
-            LogEventType::GtidLogEvent => LogEventTypeCode(33),
-            LogEventType::AnonymousGtidLogEvent => LogEventTypeCode(34),
-            LogEventType::PreviousGtidsLogEvent => LogEventTypeCode(35),
-            LogEventType::TransactionContextEvent => LogEventTypeCode(36),
-            LogEventType::ViewChangeEvent => LogEventTypeCode(37),
-            LogEventType::XaPrepareLogEvent => LogEventTypeCode(38),
-            // pseudo invalid code
-            LogEventType::Invalid => LogEventTypeCode(99),
+            LogEventType::Unknown => 0,
+            LogEventType::StartEventV3 => 1,
+            LogEventType::QueryEvent => 2,
+            LogEventType::StopEvent => 3,
+            LogEventType::RotateEvent => 4,
+            LogEventType::IntvarEvent => 5,
+            LogEventType::LoadEvent => 6,
+            LogEventType::SlaveEvent => 7,
+            LogEventType::CreateFileEvent => 8,
+            LogEventType::AppendBlockEvent => 9,
+            LogEventType::ExecLoadEvent => 10,
+            LogEventType::DeleteFileEvent => 11,
+            LogEventType::NewLoadEvent => 12,
+            LogEventType::RandEvent => 13,
+            LogEventType::UserVarEvent => 14,
+            LogEventType::FormatDescriptionEvent => 15,
+            LogEventType::XidEvent => 16,
+            LogEventType::BeginLoadQueryEvent => 17,
+            LogEventType::ExecuteLoadQueryEvent => 18,
+            LogEventType::TableMapEvent => 19,
+            LogEventType::WriteRowsEventV0 => 20,
+            LogEventType::UpdateRowsEventV0 => 21,
+            LogEventType::DeleteRowsEventV0 => 22,
+            LogEventType::WriteRowsEventV1 => 23,
+            LogEventType::UpdateRowsEventV1 => 24,
+            LogEventType::DeleteRowsEventV1 => 25,
+            LogEventType::IncidentEvent => 26,
+            LogEventType::HeartbeatLogEvent => 27,
+            LogEventType::IgnorableLogEvent => 28,
+            LogEventType::RowsQueryLogEvent => 29,
+            LogEventType::WriteRowsEventV2 => 30,
+            LogEventType::UpdateRowsEventV2 => 31,
+            LogEventType::DeleteRowsEventV2 => 32,
+            LogEventType::GtidLogEvent => 33,
+            LogEventType::AnonymousGtidLogEvent => 34,
+            LogEventType::PreviousGtidsLogEvent => 35,
+            LogEventType::TransactionContextEvent => 36,
+            LogEventType::ViewChangeEvent => 37,
+            LogEventType::XaPrepareLogEvent => 38,
         }
     }
 }
@@ -196,7 +192,7 @@ impl ReadFromBytes for LogEventType {
     fn read_from(input: &mut Bytes) -> Result<Self> {
         input.read_len(4)?;
         let type_code = input.read_u8()?;
-        Ok(LogEventType::from(type_code))
+        Ok(LogEventType::try_from(type_code)?)
     }
 }
 

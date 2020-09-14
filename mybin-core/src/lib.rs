@@ -3,6 +3,8 @@ pub mod binlog;
 pub mod bitmap;
 pub mod cmd;
 pub mod col;
+pub mod decimal;
+pub mod time;
 pub mod error;
 pub mod flag;
 pub mod handshake;
@@ -11,6 +13,7 @@ pub mod quit;
 pub mod resp;
 pub mod resultset;
 pub mod row;
+pub mod sql;
 pub mod stmt;
 
 mod util;

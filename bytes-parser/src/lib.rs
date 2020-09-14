@@ -13,14 +13,14 @@ pub use error::*;
 /// global empty byte array as place holder
 pub const EMPTY_BYTE_ARRAY: [u8; 0] = [];
 
-pub trait ReadFromBytesWithContext<'c>
-where
-    Self: Sized,
-{
-    type Context: 'c;
+// pub trait ReadFromBytesWithContext<'c>
+// where
+//     Self: Sized,
+// {
+//     type Context: 'c;
 
-    fn read_with_ctx(input: &mut Bytes, ctx: Self::Context) -> Result<Self>;
-}
+//     fn read_with_ctx(input: &mut Bytes, ctx: Self::Context) -> Result<Self>;
+// }
 
 pub trait ReadFromBytes
 where
@@ -42,9 +42,27 @@ pub trait ReadBytesExt {
         self.read_le_u16().map(|n| n as i16)
     }
 
+    fn read_be_u16(&mut self) -> Result<u16>;
+
+    fn read_be_i16(&mut self) -> Result<i16> {
+        self.read_be_u16().map(|n| n as i16)
+    }
+
     fn read_le_u24(&mut self) -> Result<u32>;
 
     fn read_le_i24(&mut self) -> Result<i32> {
+        self.read_le_u24().map(|n| {
+            if n & 0x80_0000_u32 != 0 {
+                (n | 0xff00_0000_u32) as i32
+            } else {
+                n as i32
+            }
+        })
+    }
+
+    fn read_be_u24(&mut self) -> Result<u32>;
+
+    fn read_be_i24(&mut self) -> Result<i32> {
         self.read_le_u24().map(|n| {
             if n & 0x80_0000_u32 != 0 {
                 (n | 0xff00_0000_u32) as i32
@@ -58,6 +76,18 @@ pub trait ReadBytesExt {
 
     fn read_le_i32(&mut self) -> Result<i32> {
         self.read_le_u32().map(|n| n as i32)
+    }
+
+    fn read_be_u32(&mut self) -> Result<u32>;
+
+    fn read_be_i32(&mut self) -> Result<i32> {
+        self.read_be_u32().map(|n| n as i32)
+    }
+
+    fn read_be_u40(&mut self) -> Result<u64>;
+
+    fn read_be_i40(&mut self) -> Result<i64> {
+        self.read_be_u40().map(|n| n as i64)
     }
 
     fn read_le_u48(&mut self) -> Result<u64>;
@@ -111,6 +141,16 @@ impl ReadBytesExt for Bytes {
         Ok(self.get_u16_le())
     }
 
+    fn read_be_u16(&mut self) -> Result<u16> {
+        if self.remaining() < 2 {
+            return Err(Error::InputIncomplete(
+                Bytes::new(),
+                Needed::Size(2 - self.remaining()),
+            ));
+        }
+        Ok(self.get_u16())
+    }
+
     fn read_le_u24(&mut self) -> Result<u32> {
         if self.remaining() < 3 {
             return Err(Error::InputIncomplete(
@@ -124,6 +164,19 @@ impl ReadBytesExt for Bytes {
         Ok(r)
     }
 
+    fn read_be_u24(&mut self) -> Result<u32> {
+        if self.remaining() < 3 {
+            return Err(Error::InputIncomplete(
+                Bytes::new(),
+                Needed::Size(3 - self.remaining()),
+            ));
+        }
+        let bs = self.bytes();
+        let r = bs[2] as u32 + ((bs[1] as u32) << 8) + ((bs[0] as u32) << 16);
+        self.advance(3);
+        Ok(r)
+    }
+
     fn read_le_u32(&mut self) -> Result<u32> {
         if self.remaining() < 4 {
             return Err(Error::InputIncomplete(
@@ -132,6 +185,28 @@ impl ReadBytesExt for Bytes {
             ));
         }
         Ok(self.get_u32_le())
+    }
+
+    fn read_be_u32(&mut self) -> Result<u32> {
+        if self.remaining() < 4 {
+            return Err(Error::InputIncomplete(
+                Bytes::new(),
+                Needed::Size(4 - self.remaining()),
+            ));
+        }
+        Ok(self.get_u32())
+    }
+
+    fn read_be_u40(&mut self) -> Result<u64> {
+        if self.remaining() < 5 {
+            return Err(Error::InputIncomplete(
+                Bytes::new(),
+                Needed::Size(5 - self.remaining()),
+            ));
+        }
+        let n4 = self.read_be_u32()? as u64;
+        let n1 = self.read_u8()? as u64;
+        Ok((n4 << 8) + n1)
     }
 
     fn read_le_u48(&mut self) -> Result<u64> {

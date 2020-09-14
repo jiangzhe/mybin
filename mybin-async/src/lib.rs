@@ -1,14 +1,12 @@
 #![forbid(unsafe_code)]
 mod auth_plugin;
-mod binlog;
-mod conn;
-mod error;
+pub mod binlog;
+pub mod conn;
+pub mod error;
 mod msg;
-mod query;
-mod resultset;
-mod stmt;
-
-pub use error::*;
+pub mod query;
+pub mod resultset;
+pub mod stmt;
 
 #[cfg(test)]
 mod tests {

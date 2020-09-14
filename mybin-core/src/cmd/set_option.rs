@@ -3,7 +3,7 @@ use crate::packet::{EofPacket, ErrPacket};
 use crate::Command;
 use bytes::{Buf, Bytes, BytesMut};
 use bytes_parser::error::{Error, Needed, Result};
-use bytes_parser::{ReadFromBytesWithContext, WriteBytesExt, WriteToBytes};
+use bytes_parser::{WriteBytesExt, WriteToBytes};
 
 #[derive(Debug, Clone)]
 pub struct ComSetOption {
@@ -34,20 +34,18 @@ pub enum ComSetOptionResponse {
     Err(ErrPacket),
 }
 
-impl<'c> ReadFromBytesWithContext<'c> for ComSetOptionResponse {
-    type Context = &'c CapabilityFlags;
-
-    fn read_with_ctx(input: &mut Bytes, cap_flags: Self::Context) -> Result<Self> {
+impl ComSetOptionResponse {
+    pub fn read_from(input: &mut Bytes, cap_flags: &CapabilityFlags) -> Result<Self> {
         if !input.has_remaining() {
             return Err(Error::InputIncomplete(Bytes::new(), Needed::Unknown));
         }
         match input[0] {
             0xff => {
-                let err = ErrPacket::read_with_ctx(input, (cap_flags, true))?;
+                let err = ErrPacket::read_from(input, cap_flags, true)?;
                 Ok(Self::Err(err))
             }
             0xfe => {
-                let eof = EofPacket::read_with_ctx(input, cap_flags)?;
+                let eof = EofPacket::read_from(input, cap_flags)?;
                 Ok(Self::Eof(eof))
             }
             _ => Err(Error::ConstraintError(format!(

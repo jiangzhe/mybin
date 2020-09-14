@@ -2,7 +2,7 @@ use crate::conn::Conn;
 use crate::error::{Error, Needed, Result};
 use crate::resultset::{new_result_set, ResultSet};
 use bytes::{Buf, Bytes};
-use bytes_parser::{ReadFromBytes, ReadFromBytesWithContext};
+use bytes_parser::ReadFromBytes;
 use futures::{ready, AsyncRead, AsyncWrite};
 use mybin_core::cmd::{ComStmtClose, ComStmtExecute, ComStmtPrepare, StmtPrepareOk};
 use mybin_core::col::{BinaryColumnValue, ColumnDefinition};
@@ -36,7 +36,7 @@ where
         }
         let ok = match msg[0] {
             0xff => {
-                let err = ErrPacket::read_with_ctx(&mut msg, (&self.conn.cap_flags, true))?;
+                let err = ErrPacket::read_from(&mut msg, &self.conn.cap_flags, true)?;
                 return Err(err.into());
             }
             _ => StmtPrepareOk::read_from(&mut msg)?,
@@ -49,13 +49,13 @@ where
             let mut defs = Vec::with_capacity(ok.n_params as usize);
             for _ in 0..ok.n_params {
                 let mut msg = self.conn.recv_msg().await?;
-                let def = ColumnDefinition::read_with_ctx(&mut msg, false)?;
+                let def = ColumnDefinition::read_from(&mut msg, false)?;
                 defs.push(def);
             }
             // eof packet
             if !self.conn.cap_flags.contains(CapabilityFlags::DEPRECATE_EOF) {
                 let mut msg = self.conn.recv_msg().await?;
-                EofPacket::read_with_ctx(&mut msg, &self.conn.cap_flags)?;
+                EofPacket::read_from(&mut msg, &self.conn.cap_flags)?;
             }
             defs
         };
@@ -66,13 +66,13 @@ where
             let mut defs = Vec::with_capacity(ok.n_params as usize);
             for _ in 0..ok.n_cols {
                 let mut msg = self.conn.recv_msg().await?;
-                let def = ColumnDefinition::read_with_ctx(&mut msg, false)?;
+                let def = ColumnDefinition::read_from(&mut msg, false)?;
                 defs.push(def);
             }
             // eof packet
             if !self.conn.cap_flags.contains(CapabilityFlags::DEPRECATE_EOF) {
                 let mut msg = self.conn.recv_msg().await?;
-                EofPacket::read_with_ctx(&mut msg, &self.conn.cap_flags)?;
+                EofPacket::read_from(&mut msg, &self.conn.cap_flags)?;
             }
             defs
         };
@@ -106,11 +106,11 @@ where
             let mut msg = self.conn.recv_msg().await?;
             match msg[0] {
                 0xff => {
-                    let err = ErrPacket::read_with_ctx(&mut msg, (&self.conn.cap_flags, true))?;
+                    let err = ErrPacket::read_from(&mut msg, &self.conn.cap_flags, true)?;
                     return Err(err.into());
                 }
                 0x00 => {
-                    OkPacket::read_with_ctx(&mut msg, &self.conn.cap_flags)?;
+                    OkPacket::read_from(&mut msg, &self.conn.cap_flags)?;
                     // todo: handle session state changes and provide close handler
                     return Ok(());
                 }
@@ -287,7 +287,8 @@ mod tests {
     async fn test_stmt_table_and_column() {
         use bytes::Bytes;
         use futures::StreamExt;
-        use mybin_core::resultset::{MyBit, MyI24, MyTime, MyU24, MyYear};
+        use mybin_core::resultset::{MyBit, MyI24, MyU24, MyYear};
+        use mybin_core::time::MyTime;
         use std::str::FromStr;
         let mut conn = new_conn().await;
         // create database
@@ -404,19 +405,19 @@ mod tests {
                     NaiveDate::from_ymd(2012, 6, 7).and_hms_micro(15, 38, 46, 92000),
                 ),
                 StmtColumnValue::new_year(2021),
-                StmtColumnValue::new_varchar("hello, world"),
-                StmtColumnValue::new_varchar("hello, java"),
+                StmtColumnValue::new_varstring(Bytes::from("hello, world")),
+                StmtColumnValue::new_varstring(Bytes::from("hello, java")),
                 StmtColumnValue::new_bit(vec![0b01100001, 0b10001100]),
                 StmtColumnValue::new_decimal(BigDecimal::from_str("123456789.22").unwrap()),
-                StmtColumnValue::new_blob(b"hello, tinyblob".to_vec()),
-                StmtColumnValue::new_blob(b"hello, mediumblob".to_vec()),
-                StmtColumnValue::new_blob(b"hello, longblob".to_vec()),
-                StmtColumnValue::new_blob(b"hello, blob".to_vec()),
+                StmtColumnValue::new_blob("hello, tinyblob"),
+                StmtColumnValue::new_blob("hello, mediumblob"),
+                StmtColumnValue::new_blob("hello, longblob"),
+                StmtColumnValue::new_blob("hello, blob"),
                 StmtColumnValue::new_text("hello, latin1"),
                 StmtColumnValue::new_text("hello, utf8"),
                 StmtColumnValue::new_text("hello, binary"),
                 StmtColumnValue::new_bool(true),
-                StmtColumnValue::new_char("fixed"),
+                StmtColumnValue::new_string("fixed"),
             ])
             .await
             .unwrap();

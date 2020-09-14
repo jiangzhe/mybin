@@ -2,9 +2,7 @@ use crate::col::ColumnDefinition;
 use crate::Command;
 use bytes::{Bytes, BytesMut};
 use bytes_parser::error::{Error, Result};
-use bytes_parser::{
-    ReadBytesExt, ReadFromBytes, ReadFromBytesWithContext, WriteBytesExt, WriteToBytes,
-};
+use bytes_parser::{ReadBytesExt, ReadFromBytes, WriteBytesExt, WriteToBytes};
 
 #[derive(Debug, Clone)]
 pub struct ComStmtPrepare {
@@ -75,13 +73,11 @@ impl ReadFromBytes for StmtPrepareOk {
 #[derive(Debug, Clone)]
 pub struct StmtPrepareColDefs(pub Vec<ColumnDefinition>);
 
-impl ReadFromBytesWithContext<'_> for StmtPrepareColDefs {
-    type Context = usize;
-
-    fn read_with_ctx(input: &mut Bytes, cnt: Self::Context) -> Result<Self> {
+impl StmtPrepareColDefs {
+    pub fn read_from(input: &mut Bytes, cnt: usize) -> Result<Self> {
         let mut col_defs = Vec::with_capacity(cnt);
         for _ in 0..cnt {
-            let col_def = ColumnDefinition::read_with_ctx(input, false)?;
+            let col_def = ColumnDefinition::read_from(input, false)?;
             col_defs.push(col_def);
         }
         Ok(Self(col_defs))
@@ -91,13 +87,11 @@ impl ReadFromBytesWithContext<'_> for StmtPrepareColDefs {
 #[derive(Debug, Clone)]
 pub struct StmtPrepareParamDefs(pub Vec<ColumnDefinition>);
 
-impl ReadFromBytesWithContext<'_> for StmtPrepareParamDefs {
-    type Context = usize;
-
-    fn read_with_ctx(input: &mut Bytes, cnt: Self::Context) -> Result<Self> {
+impl StmtPrepareParamDefs {
+    pub fn read_from(input: &mut Bytes, cnt: usize) -> Result<Self> {
         let mut param_defs = Vec::with_capacity(cnt);
         for _ in 0..cnt {
-            let param_def = ColumnDefinition::read_with_ctx(input, false)?;
+            let param_def = ColumnDefinition::read_from(input, false)?;
             param_defs.push(param_def);
         }
         Ok(Self(param_defs))

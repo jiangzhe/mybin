@@ -1,5 +1,5 @@
 //! start event and format description event
-use super::{LogEventType, LogEventTypeCode};
+use super::LogEventType;
 use bytes::{Buf, Bytes};
 use bytes_parser::Result;
 use bytes_parser::{ReadBytesExt, ReadFromBytes};
@@ -66,8 +66,8 @@ impl ReadFromBytes for FormatDescriptionData {
         // post header lengths field if checksum is enabled
         // we use self contained FDE post header len to check if
         // the checksum flag and checksum value exist
-        let fde_type_code = LogEventTypeCode::from(LogEventType::FormatDescriptionEvent);
-        let fde_post_header_len = input[fde_type_code.0 as usize - 1] - 57;
+        let fde_type_code = LogEventType::FormatDescriptionEvent;
+        let fde_post_header_len = input[u8::from(fde_type_code) as usize - 1] - 57;
         if input.remaining() == fde_post_header_len as usize {
             // version not support checksum
             let post_header_lengths = input.split_to(input.remaining());

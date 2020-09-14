@@ -5,7 +5,7 @@ use crate::try_non_null_column_value;
 use crate::try_number_from_binary_column_value;
 use bigdecimal::BigDecimal;
 use bytes::{Buf, Bytes};
-use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
+use chrono::{NaiveDate, NaiveDateTime};
 use smol_str::SmolStr;
 use std::collections::HashMap;
 
@@ -69,7 +69,7 @@ impl ColumnExtractor {
         let mut meta_by_name = HashMap::new();
         let mut meta_by_lc_name = HashMap::new();
         for (idx, col_def) in col_defs.iter().enumerate() {
-            let name = SmolStr::new(&col_def.name);
+            let name = col_def.name.clone();
             meta_by_name.insert(
                 name,
                 ResultSetColMeta {
@@ -219,36 +219,7 @@ impl FromColumnValue<BinaryColumnValue> for Option<NaiveDateTime> {
     fn from_col(value: BinaryColumnValue) -> Result<Self> {
         match value {
             BinaryColumnValue::Null => Ok(None),
-            BinaryColumnValue::DateTime {
-                year,
-                month,
-                day,
-                hour,
-                minute,
-                second,
-                micro_second,
-            } => Ok(Some(
-                NaiveDate::from_ymd(year as i32, month as u32, day as u32).and_hms_micro(
-                    hour as u32,
-                    minute as u32,
-                    second as u32,
-                    micro_second,
-                ),
-            )),
-            BinaryColumnValue::Timestamp {
-                year,
-                month,
-                day,
-                hour,
-                minute,
-                second,
-            } => Ok(Some(
-                NaiveDate::from_ymd(year as i32, month as u32, day as u32).and_hms(
-                    hour as u32,
-                    minute as u32,
-                    second as u32,
-                ),
-            )),
+            BinaryColumnValue::DateTime(ts) | BinaryColumnValue::Timestamp(ts) => Ok(Some(ts.into())),
             _ => Err(Error::column_type_mismatch("datetime", &value)),
         }
     }
@@ -260,7 +231,7 @@ impl FromColumnValue<BinaryColumnValue> for Option<BigDecimal> {
     fn from_col(value: BinaryColumnValue) -> Result<Self> {
         match value {
             BinaryColumnValue::Null => Ok(None),
-            BinaryColumnValue::Decimal(bs) | BinaryColumnValue::NewDecimal(bs) => {
+            BinaryColumnValue::NewDecimal(bs) => {
                 let s = std::str::from_utf8(bs.bytes())?;
                 Ok(Some(s.parse()?))
             }
@@ -270,145 +241,6 @@ impl FromColumnValue<BinaryColumnValue> for Option<BigDecimal> {
 }
 
 try_non_null_column_value!(BinaryColumnValue => BigDecimal);
-
-#[derive(Debug, Clone)]
-pub struct MyTime {
-    pub negative: bool,
-    pub days: u32,
-    pub time: NaiveTime,
-}
-
-impl FromColumnValue<BinaryColumnValue> for Option<MyTime> {
-    fn from_col(value: BinaryColumnValue) -> Result<Self> {
-        match value {
-            BinaryColumnValue::Null => Ok(None),
-            BinaryColumnValue::Time {
-                negative,
-                days,
-                hour,
-                minute,
-                second,
-                micro_second,
-            } => {
-                let time = NaiveTime::from_hms_micro(
-                    hour as u32,
-                    minute as u32,
-                    second as u32,
-                    micro_second,
-                );
-                Ok(Some(MyTime {
-                    negative,
-                    days,
-                    time,
-                }))
-            }
-            _ => Err(Error::column_type_mismatch("bool", &value)),
-        }
-    }
-}
-
-try_non_null_column_value!(BinaryColumnValue => MyTime);
-
-impl FromColumnValue<TextColumnValue> for Option<MyTime> {
-    fn from_col(value: TextColumnValue) -> Result<Self> {
-        match value {
-            None => Ok(None),
-            Some(bs) => {
-                let s = std::str::from_utf8(bs.bytes())?;
-                let s = s.trim_start();
-                // because MySQL time can be negative and more than 24 hours,
-                // cannot use NaiveTime::parse_from_str()
-                let splits: Vec<&str> = s.split(":").collect();
-                if splits.len() != 3 {
-                    return Err(Error::ParseMyTimeError(format!("invalid string {}", s)));
-                }
-                let hours: i64 = splits[0].parse()?;
-                let negative = hours < 0;
-                let hours = i64::abs(hours) as u32;
-                let (days, hours) = if hours >= 24 {
-                    (hours / 24, hours % 24)
-                } else {
-                    (0, hours)
-                };
-                let minutes: u8 = splits[1].parse()?;
-                // handle micro seconds if exists
-                let sec_splits: Vec<&str> = splits[2].split('.').collect();
-                if sec_splits.len() > 2 {
-                    return Err(Error::ParseMyTimeError(format!(
-                        "invalid seconds {}",
-                        splits[2]
-                    )));
-                }
-                let seconds: u8 = sec_splits[0].parse()?;
-                let micro_seconds = if sec_splits.len() == 2 {
-                    if sec_splits[1].len() == 3 {
-                        let milliseconds: u32 = sec_splits[1].parse()?;
-                        milliseconds * 1000
-                    } else {
-                        sec_splits[1].parse()?
-                    }
-                } else {
-                    0
-                };
-                Ok(Some(MyTime {
-                    negative,
-                    days,
-                    time: NaiveTime::from_hms_micro(
-                        hours,
-                        minutes as u32,
-                        seconds as u32,
-                        micro_seconds,
-                    ),
-                }))
-            }
-        }
-    }
-}
-
-try_non_null_column_value!(TextColumnValue => MyTime);
-
-#[derive(Debug, Clone)]
-pub struct MyTimestamp(pub NaiveDateTime);
-
-impl FromColumnValue<BinaryColumnValue> for Option<MyTimestamp> {
-    fn from_col(value: BinaryColumnValue) -> Result<Self> {
-        match value {
-            BinaryColumnValue::Null => Ok(None),
-            BinaryColumnValue::Timestamp {
-                year,
-                month,
-                day,
-                hour,
-                minute,
-                second,
-            } => Ok(Some(MyTimestamp(
-                NaiveDate::from_ymd(year as i32, month as u32, day as u32).and_hms(
-                    hour as u32,
-                    minute as u32,
-                    second as u32,
-                ),
-            ))),
-            _ => Err(Error::column_type_mismatch("datetime", &value)),
-        }
-    }
-}
-
-try_non_null_column_value!(BinaryColumnValue => MyTimestamp);
-
-impl FromColumnValue<TextColumnValue> for Option<MyTimestamp> {
-    fn from_col(value: TextColumnValue) -> Result<Self> {
-        match value {
-            None => Ok(None),
-            Some(bs) => {
-                let s = std::str::from_utf8(bs.bytes())?;
-                let ts = NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")?;
-                Ok(Some(MyTimestamp(ts)))
-            }
-        }
-    }
-}
-
-try_non_null_column_value!(TextColumnValue => MyTimestamp);
 
 #[derive(Debug, Clone)]
 pub struct MyI24(pub i32);
@@ -515,7 +347,6 @@ impl FromColumnValue<BinaryColumnValue> for Option<String> {
         match value {
             BinaryColumnValue::Null => Ok(None),
             BinaryColumnValue::Blob(bs)
-            | BinaryColumnValue::Varchar(bs)
             | BinaryColumnValue::VarString(bs)
             | BinaryColumnValue::String(bs) => {
                 let s = String::from_utf8(Vec::from(bs.bytes()))?;

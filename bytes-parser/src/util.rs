@@ -2,28 +2,47 @@
 macro_rules! read_number_future {
     ($struct_name:ident, $ty:ty, $len:expr, $fname:expr) => {
         #[must_use = "futures do nothing unless you `.await` or poll them"]
-        pub struct $struct_name<'a, R: Unpin + ?Sized>(pub &'a mut R);
+        pub struct $struct_name<'a, R: Unpin + ?Sized> {
+            reader: &'a mut R,
+            buf: [u8; $len],
+            read: usize,
+        }
+
+        impl<'a, R> $struct_name<'a, R>
+        where
+            R: AsyncRead + Unpin + ?Sized,
+        {
+            pub fn new(reader: &'a mut R) -> Self {
+                Self {
+                    reader,
+                    buf: [0u8; $len],
+                    read: 0,
+                }
+            }
+        }
 
         impl<R: AsyncRead + Unpin + ?Sized> Future for $struct_name<'_, R> {
             type Output = Result<$ty>;
 
             fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-                let mut reader = Pin::new(&mut self.0);
-                let mut read = 0;
-                let mut bs = vec![0u8; $len];
+                let Self { reader, buf, read } = &mut *self;
+                // let mut reader = Pin::new(&mut self.0);
+                let mut reader = Pin::new(reader);
+                // let read = *read;
+                // let mut read = 0;
+                // let mut bs = vec![0u8; $len];
                 loop {
-                    match ready!(reader.as_mut().poll_read(cx, &mut bs[read..])) {
+                    match ready!(reader.as_mut().poll_read(cx, &mut buf[*read..])) {
                         Ok(0) => {
                             return Poll::Ready(Err(crate::error::Error::InputIncomplete(
-                                Bytes::copy_from_slice(&bs[0..read]),
-                                Needed::Size($len - read),
+                                Bytes::copy_from_slice(&buf[..]),
+                                Needed::Size($len - *read),
                             )))
                         }
                         Ok(n) => {
-                            if read + n == $len {
-                                return Poll::Ready(Ok($fname(&bs[..])));
-                            } else {
-                                read += n;
+                            *read += n;
+                            if *read == $len {
+                                return Poll::Ready(Ok($fname(&buf[..])));
                             }
                         }
                         Err(ref e) if e.kind() == ErrorKind::Interrupted => (),

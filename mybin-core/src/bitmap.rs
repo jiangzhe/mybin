@@ -1,6 +1,6 @@
 /// helper function to get indexed bool value from bitmap
 #[inline]
-pub(crate) fn index(bitmap: &[u8], idx: usize) -> bool {
+pub fn index(bitmap: &[u8], idx: usize) -> bool {
     let bucket = idx >> 3;
     let offset = idx & 7;
     let bit = 1 << offset;
@@ -8,7 +8,7 @@ pub(crate) fn index(bitmap: &[u8], idx: usize) -> bool {
 }
 
 #[inline]
-pub(crate) fn mark(bitmap: &mut [u8], idx: usize, mark: bool) {
+pub fn mark(bitmap: &mut [u8], idx: usize, mark: bool) {
     let bucket = idx >> 3;
     let offset = idx & 7;
     if mark {
@@ -21,14 +21,16 @@ pub(crate) fn mark(bitmap: &mut [u8], idx: usize, mark: bool) {
     }
 }
 
-pub(crate) fn to_iter(bits: &[u8], offset: usize) -> ToIter {
+#[inline]
+pub fn to_iter(bits: &[u8], offset: usize) -> ToIter {
     ToIter { bits, idx: offset }
 }
 
 /// construct bitmap from iterator
 /// the first "offset" bits are set to zero
 /// generated bitmap is at least 1 byte
-pub(crate) fn from_iter<I>(iter: I, mut offset: usize) -> Vec<u8>
+#[inline]
+pub fn from_iter<I>(iter: I, mut offset: usize) -> Vec<u8>
 where
     I: IntoIterator<Item = bool>,
 {

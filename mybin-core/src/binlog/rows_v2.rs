@@ -1,11 +1,11 @@
 //! meaningful data structures and parsing logic of RowsEventV2
 use crate::bitmap;
-use crate::col::{BinaryColumnValue, ColumnMeta};
+use crate::col::{BinlogColumnValue, ColumnMeta};
 use crate::row::LogRow;
 use bytes::{Buf, Bytes};
 use bytes_parser::error::{Error, Result};
 use bytes_parser::my::ReadMyEnc;
-use bytes_parser::{ReadBytesExt, ReadFromBytes, ReadFromBytesWithContext};
+use bytes_parser::{ReadBytesExt, ReadFromBytes};
 
 /// Data of WriteRowsEventV2
 ///
@@ -24,14 +24,15 @@ pub struct WriteRowsDataV2 {
 
 impl WriteRowsDataV2 {
     pub fn rows(&self, col_metas: &[ColumnMeta]) -> Result<RowsV2> {
-        RowsV2::read_with_ctx(
+        RowsV2::read_from(
             &mut self.payload.clone(),
-            (self.extra_data_len as usize, col_metas),
+            self.extra_data_len as usize,
+            col_metas,
         )
     }
 
     pub fn into_rows(mut self, col_metas: &[ColumnMeta]) -> Result<RowsV2> {
-        RowsV2::read_with_ctx(&mut self.payload, (self.extra_data_len as usize, col_metas))
+        RowsV2::read_from(&mut self.payload, self.extra_data_len as usize, col_metas)
     }
 }
 
@@ -63,14 +64,15 @@ pub struct UpdateRowsDataV2 {
 
 impl UpdateRowsDataV2 {
     pub fn rows(&self, col_metas: &[ColumnMeta]) -> Result<UpdateRowsV2> {
-        UpdateRowsV2::read_with_ctx(
+        UpdateRowsV2::read_from(
             &mut self.payload.clone(),
-            (self.extra_data_len as usize, col_metas),
+            self.extra_data_len as usize,
+            col_metas,
         )
     }
 
     pub fn into_rows(mut self, col_metas: &[ColumnMeta]) -> Result<UpdateRowsV2> {
-        UpdateRowsV2::read_with_ctx(&mut self.payload, (self.extra_data_len as usize, col_metas))
+        UpdateRowsV2::read_from(&mut self.payload, self.extra_data_len as usize, col_metas)
     }
 }
 
@@ -99,14 +101,15 @@ pub struct DeleteRowsDataV2 {
 
 impl DeleteRowsDataV2 {
     pub fn rows(&self, col_metas: &[ColumnMeta]) -> Result<RowsV2> {
-        RowsV2::read_with_ctx(
+        RowsV2::read_from(
             &mut self.payload.clone(),
-            (self.extra_data_len as usize, col_metas),
+            self.extra_data_len as usize,
+            col_metas,
         )
     }
 
     pub fn into_rows(mut self, col_metas: &[ColumnMeta]) -> Result<RowsV2> {
-        RowsV2::read_with_ctx(&mut self.payload, (self.extra_data_len as usize, col_metas))
+        RowsV2::read_from(&mut self.payload, self.extra_data_len as usize, col_metas)
     }
 }
 
@@ -131,12 +134,11 @@ pub struct RowsV2 {
     pub rows: Vec<LogRow>,
 }
 
-impl<'c> ReadFromBytesWithContext<'c> for RowsV2 {
-    type Context = (usize, &'c [ColumnMeta]);
-
-    fn read_with_ctx(
+impl RowsV2 {
+    pub fn read_from(
         input: &mut Bytes,
-        (extra_data_len, col_metas): Self::Context,
+        extra_data_len: usize,
+        col_metas: &[ColumnMeta],
     ) -> Result<RowsV2> {
         let extra_data = input.read_len(extra_data_len - 2)?;
         // all columns
@@ -156,7 +158,7 @@ impl<'c> ReadFromBytesWithContext<'c> for RowsV2 {
         while input.has_remaining() {
             let null_bitmap = input.read_len(null_bitmap_len as usize)?;
             // use present_bitmap as base and mark null using null_bitmap
-            let mut col_bitmap = Vec::from(present_bitmap.as_ref());
+            let mut col_bitmap = Vec::from(present_bitmap.bytes());
             let mut j = 0;
             for i in 0..present_cols {
                 while !bitmap::index(&col_bitmap, j) {
@@ -168,7 +170,7 @@ impl<'c> ReadFromBytesWithContext<'c> for RowsV2 {
                     !bitmap::index(null_bitmap.as_ref(), i as usize),
                 );
             }
-            let row = LogRow::read_with_ctx(input, (n_cols as usize, &col_bitmap[..], col_metas))?;
+            let row = LogRow::read_from(input, n_cols as usize, &col_bitmap[..], col_metas)?;
             rows.push(row);
         }
         Ok(RowsV2 {
@@ -189,12 +191,11 @@ pub struct UpdateRowsV2 {
     pub rows: Vec<UpdateRow>,
 }
 
-impl<'c> ReadFromBytesWithContext<'c> for UpdateRowsV2 {
-    type Context = (usize, &'c [ColumnMeta]);
-
-    fn read_with_ctx(
+impl UpdateRowsV2 {
+    fn read_from(
         input: &mut Bytes,
-        (extra_data_len, col_metas): Self::Context,
+        extra_data_len: usize,
+        col_metas: &[ColumnMeta],
     ) -> Result<UpdateRowsV2> {
         let extra_data = input.read_len(extra_data_len - 2)?;
         // all columns
@@ -234,7 +235,7 @@ impl<'c> ReadFromBytesWithContext<'c> for UpdateRowsV2 {
                 );
             }
             let before_row =
-                LogRow::read_with_ctx(input, (n_cols as usize, &before_col_bitmap[..], col_metas))?;
+                LogRow::read_from(input, n_cols as usize, &before_col_bitmap[..], col_metas)?;
 
             // after row processing
             let after_null_bitmap = input.read_len(after_null_bitmap_len as usize)?;
@@ -252,7 +253,7 @@ impl<'c> ReadFromBytesWithContext<'c> for UpdateRowsV2 {
                 );
             }
             let after_row =
-                LogRow::read_with_ctx(input, (n_cols as usize, &after_col_bitmap[..], col_metas))?;
+                LogRow::read_from(input, n_cols as usize, &after_col_bitmap[..], col_metas)?;
             rows.push(UpdateRow(before_row.0, after_row.0));
         }
         Ok(UpdateRowsV2 {
@@ -266,7 +267,7 @@ impl<'c> ReadFromBytesWithContext<'c> for UpdateRowsV2 {
 }
 
 #[derive(Debug, Clone)]
-pub struct UpdateRow(pub Vec<BinaryColumnValue>, pub Vec<BinaryColumnValue>);
+pub struct UpdateRow(pub Vec<BinlogColumnValue>, pub Vec<BinlogColumnValue>);
 
 #[cfg(test)]
 mod tests {

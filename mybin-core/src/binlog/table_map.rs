@@ -3,6 +3,7 @@ use bytes::{Buf, Bytes};
 use bytes_parser::error::{Error, Result};
 use bytes_parser::my::ReadMyEnc;
 use bytes_parser::{ReadBytesExt, ReadFromBytes};
+use smol_str::SmolStr;
 use std::convert::TryFrom;
 
 /// Data of TableMapEvent
@@ -97,8 +98,8 @@ impl ReadFromBytes for RawTableMap {
 
 #[derive(Debug, Clone)]
 pub struct TableMap {
-    pub schema_name: String,
-    pub table_name: String,
+    pub schema_name: SmolStr,
+    pub table_name: SmolStr,
     pub col_metas: ColumnMetas,
     pub null_bitmap: Vec<u8>,
 }
@@ -106,13 +107,13 @@ pub struct TableMap {
 impl TryFrom<RawTableMap> for TableMap {
     type Error = crate::error::Error;
     fn try_from(raw: RawTableMap) -> crate::error::Result<Self> {
-        use bytes_parser::ReadFromBytesWithContext;
-        let schema_name = String::from_utf8(Vec::from(raw.schema_name.as_ref()))?;
-        let table_name = String::from_utf8(Vec::from(raw.table_name.as_ref()))?;
+        let schema_name = SmolStr::from(String::from_utf8(Vec::from(raw.schema_name.as_ref()))?);
+        let table_name = SmolStr::from(String::from_utf8(Vec::from(raw.table_name.as_ref()))?);
         let null_bitmap = Vec::from(raw.null_bitmap.bytes());
-        let col_metas = ColumnMetas::read_with_ctx(
+        let col_metas = ColumnMetas::read_from(
             &mut raw.col_meta_defs.clone(),
-            (raw.col_cnt as usize, raw.col_defs.bytes()),
+            raw.col_cnt as usize,
+            raw.col_defs.bytes(),
         )?;
         Ok(TableMap {
             schema_name,

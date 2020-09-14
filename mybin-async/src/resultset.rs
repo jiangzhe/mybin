@@ -2,7 +2,7 @@ use crate::conn::Conn;
 use crate::error::{Error, Needed, Result};
 use bytes::{Buf, Bytes};
 use bytes_parser::my::LenEncInt;
-use bytes_parser::{ReadFromBytes, ReadFromBytesWithContext};
+use bytes_parser::ReadFromBytes;
 use futures::stream::{Stream, StreamExt};
 use futures::{ready, AsyncRead, AsyncWrite};
 use mybin_core::col::{BinaryColumnValue, ColumnDefinition, ColumnType, TextColumnValue};
@@ -32,14 +32,14 @@ where
     let mut col_defs = Vec::with_capacity(col_cnt as usize);
     for _ in 0..col_cnt {
         let mut msg = conn.recv_msg().await?;
-        let col_def = ColumnDefinition::read_with_ctx(&mut msg, false)?;
+        let col_def = ColumnDefinition::read_from(&mut msg, false)?;
         log::trace!("col_def={:?}", col_def);
         col_defs.push(col_def);
     }
     if !conn.cap_flags.contains(CapabilityFlags::DEPRECATE_EOF) {
         // additional EOF if not deprecate
         let mut msg = conn.recv_msg().await?;
-        EofPacket::read_with_ctx(&mut msg, &conn.cap_flags)?;
+        EofPacket::read_from(&mut msg, &conn.cap_flags)?;
     }
     // incoming rows
     Ok(ResultSet::new(conn, col_defs))
@@ -50,11 +50,11 @@ where
 fn parse_col_cnt_packet(msg: &mut Bytes, cap_flags: &CapabilityFlags) -> Result<u32> {
     match msg[0] {
         0xff => {
-            let err = ErrPacket::read_with_ctx(msg, (cap_flags, true))?;
+            let err = ErrPacket::read_from(msg, cap_flags, true)?;
             Err(err.into())
         }
         0x00 => {
-            OkPacket::read_with_ctx(msg, cap_flags)?;
+            OkPacket::read_from(msg, cap_flags)?;
             return Ok(0);
         }
         _ => {
@@ -171,6 +171,8 @@ where
         }
         loop {
             let mut recv_fut = self.conn.recv_msg();
+            // todo: this is wrong, the internal state is broken in loop
+            //       except if we store state inside Conn
             match ready!(Pin::new(&mut recv_fut).as_mut().poll(cx)) {
                 Err(err) => {
                     log::warn!("parse message error: {:?}", err);
@@ -224,7 +226,7 @@ where
                     0xfe if msg.remaining() < 0xffffff => {
                         self.completed = true;
                         if self.conn.cap_flags.contains(CapabilityFlags::DEPRECATE_EOF) {
-                            match OkPacket::read_with_ctx(&mut msg, &self.conn.cap_flags) {
+                            match OkPacket::read_from(&mut msg, &self.conn.cap_flags) {
                                 Ok(_) => {
                                     return Poll::Ready(None);
                                 }
@@ -234,7 +236,7 @@ where
                                 }
                             }
                         }
-                        match EofPacket::read_with_ctx(&mut msg, &self.conn.cap_flags) {
+                        match EofPacket::read_from(&mut msg, &self.conn.cap_flags) {
                             Ok(_) => Poll::Ready(None),
                             Err(e) => {
                                 log::warn!("parse eof packet error {}", e);
@@ -242,7 +244,7 @@ where
                             }
                         }
                     }
-                    _ => match TextRow::read_with_ctx(&mut msg, self.col_defs.len()) {
+                    _ => match TextRow::read_from(&mut msg, self.col_defs.len()) {
                         Ok(row) => Poll::Ready(Some(row.0)),
                         Err(e) => {
                             log::warn!("parse text row error {}", e);
@@ -281,7 +283,7 @@ where
                     // EOF Packet
                     0xfe if msg.remaining() <= 0xffffff => {
                         if self.conn.cap_flags.contains(CapabilityFlags::DEPRECATE_EOF) {
-                            match OkPacket::read_with_ctx(&mut msg, &self.conn.cap_flags) {
+                            match OkPacket::read_from(&mut msg, &self.conn.cap_flags) {
                                 Ok(_) => {
                                     self.completed = true;
                                     return Poll::Ready(None);
@@ -292,7 +294,7 @@ where
                                 }
                             }
                         }
-                        match EofPacket::read_with_ctx(&mut msg, &self.conn.cap_flags) {
+                        match EofPacket::read_from(&mut msg, &self.conn.cap_flags) {
                             Ok(_) => {
                                 self.completed = true;
                                 Poll::Ready(None)
@@ -303,7 +305,7 @@ where
                             }
                         }
                     }
-                    _ => match BinaryRow::read_with_ctx(&mut msg, &self.col_types) {
+                    _ => match BinaryRow::read_from(&mut msg, &self.col_types) {
                         Ok(row) => Poll::Ready(Some(row.0)),
                         Err(e) => {
                             log::warn!("parse text row error {}", e);
