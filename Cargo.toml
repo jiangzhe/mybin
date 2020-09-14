@@ -1,2 +1,2 @@
 [workspace]
-members = ["mybin-async", "mybin-core", "bytes-parser"]
+members = ["mybin-async", "mybin-core", "bytes-parser", "mybinlog"]

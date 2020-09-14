@@ -1,18 +1,16 @@
 use crate::bitmap;
-use crate::col::{BinaryColumnValue, ColumnMeta, ColumnType, TextColumnValue};
+use crate::col::{BinaryColumnValue, BinlogColumnValue, ColumnMeta, ColumnType, TextColumnValue};
 use bytes::Bytes;
 use bytes_parser::error::{Error, Result};
 use bytes_parser::my::{LenEncStr, ReadMyEnc};
-use bytes_parser::{ReadBytesExt, ReadFromBytesWithContext};
+use bytes_parser::ReadBytesExt;
 
 /// used for text result set of query execution
 #[derive(Debug, Clone)]
 pub struct TextRow(pub Vec<TextColumnValue>);
 
-impl<'c> ReadFromBytesWithContext<'c> for TextRow {
-    type Context = usize;
-
-    fn read_with_ctx(input: &mut Bytes, col_cnt: usize) -> Result<Self> {
+impl TextRow {
+    pub fn read_from(input: &mut Bytes, col_cnt: usize) -> Result<Self> {
         let mut tcvs = Vec::with_capacity(col_cnt as usize);
         for _ in 0..col_cnt {
             let s = input.read_len_enc_str()?;
@@ -34,10 +32,8 @@ impl<'c> ReadFromBytesWithContext<'c> for TextRow {
 #[derive(Debug, Clone)]
 pub struct BinaryRow(pub Vec<BinaryColumnValue>);
 
-impl<'c> ReadFromBytesWithContext<'c> for BinaryRow {
-    type Context = &'c [ColumnType];
-
-    fn read_with_ctx(input: &mut Bytes, col_types: Self::Context) -> Result<Self> {
+impl BinaryRow {
+    pub fn read_from(input: &mut Bytes, col_types: &[ColumnType]) -> Result<Self> {
         // header 0x00
         input.read_u8()?;
         // null bitmap with offset 2
@@ -48,7 +44,7 @@ impl<'c> ReadFromBytesWithContext<'c> for BinaryRow {
             if null {
                 cols.push(BinaryColumnValue::Null);
             } else {
-                let col = BinaryColumnValue::read_with_ctx(input, *col_type)?;
+                let col = BinaryColumnValue::read_from(input, *col_type)?;
                 cols.push(col);
             }
         }
@@ -58,23 +54,26 @@ impl<'c> ReadFromBytesWithContext<'c> for BinaryRow {
 
 /// used for binlog
 #[derive(Debug, Clone)]
-pub struct LogRow(pub Vec<BinaryColumnValue>);
+pub struct LogRow(pub Vec<BinlogColumnValue>);
 
-impl<'c> ReadFromBytesWithContext<'c> for LogRow {
-    type Context = (usize, &'c [u8], &'c [ColumnMeta]);
-
-    fn read_with_ctx(
+impl LogRow {
+    pub fn read_from(
         input: &mut Bytes,
-        (n_cols, col_bm, col_metas): Self::Context,
+        n_cols: usize,
+        col_bm: &[u8],
+        col_metas: &[ColumnMeta],
     ) -> Result<Self> {
+        use bytes::Buf;
+        println!("input={:?}", input.bytes());
         let mut cols = Vec::with_capacity(n_cols);
         for i in 0..n_cols {
             if bitmap::index(col_bm, i) {
                 let col_meta = &col_metas[i];
-                let col_val = BinaryColumnValue::read_with_ctx(input, col_meta.into())?;
+                let col_val = BinlogColumnValue::read_from(input, col_meta)?;
+                println!("col_val={:?}", col_val);
                 cols.push(col_val);
             } else {
-                cols.push(BinaryColumnValue::Null);
+                cols.push(BinlogColumnValue::Null);
             }
         }
         Ok(LogRow(cols))

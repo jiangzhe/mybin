@@ -41,6 +41,8 @@ pub enum Error {
     ColumnNameNotFound(String),
     #[error("unexpected null value")]
     NullValueError,
+    #[error("encode hex error {0}")]
+    FromHexError(#[from] hex::FromHexError),
 }
 
 impl Error {

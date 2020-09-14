@@ -6,9 +6,7 @@ use crate::Command;
 use bytes::{Buf, Bytes, BytesMut};
 use bytes_parser::error::{Error, Needed, Result};
 use bytes_parser::my::LenEncStr;
-use bytes_parser::{
-    ReadFromBytes, ReadFromBytesWithContext, WriteBytesExt, WriteToBytesWithContext,
-};
+use bytes_parser::{ReadFromBytes, WriteBytesExt, WriteToBytesWithContext};
 
 #[derive(Debug, Clone)]
 pub struct ComChangeUser {
@@ -92,19 +90,18 @@ pub enum ComChangeUserResponse {
     More(AuthMoreData),
 }
 
-impl<'c> ReadFromBytesWithContext<'c> for ComChangeUserResponse {
-    type Context = &'c CapabilityFlags;
-    fn read_with_ctx(input: &mut Bytes, cap_flags: Self::Context) -> Result<Self> {
+impl ComChangeUserResponse {
+    pub fn read_from(input: &mut Bytes, cap_flags: &CapabilityFlags) -> Result<Self> {
         if !input.has_remaining() {
             return Err(Error::InputIncomplete(Bytes::new(), Needed::Unknown));
         }
         match input[0] {
             0xff => {
-                let err = ErrPacket::read_with_ctx(input, (cap_flags, true))?;
+                let err = ErrPacket::read_from(input, cap_flags, true)?;
                 Ok(Self::Err(err))
             }
             0x00 => {
-                let ok = OkPacket::read_with_ctx(input, cap_flags)?;
+                let ok = OkPacket::read_from(input, cap_flags)?;
                 Ok(Self::Ok(ok))
             }
             0x01 => {

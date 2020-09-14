@@ -1,13 +1,14 @@
-use super::LogEventTypeCode;
+use super::LogEventType;
 use bitflags::bitflags;
 use bytes::Bytes;
 use bytes_parser::error::Result;
 use bytes_parser::{ReadBytesExt, ReadFromBytes};
+use std::convert::TryFrom;
 
 #[derive(Debug, Clone)]
 pub struct EventHeaderV1 {
     pub timestamp: u32,
-    pub type_code: LogEventTypeCode,
+    pub type_code: LogEventType,
     pub server_id: u32,
     pub event_len: u32,
 }
@@ -34,7 +35,7 @@ impl ReadFromBytes for EventHeaderV1 {
         let event_len = input.read_le_u32()?;
         Ok(EventHeaderV1 {
             timestamp,
-            type_code: LogEventTypeCode(type_code),
+            type_code: LogEventType::try_from(type_code)?,
             server_id,
             event_len,
         })
@@ -59,7 +60,7 @@ bitflags! {
 #[derive(Debug, Clone)]
 pub struct EventHeader {
     pub timestamp: u32,
-    pub type_code: LogEventTypeCode,
+    pub type_code: LogEventType,
     pub server_id: u32,
     pub event_len: u32,
     pub next_pos: u32,

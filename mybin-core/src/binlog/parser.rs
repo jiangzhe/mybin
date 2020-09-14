@@ -322,6 +322,7 @@ mod tests {
     const BINLOG_RAND_EVENT: &[u8] = include_bytes!("../../data/mysql-bin.5.7.30.RandEvent");
     const BINLOG_USER_VAR_EVENT: &[u8] = include_bytes!("../../data/mysql-bin.5.7.30.UserVarEvent");
     const BINLOG_GTID_EVENT: &[u8] = include_bytes!("../../data/mysql-bin.5.7.30.GtidEvent");
+    const BINLOG_TIME_DATA: &[u8] = include_bytes!("../../data/mysql-bin.5.7.30.Time");
 
     #[test]
     fn test_binlog_version() -> Result<()> {
@@ -363,7 +364,7 @@ mod tests {
         for i in 0..fdd.post_header_lengths.len() {
             println!(
                 "{:?}: {}",
-                LogEventType::from(i as u8 + 1),
+                LogEventType::try_from(i as u8 + 1)?,
                 fdd.post_header_lengths[i]
             );
         }
@@ -429,7 +430,7 @@ mod tests {
         for i in 1..fdd.post_header_lengths.len() {
             println!(
                 "{:?}: {}",
-                LogEventType::from(i as u8 + 1),
+                LogEventType::try_from(i as u8 + 1)?,
                 fdd.post_header_lengths[i]
             );
         }
@@ -939,8 +940,29 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn test_time_data() -> Result<()> {
+        let mut input = BINLOG_TIME_DATA;
+        let input = &mut input.to_bytes();
+        let pv4 = ParserV4::from_binlog_file(input)?;
+        // 5th event is insert
+        for _ in 0..3 {
+            pv4.skip_event(input)?;
+        }
+        let tme = pv4.parse_event(input, false)?;
+        let tme: TableMapEvent = tme.unwrap().try_into()?;
+        let tm = tme.data.into_table_map()?;
+        dbg!(&tm);
+        let wre = pv4.parse_event(input, false)?;
+        let wre: WriteRowsEventV2 = wre.unwrap().try_into()?;
+        dbg!(&wre);
+        let rows = wre.data.into_rows(&tm.col_metas)?;
+        dbg!(rows);
+        Ok(())
+    }
+
     fn post_header_length(fdd: &FormatDescriptionData, event_type: LogEventType) -> u8 {
-        let idx = LogEventTypeCode::from(event_type).0 as usize - 1;
+        let idx = u8::from(event_type) as usize - 1;
         fdd.post_header_lengths[idx]
     }
 }

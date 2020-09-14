@@ -1,7 +1,7 @@
 use crate::conn::Conn;
 use crate::error::{Error, Needed, Result};
 use bytes::{Buf, Bytes};
-use bytes_parser::{ReadBytesExt, ReadFromBytes, ReadFromBytesWithContext};
+use bytes_parser::{ReadBytesExt, ReadFromBytes};
 use futures::{ready, AsyncRead, AsyncWrite, Stream};
 use mybin_core::binlog::*;
 use mybin_core::cmd::*;
@@ -147,7 +147,7 @@ where
         let register = ComRegisterSlave::new(slave_id, master_id);
         self.conn.send_msg(register, true).await?;
         let mut msg = self.conn.recv_msg().await?;
-        match ComRegisterSlaveResponse::read_with_ctx(&mut msg, &self.conn.cap_flags)? {
+        match ComRegisterSlaveResponse::read_from(&mut msg, &self.conn.cap_flags)? {
             ComRegisterSlaveResponse::Ok(_) => (),
             ComRegisterSlaveResponse::Err(err) => return Err(err.into()),
         }
@@ -178,11 +178,11 @@ where
         }
         match msg[0] {
             0xff => {
-                let err = ErrPacket::read_with_ctx(&mut msg, (&self.conn.cap_flags, true))?;
+                let err = ErrPacket::read_from(&mut msg, &self.conn.cap_flags, true)?;
                 return Err(err.into());
             }
             0xfe => {
-                EofPacket::read_with_ctx(&mut msg, &self.conn.cap_flags)?;
+                EofPacket::read_from(&mut msg, &self.conn.cap_flags)?;
                 return Ok(BinlogStream {
                     conn: self.conn,
                     // a pseudo parser which won't be called
@@ -358,7 +358,7 @@ mod tests {
         let mut conn = new_conn().await;
         let mut binlog_stream = conn
             .binlog()
-            .binlog_filename("mysql-bin.000001")
+            .binlog_filename("mysql-bin.000002")
             .binlog_pos(4)
             .non_block(true)
             .stream()
@@ -368,7 +368,7 @@ mod tests {
         while let Some(re) = binlog_stream.next().await {
             dbg!(re.unwrap());
             cnt += 1;
-            if cnt == 10 {
+            if cnt == 50 {
                 break;
             }
         }

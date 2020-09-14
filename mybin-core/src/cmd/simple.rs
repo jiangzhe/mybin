@@ -4,7 +4,6 @@ use crate::resp::ComResponse;
 use crate::single_byte_cmd;
 use bytes::{Buf, Bytes};
 use bytes_parser::error::{Error, Needed, Result};
-use bytes_parser::ReadFromBytesWithContext;
 
 single_byte_cmd!(ComStatistics, Statistics);
 
@@ -18,19 +17,18 @@ pub enum ComDebugResponse {
     Err(ErrPacket),
 }
 
-impl<'c> ReadFromBytesWithContext<'c> for ComDebugResponse {
-    type Context = &'c CapabilityFlags;
-    fn read_with_ctx(input: &mut Bytes, cap_flags: Self::Context) -> Result<Self> {
+impl ComDebugResponse {
+    pub fn read_from(input: &mut Bytes, cap_flags: &CapabilityFlags) -> Result<Self> {
         if !input.has_remaining() {
             return Err(Error::InputIncomplete(Bytes::new(), Needed::Unknown));
         }
         match input[0] {
             0xfe => {
-                let eof = EofPacket::read_with_ctx(input, cap_flags)?;
+                let eof = EofPacket::read_from(input, cap_flags)?;
                 Ok(Self::Eof(eof))
             }
             0xff => {
-                let err = ErrPacket::read_with_ctx(input, (cap_flags, true))?;
+                let err = ErrPacket::read_from(input, cap_flags, true)?;
                 Ok(Self::Err(err))
             }
             _ => Err(Error::ConstraintError(format!(

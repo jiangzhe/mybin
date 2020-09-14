@@ -1,15 +1,13 @@
 use crate::conn::Conn;
 use crate::error::{Error, Result};
-use bytes::{Buf, Bytes, BytesMut};
-use bytes_parser::WriteToBytes;
+use bytes::{Buf, Bytes};
 use futures::{ready, AsyncRead, AsyncWrite};
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::Ordering;
 use std::task::{Context, Poll};
 
 #[derive(Debug, Clone, Copy)]
-enum MsgState {
+pub enum MsgState {
     Len,
     Seq,
     Payload,
@@ -17,11 +15,7 @@ enum MsgState {
 
 #[derive(Debug)]
 pub struct RecvMsgFuture<'s, S> {
-    pub(crate) conn: &'s mut Conn<S>,
-    state: MsgState,
-    out: BytesMut,
-    curr_len: u32,
-    total_len: usize,
+    conn: &'s mut Conn<S>,
 }
 
 impl<'s, S> RecvMsgFuture<'s, S>
@@ -29,13 +23,7 @@ where
     S: AsyncRead + Unpin,
 {
     pub(crate) fn new(conn: &'s mut Conn<S>) -> Self {
-        RecvMsgFuture {
-            conn,
-            state: MsgState::Len,
-            out: BytesMut::new(),
-            curr_len: 0,
-            total_len: 0,
-        }
+        RecvMsgFuture { conn }
     }
 }
 
@@ -46,18 +34,18 @@ where
     type Output = Result<Bytes>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        use bytes_parser::future::{ReadLeU24Future, ReadLenOutFuture, ReadU8Future};
+        use bytes_parser::future::{ReadLeU24Future, ReadLenFuture, ReadU8Future};
 
         loop {
-            match self.state {
+            match self.conn.msg_state {
                 MsgState::Len => {
                     // read len
-                    let mut len_fut = ReadLeU24Future(&mut self.conn.stream);
+                    let mut len_fut = ReadLeU24Future::new(&mut self.conn.stream);
                     match ready!(Pin::new(&mut len_fut).poll(cx)) {
                         Ok(n) => {
                             assert!(n <= 0xffffff);
-                            self.curr_len = n;
-                            self.state = MsgState::Seq;
+                            self.conn.recv_len = n;
+                            self.conn.msg_state = MsgState::Seq;
                         }
                         Err(e) => return Poll::Ready(Err(e.into())),
                     }
@@ -67,16 +55,18 @@ where
                     let mut seq_fut = ReadU8Future(&mut self.conn.stream);
                     match ready!(Pin::new(&mut seq_fut).poll(cx)) {
                         Ok(n) => {
-                            // self.conn.pkt_nr = n;
-                            let pkt_nr = self.conn.pkt_nr.as_ref().load(Ordering::SeqCst);
-                            if n != pkt_nr {
+                            if n != self.conn.pkt_nr {
                                 return Poll::Ready(Err(Error::PacketError(format!(
                                     "Get server packet out of order: {} != {}",
-                                    n, pkt_nr
+                                    n, self.conn.pkt_nr
                                 ))));
                             }
-                            self.conn.pkt_nr.as_ref().fetch_add(1, Ordering::SeqCst);
-                            self.state = MsgState::Payload;
+                            if n == 0xff {
+                                self.conn.pkt_nr = 0;
+                            } else {
+                                self.conn.pkt_nr = n + 1;
+                            }
+                            self.conn.msg_state = MsgState::Payload;
                         }
                         Err(e) => return Poll::Ready(Err(e.into())),
                     }
@@ -84,38 +74,39 @@ where
                 MsgState::Payload => {
                     let Self {
                         conn,
-                        out,
-                        state,
-                        total_len,
-                        curr_len,
+                        // out,
+                        // total_len,
+                        // curr_len,
                     } = &mut *self;
-                    let mut fut = ReadLenOutFuture {
-                        reader: &mut conn.stream,
-                        n: *curr_len as usize,
-                        out,
-                    };
+                    let mut fut = ReadLenFuture::new(&mut conn.stream, conn.recv_len as usize);
                     match ready!(Pin::new(&mut fut).poll(cx)) {
-                        Ok(_) => {
-                            *total_len += *curr_len as usize;
-                            if *curr_len < 0xffffff {
+                        Ok(buf) => {
+                            if conn.recv_len < 0xffffff {
                                 // make this future reuseable
-                                *state = MsgState::Len;
-                                log::trace!(
-                                    "completed packet: total_len={}, pkt_nr={}",
-                                    total_len,
-                                    conn.pkt_nr.load(Ordering::SeqCst),
+                                conn.msg_state = MsgState::Len;
+                                log::debug!(
+                                    "completed packet: len={}, pkt_nr={}",
+                                    buf.len(),
+                                    conn.pkt_nr,
                                 );
-                                log::trace!("data={:?}", out.bytes());
-                                let msg = out.split_to(out.remaining()).freeze();
-                                return Poll::Ready(Ok(msg));
+                                if conn.recv_buf.is_empty() {
+                                    return Poll::Ready(Ok(Bytes::from(buf)));
+                                }
+                                conn.recv_buf.extend_from_slice(&buf);
+                                return Poll::Ready(Ok(Bytes::from(std::mem::replace(
+                                    &mut conn.recv_buf,
+                                    vec![],
+                                ))));
                             }
-
                             // same as max size, must have
                             // one additional packet even if empty
-                            assert_eq!(0xffffff, *curr_len);
-                            *state = MsgState::Len;
+                            assert_eq!(0xffffff, conn.recv_len);
+                            conn.recv_buf.extend_from_slice(&buf);
+                            conn.msg_state = MsgState::Len;
                         }
-                        Err(e) => return Poll::Ready(Err(e.into())),
+                        Err(e) => {
+                            return Poll::Ready(Err(e.into()));
+                        }
                     }
                 }
             }
@@ -125,32 +116,17 @@ where
 
 #[derive(Debug)]
 pub struct SendMsgFuture<'s, S> {
-    pub(crate) conn: &'s mut Conn<S>,
-    bs: Bytes,
-    state: MsgState,
+    conn: &'s mut Conn<S>,
+    // bs: Bytes,
+    // state: MsgState,
 }
 
 impl<'s, S> SendMsgFuture<'s, S>
 where
     S: AsyncWrite + Unpin,
 {
-    pub fn new<T>(conn: &'s mut Conn<S>, msg: T) -> Self
-    where
-        T: WriteToBytes,
-    {
-        let mut buf = BytesMut::new();
-        // won't fail to append bytes to buffer
-        msg.write_to(&mut buf).unwrap();
-        let bs = buf.freeze();
-        Self::new_bytes(conn, bs)
-    }
-
-    pub fn new_bytes(conn: &'s mut Conn<S>, bs: Bytes) -> Self {
-        SendMsgFuture {
-            conn,
-            bs,
-            state: MsgState::Len,
-        }
+    pub fn new(conn: &'s mut Conn<S>) -> Self {
+        Self { conn }
     }
 }
 
@@ -162,55 +138,69 @@ where
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         use bytes_parser::future::{WriteBytesFuture, WriteLeU24Future, WriteU8Future};
 
-        if !self.bs.has_remaining() {
+        if self.conn.send_buf.is_empty() {
             return Poll::Ready(Ok(()));
         }
         loop {
-            match self.state {
+            match self.conn.msg_state {
                 MsgState::Len => {
                     // write len as u24
-                    let n = usize::min(self.bs.remaining(), 0xffffff) as u32;
+                    let n = usize::min(
+                        self.conn.send_buf.last().as_ref().unwrap().remaining(),
+                        0xffffff,
+                    ) as u32;
                     let mut len_fut = WriteLeU24Future {
                         writer: &mut self.conn.stream,
                         n,
                     };
                     match ready!(Pin::new(&mut len_fut).poll(cx)) {
                         Ok(_) => {
-                            self.state = MsgState::Seq;
+                            self.conn.msg_state = MsgState::Seq;
                         }
                         Err(e) => return Poll::Ready(Err(e.into())),
                     }
                 }
                 MsgState::Seq => {
                     // write seq as u8
-                    let n = self.conn.pkt_nr.load(Ordering::SeqCst);
+                    let n = self.conn.pkt_nr;
                     let mut seq_fut = WriteU8Future {
                         writer: &mut self.conn.stream,
                         n,
                     };
                     match ready!(Pin::new(&mut seq_fut).poll(cx)) {
                         Ok(_) => {
-                            self.state = MsgState::Payload;
-                            self.conn.pkt_nr.fetch_add(1, Ordering::SeqCst);
+                            self.conn.msg_state = MsgState::Payload;
                         }
                         Err(e) => return Poll::Ready(Err(e.into())),
                     }
                 }
                 MsgState::Payload => {
-                    if !self.bs.has_remaining() {
+                    if self.conn.send_buf.is_empty() {
                         return Poll::Ready(Ok(()));
                     }
-                    let len = usize::min(self.bs.remaining(), 0xffffff);
-                    let end = len < 0xffffff;
-                    let mut to_send = self.bs.split_to(len);
+                    let len = usize::min(
+                        self.conn.send_buf.last().as_ref().unwrap().remaining(),
+                        0xffffff,
+                    );
+                    if len == 0xffffff {
+                        let head = self.conn.send_buf.last_mut().unwrap().split_to(0xffffff);
+                        self.conn.send_buf.push(head);
+                    }
+                    let Conn {
+                        stream, send_buf, ..
+                    } = &mut *self.conn;
                     let mut payload_fut = WriteBytesFuture {
-                        writer: &mut self.conn.stream,
-                        bs: &mut to_send,
+                        writer: stream,
+                        bs: send_buf.last_mut().unwrap(),
                     };
                     match ready!(Pin::new(&mut payload_fut).poll(cx)) {
                         Ok(_) => {
-                            self.state = MsgState::Len;
-                            if end {
+                            assert!(!self.conn.send_buf.last().as_ref().unwrap().has_remaining());
+                            self.conn.send_buf.pop();
+                            self.conn.pkt_nr += 1;
+                            log::debug!("pkt_nr set to {}", self.conn.pkt_nr);
+                            self.conn.msg_state = MsgState::Len;
+                            if self.conn.send_buf.is_empty() {
                                 return Poll::Ready(Ok(()));
                             }
                         }

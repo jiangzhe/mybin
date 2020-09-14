@@ -1,7 +1,6 @@
 use crate::conn::Conn;
 use crate::error::Result;
 use crate::resultset::{new_result_set, ResultSet};
-use bytes_parser::ReadFromBytesWithContext;
 use futures::{AsyncRead, AsyncWrite};
 use mybin_core::cmd::ComQuery;
 use mybin_core::col::TextColumnValue;
@@ -35,11 +34,11 @@ where
             let mut msg = self.conn.recv_msg().await?;
             match msg[0] {
                 0xff => {
-                    let err = ErrPacket::read_with_ctx(&mut msg, (&self.conn.cap_flags, true))?;
+                    let err = ErrPacket::read_from(&mut msg, &self.conn.cap_flags, true)?;
                     return Err(err.into());
                 }
                 0x00 => {
-                    OkPacket::read_with_ctx(&mut msg, &self.conn.cap_flags)?;
+                    OkPacket::read_from(&mut msg, &self.conn.cap_flags)?;
                     return Ok(());
                 }
                 _ => {
@@ -62,7 +61,8 @@ mod tests {
     use bigdecimal::BigDecimal;
     use chrono::{NaiveDate, NaiveDateTime};
     use futures::stream::StreamExt;
-    use mybin_core::resultset::{MyBit, MyI24, MyTime, MyU24, MyYear};
+    use mybin_core::resultset::{MyBit, MyI24, MyU24, MyYear};
+    use mybin_core::time::{MyDateTime, MyTime};
 
     #[smol_potat::test]
     async fn test_query_set() {
@@ -180,7 +180,10 @@ mod tests {
             c30 TEXT CHARACTER SET utf8,
             c31 TEXT BINARY,
             c32 BOOLEAN,
-            c33 CHAR(20)
+            c33 CHAR(20),
+            c34 TIME(3),
+            c35 TIME(6),
+            c36 DATETIME(3)
         )
         "#,
             )
@@ -223,7 +226,10 @@ mod tests {
             'hello, utf8',
             'hello, binary',
             true,
-            'fixed'
+            'fixed',
+            '11:22:33.002',
+            '04:05:06.004006',
+            '2020-01-01 03:03:03.401'
         )
         "#,
             )
@@ -304,6 +310,12 @@ mod tests {
             dbg!(c32);
             let c33: String = extractor.get_named_col(&row, "c33").unwrap();
             dbg!(c33);
+            let c34: MyTime = extractor.get_named_col(&row, "c34").unwrap();
+            dbg!(c34);
+            let c35: MyTime = extractor.get_named_col(&row, "c35").unwrap();
+            dbg!(c35);
+            let c36: MyDateTime = extractor.get_named_col(&row, "c36").unwrap();
+            dbg!(c36);
         }
     }
 
@@ -357,7 +369,6 @@ mod tests {
 
     #[smol_potat::test]
     async fn test_result_set_with_mapper() {
-        use bytes::Buf;
         use mybin_core::col::TextColumnValue;
         use mybin_core::resultset::ColumnExtractor;
         #[derive(Debug)]

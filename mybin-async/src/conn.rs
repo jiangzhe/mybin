@@ -1,15 +1,12 @@
 use crate::auth_plugin::{AuthPlugin, MysqlNativePassword};
 use crate::binlog::{Binlog, BinlogFile, BinlogFileMapper};
 use crate::error::{Error, Result};
-use crate::msg::{RecvMsgFuture, SendMsgFuture};
+use crate::msg::{MsgState, RecvMsgFuture, SendMsgFuture};
 use crate::query::Query;
 use crate::resultset::{new_result_set, ResultSet};
 use crate::stmt::Stmt;
-use async_net::TcpStream;
-use bytes::{Buf, BytesMut};
-use bytes_parser::{
-    ReadFromBytes, ReadFromBytesWithContext, WriteToBytes, WriteToBytesWithContext,
-};
+use bytes::{Buf, Bytes, BytesMut};
+use bytes_parser::{ReadFromBytes, WriteToBytes, WriteToBytesWithContext};
 use futures::{AsyncRead, AsyncWrite};
 use mybin_core::cmd::*;
 use mybin_core::col::{ColumnDefinition, TextColumnValue};
@@ -22,9 +19,6 @@ use mybin_core::resultset::{ColumnExtractor, FromColumnValue, RowMapper};
 use mybin_core::stmt::ToColumnValue;
 use serde_derive::*;
 use std::marker::PhantomData;
-use std::net::ToSocketAddrs;
-use std::sync::atomic::{AtomicU8, Ordering};
-use std::sync::Arc;
 
 /// MySQL connection
 ///
@@ -34,38 +28,20 @@ pub struct Conn<S> {
     pub(crate) stream: S,
     pub(crate) cap_flags: CapabilityFlags,
     pub(crate) server_status: StatusFlags,
-    pub(crate) pkt_nr: Arc<AtomicU8>,
+    pub(crate) pkt_nr: u8,
+    pub(crate) msg_state: MsgState,
+    pub(crate) recv_buf: Vec<u8>,
+    pub(crate) recv_len: u32,
+    pub(crate) send_buf: Vec<Bytes>,
 }
 
 impl<S> Conn<S> {
     /// reset packet number to 0
     ///
     /// this method should be called before each command sent
-    pub fn reset_pkt_nr(&self) {
-        self.pkt_nr.as_ref().store(0, Ordering::SeqCst);
-    }
-}
-
-#[allow(dead_code)]
-impl Conn<TcpStream> {
-    /// create a new connection to MySQL
-    ///
-    /// this method only make the initial connection to MySQL server,
-    /// user has to finish the handshake manually
-    pub async fn connect<T: ToSocketAddrs>(addr: T) -> Result<Self> {
-        // maybe try all addresses?
-        let socket_addr = match addr.to_socket_addrs()?.next() {
-            Some(addr) => addr,
-            None => return Err(Error::AddrNotFound),
-        };
-        let stream = TcpStream::connect(socket_addr).await?;
-        log::debug!("connected to MySQL: {}", socket_addr);
-        Ok(Conn {
-            stream,
-            cap_flags: CapabilityFlags::empty(),
-            pkt_nr: Arc::new(AtomicU8::new(0)),
-            server_status: StatusFlags::empty(),
-        })
+    pub fn reset_pkt_nr(&mut self) {
+        self.pkt_nr = 0;
+        log::debug!("pkt_nr reset to {}", self.pkt_nr);
     }
 }
 
@@ -88,15 +64,22 @@ where
     /// send message to MySQL server
     ///
     /// this method will split message into multiple packets if payload too large.
+    /// also note this method will discard the input if send buffer is not empty
     pub fn send_msg<'a, T>(&'a mut self, msg: T, reset_pkt_nr: bool) -> SendMsgFuture<'a, S>
     where
         T: WriteToBytes + std::fmt::Debug,
     {
-        log::debug!("send={:?}", msg);
+        if !self.send_buf.is_empty() {
+            return SendMsgFuture::new(self);
+        }
         if reset_pkt_nr {
             self.reset_pkt_nr();
         }
-        SendMsgFuture::new(self, msg)
+        let mut send_buf = BytesMut::new();
+        // write to buffer won't fail
+        msg.write_to(&mut send_buf).unwrap();
+        self.send_buf = vec![send_buf.freeze()];
+        SendMsgFuture::new(self)
     }
 }
 
@@ -105,13 +88,31 @@ impl<S> Conn<S>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
+    /// create new connection given an already connected stream
+    pub fn new(stream: S) -> Self {
+        Self {
+            stream,
+            cap_flags: CapabilityFlags::empty(),
+            server_status: StatusFlags::empty(),
+            pkt_nr: 0,
+            msg_state: MsgState::Len,
+            recv_buf: Vec::new(),
+            recv_len: 0,
+            send_buf: vec![],
+        }
+    }
+
     /// create new connection given an already connected stream and client/server status
-    pub fn new(stream: S, cap_flags: CapabilityFlags, server_status: StatusFlags) -> Self {
+    pub fn with_status(stream: S, cap_flags: CapabilityFlags, server_status: StatusFlags) -> Self {
         Conn {
             stream,
             cap_flags,
             server_status,
-            pkt_nr: Arc::new(AtomicU8::new(0)),
+            pkt_nr: 0,
+            msg_state: MsgState::Len,
+            recv_buf: Vec::new(),
+            recv_len: 0,
+            send_buf: vec![],
         }
     }
 
@@ -170,7 +171,7 @@ where
         let cap_flags = self.cap_flags.clone();
         let mut msg = self.recv_msg().await?;
         // todo: handle auth switch request
-        match HandshakeMessage::read_with_ctx(&mut msg, &cap_flags)? {
+        match HandshakeMessage::read_from(&mut msg, &cap_flags)? {
             HandshakeMessage::Ok(ok) => {
                 log::debug!("handshake succeeds");
                 self.server_status = ok.status_flags;
@@ -211,7 +212,7 @@ where
         let cmd = ComInitDB::new(db_name);
         self.send_msg(cmd, true).await?;
         let mut msg = self.recv_msg().await?;
-        match ComResponse::read_with_ctx(&mut msg, &self.cap_flags)? {
+        match ComResponse::read_from(&mut msg, &self.cap_flags)? {
             ComResponse::Ok(_) => Ok(()),
             ComResponse::Err(e) => Err(e.into()),
         }
@@ -228,7 +229,7 @@ where
         let mut col_defs = Vec::new();
         loop {
             let mut msg = self.recv_msg().await?;
-            match ComFieldListResponse::read_with_ctx(&mut msg, (&self.cap_flags, true))? {
+            match ComFieldListResponse::read_from(&mut msg, &self.cap_flags, true)? {
                 ComFieldListResponse::Err(err) => return Err(err.into()),
                 ComFieldListResponse::Eof(_) => return Ok(col_defs),
                 ComFieldListResponse::ColDef(col_def) => col_defs.push(col_def),
@@ -244,7 +245,7 @@ where
         let cmd = ComCreateDB::new(db_name);
         self.send_msg(cmd, true).await?;
         let mut msg = self.recv_msg().await?;
-        match ComCreateDBResponse::read_with_ctx(&mut msg, &self.cap_flags)? {
+        match ComCreateDBResponse::read_from(&mut msg, &self.cap_flags)? {
             ComCreateDBResponse::Ok(_) => Ok(()),
             ComCreateDBResponse::Err(err) => Err(err.into()),
         }
@@ -258,7 +259,7 @@ where
         let cmd = ComDropDB::new(db_name);
         self.send_msg(cmd, true).await?;
         let mut msg = self.recv_msg().await?;
-        match ComDropDBResponse::read_with_ctx(&mut msg, &self.cap_flags)? {
+        match ComDropDBResponse::read_from(&mut msg, &self.cap_flags)? {
             ComDropDBResponse::Ok(_) => Ok(()),
             ComDropDBResponse::Err(err) => Err(err.into()),
         }
@@ -269,7 +270,7 @@ where
         let cmd = ComRefresh::new(sub_cmd);
         self.send_msg(cmd, true).await?;
         let mut msg = self.recv_msg().await?;
-        match ComRefreshResponse::read_with_ctx(&mut msg, &self.cap_flags)? {
+        match ComRefreshResponse::read_from(&mut msg, &self.cap_flags)? {
             ComRefreshResponse::Ok(_) => Ok(()),
             ComRefreshResponse::Err(err) => Err(err.into()),
         }
@@ -288,7 +289,7 @@ where
         let cmd = ComDebug::new();
         self.send_msg(cmd, true).await?;
         let mut msg = self.recv_msg().await?;
-        match ComDebugResponse::read_with_ctx(&mut msg, &self.cap_flags)? {
+        match ComDebugResponse::read_from(&mut msg, &self.cap_flags)? {
             ComDebugResponse::Eof(_) => Ok(()),
             ComDebugResponse::Err(err) => Err(err.into()),
         }
@@ -299,7 +300,7 @@ where
         let cmd = ComPing::new();
         self.send_msg(cmd, true).await?;
         let mut msg = self.recv_msg().await?;
-        OkPacket::read_with_ctx(&mut msg, &self.cap_flags)?;
+        OkPacket::read_from(&mut msg, &self.cap_flags)?;
         Ok(())
     }
 
@@ -320,7 +321,7 @@ where
 
         loop {
             let mut msg = self.recv_msg().await?;
-            match ComChangeUserResponse::read_with_ctx(&mut msg, &self.cap_flags)? {
+            match ComChangeUserResponse::read_from(&mut msg, &self.cap_flags)? {
                 ComChangeUserResponse::Ok(_) => break,
                 ComChangeUserResponse::Err(err) => return Err(err.into()),
                 ComChangeUserResponse::Switch(switch) => {
@@ -339,7 +340,7 @@ where
         let cmd = ComProcessKill::new(conn_id);
         self.send_msg(cmd, true).await?;
         let mut msg = self.recv_msg().await?;
-        match ComProcessKillResponse::read_with_ctx(&mut msg, &self.cap_flags)? {
+        match ComProcessKillResponse::read_from(&mut msg, &self.cap_flags)? {
             ComProcessKillResponse::Ok(_) => Ok(()),
             ComProcessKillResponse::Err(e) => Err(e.into()),
         }
@@ -350,7 +351,7 @@ where
         let cmd = ComResetConnection::new();
         self.send_msg(cmd, true).await?;
         let mut msg = self.recv_msg().await?;
-        match ComResetConnectionResponse::read_with_ctx(&mut msg, &self.cap_flags)? {
+        match ComResetConnectionResponse::read_from(&mut msg, &self.cap_flags)? {
             ComResetConnectionResponse::Ok(_) => Ok(()),
             ComResetConnectionResponse::Err(err) => Err(err.into()),
         }
@@ -361,7 +362,7 @@ where
         let cmd = ComSetOption::new(multi_stmts);
         self.send_msg(cmd, true).await?;
         let mut msg = self.recv_msg().await?;
-        match ComSetOptionResponse::read_with_ctx(&mut msg, &self.cap_flags)? {
+        match ComSetOptionResponse::read_from(&mut msg, &self.cap_flags)? {
             ComSetOptionResponse::Eof(_) => {
                 if multi_stmts {
                     self.cap_flags.insert(CapabilityFlags::MULTI_STATEMENTS);
@@ -381,7 +382,7 @@ where
         let cmd = ComRegisterSlave::anonymous(server_id);
         self.send_msg(cmd, true).await?;
         let mut msg = self.recv_msg().await?;
-        match ComRegisterSlaveResponse::read_with_ctx(&mut msg, &self.cap_flags)? {
+        match ComRegisterSlaveResponse::read_from(&mut msg, &self.cap_flags)? {
             ComRegisterSlaveResponse::Ok(_) => Ok(()),
             ComRegisterSlaveResponse::Err(err) => Err(err.into()),
         }
@@ -566,14 +567,16 @@ where
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use async_net::TcpStream;
 
     pub(crate) async fn new_conn() -> Conn<async_net::TcpStream> {
+        let stream = TcpStream::connect("127.0.0.1:13306").await.unwrap();
+        let mut conn = Conn::new(stream);
         let opts = ConnOpts {
             username: "root".to_owned(),
             password: "password".to_owned(),
             database: "".to_owned(),
         };
-        let mut conn = Conn::connect("127.0.0.1:13306").await.unwrap();
         conn.handshake(opts).await.unwrap();
         conn
     }
