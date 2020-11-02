@@ -545,7 +545,7 @@ mod tests {
     #[test]
     fn test_be_i16() -> Result<()> {
         // read
-        let orig = Vec::from((-200i16 as u16).to_le_bytes());
+        let orig = Vec::from((-200i16 as u16).to_be_bytes());
         let mut input = &orig[..];
         let input = &mut input.to_bytes();
         let success = input.read_be_i16()?;

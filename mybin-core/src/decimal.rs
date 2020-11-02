@@ -18,7 +18,7 @@ const POWERS_10: [u32; 10] = [
     1_000_000_000,
 ];
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct MyDecimal {
     // intg is the number of *decimal* digits before the points
     pub intg: u8,

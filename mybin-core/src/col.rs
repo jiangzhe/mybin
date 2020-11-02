@@ -748,7 +748,7 @@ impl WriteToBytes for BinaryColumnValue {
 pub type TextColumnValue = Option<Bytes>;
 
 /// column value parsed from binlog protocol
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum BinlogColumnValue {
     Null,
     // Decimal(Bytes),
@@ -779,7 +779,7 @@ pub enum BinlogColumnValue {
     Geometry(Bytes),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum MyEnum {
     Pack1(u8),
     Pack2(u16),
@@ -802,7 +802,9 @@ impl BinlogColumnValue {
             ColumnMeta::Double { .. } => BinlogColumnValue::Double(input.read_le_f64()?),
             ColumnMeta::Null => BinlogColumnValue::Null,
             ColumnMeta::Timestamp{..} => {
-                let secs = input.read_le_u32()?;
+                // https://github.com/mysql/mysql-server/blob/5.7/sql-common/my_time.c#L1980
+                // stored as big endian int32
+                let secs = input.read_be_u32()?;
                 BinlogColumnValue::Timestamp(secs)
             }
             ColumnMeta::LongLong => BinlogColumnValue::LongLong(input.read_le_u64()?),
@@ -850,7 +852,18 @@ impl BinlogColumnValue {
             ColumnMeta::DateTime { frac } => {
                 Self::DateTime(MyDateTime::from_binlog(input, *frac as usize)?)
             }
-            ColumnMeta::Year => BinlogColumnValue::Year(input.read_le_u16()?),
+            // year in binary log is stored as tiny(single-byte int)
+            // the real year should be the number plus offset 1900
+            // except 0 (which means 0 in MySQL)
+            ColumnMeta::Year => {
+                let n = input.read_u8()?;
+                let y = if n == 0 {
+                    0
+                } else {
+                    (n as u16) + 1900
+                };
+                Self::Year(y)
+            }
             // NewDate,
             // Varchar,
             ColumnMeta::Bit { bits, bytes } => {
@@ -1046,6 +1059,8 @@ bitflags! {
 mod tests {
     use super::*;
     use crate::stmt::StmtColumnValue;
+    use chrono::NaiveDate;
+
     #[test]
     fn test_read_binlog_int24_negative() {
         let input = vec![78, 160, 254];
@@ -1187,6 +1202,45 @@ mod tests {
         } else {
             panic!("type mismatch");
         }
+    }
+
+    #[test]
+    fn read_binlog_year() {
+        let bin_val = BinlogColumnValue::read_from(
+            &mut Bytes::from_static(b"\x00"), &ColumnMeta::Year).unwrap();
+        assert_eq!(BinlogColumnValue::Year(0), bin_val);
+        let bin_val = BinlogColumnValue::read_from(
+            &mut Bytes::from_static(b"\x65"), &ColumnMeta::Year).unwrap();
+        assert_eq!(BinlogColumnValue::Year(2001), bin_val);
+        let bin_val = BinlogColumnValue::read_from(
+            &mut Bytes::from_static(b"\xa9"), &ColumnMeta::Year).unwrap();
+        assert_eq!(BinlogColumnValue::Year(2069), bin_val);
+        let bin_val = BinlogColumnValue::read_from(
+            &mut Bytes::from_static(b"\x46"), &ColumnMeta::Year).unwrap();
+        assert_eq!(BinlogColumnValue::Year(1970), bin_val);
+        let bin_val = BinlogColumnValue::read_from(
+            &mut Bytes::from_static(b"\x63"), &ColumnMeta::Year).unwrap();
+        assert_eq!(BinlogColumnValue::Year(1999), bin_val);
+        let bin_val = BinlogColumnValue::read_from(
+            &mut Bytes::from_static(b"\x01"), &ColumnMeta::Year).unwrap();
+        assert_eq!(BinlogColumnValue::Year(1901), bin_val);
+        let bin_val = BinlogColumnValue::read_from(
+            &mut Bytes::from_static(b"\xff"), &ColumnMeta::Year).unwrap();
+        assert_eq!(BinlogColumnValue::Year(2155), bin_val);
+    }
+
+    #[test]
+    fn read_binlog_timestamp() {
+        let input = vec![95u8, 159, 135, 162];
+        let bin_val = BinlogColumnValue::read_from(
+            &mut Bytes::from(input), &ColumnMeta::Timestamp{frac: 0}).unwrap();
+        // assert_eq!(BinlogColumnValue::Timestamp(
+            
+        // ))
+        let expected = NaiveDate::from_ymd(2020, 11, 2)
+            .and_hms(4, 14, 26);
+        assert_eq!(BinlogColumnValue::Timestamp(expected.timestamp() as u32), bin_val);
+
     }
 
     #[test]

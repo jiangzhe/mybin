@@ -64,6 +64,7 @@ fn main() -> Result<()> {
                         let rows = raw.data.into_rows(&tm.col_metas)?;
                         let del_sql =
                             sql::delete(tm.db.clone(), tm.tbl.clone(), rows, &tm.col_defs);
+                        println!("{:#?}", del_sql);
                         for s in del_sql.sql_list() {
                             println!("{}", s);
                         }
@@ -75,6 +76,7 @@ fn main() -> Result<()> {
                         let rows = raw.data.into_rows(&tm.col_metas)?;
                         let ins_sql =
                             sql::insert(tm.db.clone(), tm.tbl.clone(), rows, &tm.col_defs);
+                        println!("{:#?}", ins_sql);
                         for s in ins_sql.sql_list() {
                             println!("{}", s);
                         }
