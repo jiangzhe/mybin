@@ -323,6 +323,8 @@ mod tests {
     const BINLOG_USER_VAR_EVENT: &[u8] = include_bytes!("../../data/mysql-bin.5.7.30.UserVarEvent");
     const BINLOG_GTID_EVENT: &[u8] = include_bytes!("../../data/mysql-bin.5.7.30.GtidEvent");
     const BINLOG_TIME_DATA: &[u8] = include_bytes!("../../data/mysql-bin.5.7.30.Time");
+    const BINLOG_YEAR_DATA: &[u8] = include_bytes!("../../data/mysql-bin.5.7.30.Year");
+    const BINLOG_TIMESTAMP_DATA: &[u8] = include_bytes!("../../data/mysql-bin.5.7.30.Timestamp");
 
     #[test]
     fn test_binlog_version() -> Result<()> {
@@ -941,8 +943,50 @@ mod tests {
     }
 
     #[test]
-    fn test_time_data() -> Result<()> {
+    fn test_binlog_time_data() -> Result<()> {
         let mut input = BINLOG_TIME_DATA;
+        let input = &mut input.to_bytes();
+        let pv4 = ParserV4::from_binlog_file(input)?;
+        // 5th event is insert
+        for _ in 0..3 {
+            pv4.skip_event(input)?;
+        }
+        let tme = pv4.parse_event(input, false)?;
+        let tme: TableMapEvent = tme.unwrap().try_into()?;
+        let tm = tme.data.into_table_map()?;
+        dbg!(&tm);
+        let wre = pv4.parse_event(input, false)?;
+        let wre: WriteRowsEventV2 = wre.unwrap().try_into()?;
+        dbg!(&wre);
+        let rows = wre.data.into_rows(&tm.col_metas)?;
+        dbg!(rows);
+        Ok(())
+    }
+
+    #[test]
+    fn test_binlog_year_data() -> Result<()> {
+        let mut input = BINLOG_YEAR_DATA;
+        let input = &mut input.to_bytes();
+        let pv4 = ParserV4::from_binlog_file(input)?;
+        // 5th event is insert
+        for _ in 0..3 {
+            pv4.skip_event(input)?;
+        }
+        let tme = pv4.parse_event(input, false)?;
+        let tme: TableMapEvent = tme.unwrap().try_into()?;
+        let tm = tme.data.into_table_map()?;
+        dbg!(&tm);
+        let wre = pv4.parse_event(input, false)?;
+        let wre: WriteRowsEventV2 = wre.unwrap().try_into()?;
+        dbg!(&wre);
+        let rows = wre.data.into_rows(&tm.col_metas)?;
+        dbg!(rows);
+        Ok(())
+    }
+
+    #[test]
+    fn test_binlog_timestamp_data() -> Result<()> {
+        let mut input = BINLOG_TIMESTAMP_DATA;
         let input = &mut input.to_bytes();
         let pv4 = ParserV4::from_binlog_file(input)?;
         // 5th event is insert

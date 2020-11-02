@@ -97,8 +97,8 @@ pub fn delete(
     col_defs: &[ColumnDefinition],
 ) -> PreparedSql {
     let col_defs = filter_col_defs(rows.present_bitmap.bytes(), col_defs);
-    let sql_fragments = delete_sql(&db, &tbl, &col_defs);
-    prepared_sql(db, rows, &col_defs, sql_fragments)
+    let sql_fragments = delete_sql_fragments(&db, &tbl, &col_defs);
+    prepared_sql(db, rows, &col_defs, sql_fragments, true)
 }
 
 pub fn insert(
@@ -108,11 +108,11 @@ pub fn insert(
     col_defs: &[ColumnDefinition],
 ) -> PreparedSql {
     let col_defs = filter_col_defs(rows.present_bitmap.bytes(), col_defs);
-    let sql_fragments = insert_sql(&db, &tbl, &col_defs);
-    prepared_sql(db, rows, &col_defs, sql_fragments)
+    let sql_fragments = insert_sql_fragments(&db, &tbl, &col_defs);
+    prepared_sql(db, rows, &col_defs, sql_fragments, false)
 }
 
-fn delete_sql(db: &SmolStr, tbl: &SmolStr, col_defs: &[ColDef]) -> Vec<String> {
+fn delete_sql_fragments(db: &SmolStr, tbl: &SmolStr, col_defs: &[ColDef]) -> Vec<String> {
     let mut sql_fragments = Vec::new();
     sql_fragments.push(format!("DELETE FROM `{}`.`{}` WHERE ", db, tbl));
     let mut idx = 0;
@@ -133,7 +133,7 @@ fn delete_sql(db: &SmolStr, tbl: &SmolStr, col_defs: &[ColDef]) -> Vec<String> {
     sql_fragments
 }
 
-fn insert_sql(db: &SmolStr, tbl: &SmolStr, col_defs: &[ColDef]) -> Vec<String> {
+fn insert_sql_fragments(db: &SmolStr, tbl: &SmolStr, col_defs: &[ColDef]) -> Vec<String> {
     let mut sql_fragments = Vec::new();
     let mut s = format!("INSERT INTO `{}`.`{}` (", db, tbl);
     for (idx, cf) in col_defs.iter().enumerate() {
@@ -175,13 +175,14 @@ fn prepared_sql(
     drs: RowsV2,
     col_defs: &[ColDef],
     sql_fragments: Vec<String>,
+    key_filter: bool,
 ) -> PreparedSql {
     let mut params = Vec::with_capacity(drs.rows.len());
     for cols in drs.rows {
         let param: Vec<StmtColumnValue> = col_defs
             .iter()
             .zip(cols.0.into_iter())
-            .filter(|(cn, _)| cn.key)
+            .filter(|(cn, _)| !key_filter || cn.key)
             .map(|(cn, row)| StmtColumnValue::from((row, cn.unsigned)))
             .collect();
         params.push(param);
