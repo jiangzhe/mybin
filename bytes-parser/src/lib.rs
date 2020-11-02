@@ -514,6 +514,18 @@ mod tests {
     }
 
     #[test]
+    fn test_be_u16() -> Result<()> {
+        let orig = vec![1u8, 2, 3];
+        let mut input = &orig[..];
+        let input = &mut input.to_bytes();
+        let success = input.read_be_u16()?;
+        assert_eq!((1u16 << 8) + 2, success);
+        let fail = input.read_be_u16();
+        dbg!(fail.unwrap_err());
+        Ok(())
+    }
+
+    #[test]
     fn test_le_i16() -> Result<()> {
         // read
         let orig = Vec::from((-200i16 as u16).to_le_bytes());
@@ -531,6 +543,19 @@ mod tests {
     }
 
     #[test]
+    fn test_be_i16() -> Result<()> {
+        // read
+        let orig = Vec::from((-200i16 as u16).to_le_bytes());
+        let mut input = &orig[..];
+        let input = &mut input.to_bytes();
+        let success = input.read_be_i16()?;
+        assert_eq!(-200, success);
+        let fail = input.read_be_i16();
+        dbg!(fail.unwrap_err());
+        Ok(())
+    }
+
+    #[test]
     fn test_le_u24() -> Result<()> {
         // read
         let orig = vec![1, 2, 3, 4];
@@ -544,6 +569,19 @@ mod tests {
         let mut v = BytesMut::new();
         v.write_le_u24(success).unwrap();
         assert_eq!(vec![1, 2, 3], v);
+        Ok(())
+    }
+
+    #[test]
+    fn test_be_u24() -> Result<()> {
+        // read
+        let orig = vec![1, 2, 3, 4];
+        let mut input = &orig[..];
+        let input = &mut input.to_bytes();
+        let success = input.read_be_u24()?;
+        assert_eq!((1u32 << 16) + (2u32 << 8) + 3u32, success);
+        let fail = input.read_be_u24();
+        dbg!(fail.unwrap_err());
         Ok(())
     }
 
