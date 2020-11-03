@@ -608,7 +608,7 @@ impl<'c> From<(BinlogColumnValue, bool)> for StmtColumnValue {
             // Varchar(Bytes),
             BinlogColumnValue::Bit(bs) => Self::new_bit(Vec::from(bs.bytes())),
             BinlogColumnValue::NewDecimal(d) => Self::new_mydecimal(d),
-            BinlogColumnValue::Enum(..) => unimplemented!("enum conversion"),
+            BinlogColumnValue::Enum(e) => Self::new_unsigned_bigint(e.to_u64()),
             BinlogColumnValue::Blob(bs) => Self::new_blob(bs),
             BinlogColumnValue::VarString(bs) => Self::new_varstring(bs),
             BinlogColumnValue::String(bs) => Self::new_varstring(bs),

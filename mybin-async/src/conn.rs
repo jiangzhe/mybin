@@ -1,7 +1,6 @@
 use crate::auth_plugin::{AuthPlugin, MysqlNativePassword};
 use crate::binlog::{Binlog, BinlogFile, BinlogFileMapper};
 use crate::error::{Error, Result};
-use crate::msg::{MsgState, RecvMsgFuture, SendMsgFuture};
 use crate::query::Query;
 use crate::resultset::{new_result_set, ResultSet};
 use crate::stmt::Stmt;
@@ -19,7 +18,7 @@ use mybin_core::resultset::{ColumnExtractor, FromColumnValue, RowMapper};
 use mybin_core::stmt::ToColumnValue;
 use serde_derive::*;
 use std::marker::PhantomData;
-
+use futures::io::{AsyncReadExt, AsyncWriteExt};
 /// MySQL connection
 ///
 /// A generic MySQL connection based on AsyncRead and AsyncWrite.
@@ -29,10 +28,6 @@ pub struct Conn<S> {
     pub(crate) cap_flags: CapabilityFlags,
     pub(crate) server_status: StatusFlags,
     pub(crate) pkt_nr: u8,
-    pub(crate) msg_state: MsgState,
-    pub(crate) recv_buf: Vec<u8>,
-    pub(crate) recv_len: u32,
-    pub(crate) send_buf: Vec<Bytes>,
 }
 
 impl<S> Conn<S> {
@@ -52,8 +47,34 @@ where
     /// receive message from MySQL server
     ///
     /// this method will concat mutliple packets if payload too large.
-    pub fn recv_msg<'s>(&'s mut self) -> RecvMsgFuture<'s, S> {
-        RecvMsgFuture::new(self)
+    pub async fn recv_msg(&mut self) -> Result<Bytes> {
+        let mut bs = Vec::new();
+        loop {
+            // 1. first 3 bytes as message length
+            let mut len = [0u8; 3];
+            let _ = self.stream.read_exact(&mut len).await?;
+            let len = (len[0] as u64) + ((len[1] as u64) << 8) + ((len[2] as u64) << 16);
+            // 2. then 1 byte packet sequence
+            let mut seq = 0u8;
+            let _ = self.stream.read_exact(std::slice::from_mut(&mut seq)).await?;
+            if seq == 0xff {
+                self.pkt_nr = 0;
+            } else {
+                self.pkt_nr = seq + 1;
+            }
+            // 3. payload with <msg_len> bytes
+            // if msg_len equals 0xffffff, additional packet follows
+            let start = bs.len();
+            bs.reserve(len as usize);
+            for _ in 0..len {
+                bs.push(0);
+            }
+            let _ = self.stream.read_exact(&mut bs[start..]).await?;
+            if len < 0xff_ffff {
+                break;
+            }
+        }
+        Ok(Bytes::from(bs))
     }
 }
 
@@ -64,23 +85,37 @@ where
     /// send message to MySQL server
     ///
     /// this method will split message into multiple packets if payload too large.
-    /// also note this method will discard the input if send buffer is not empty
-    pub fn send_msg<'a, T>(&'a mut self, msg: T, reset_pkt_nr: bool) -> SendMsgFuture<'a, S>
-    where
-        T: WriteToBytes + std::fmt::Debug,
-    {
-        if !self.send_buf.is_empty() {
-            return SendMsgFuture::new(self);
-        }
+    pub async fn send_msg<T: WriteToBytes + std::fmt::Debug>(&mut self, msg: T, reset_pkt_nr: bool) -> Result<()> {
         if reset_pkt_nr {
             self.reset_pkt_nr();
         }
-        let mut send_buf = BytesMut::new();
-        // write to buffer won't fail
-        msg.write_to(&mut send_buf).unwrap();
-        self.send_buf = vec![send_buf.freeze()];
-        SendMsgFuture::new(self)
+        let mut bs = BytesMut::new();
+        msg.write_to(&mut bs)?;
+        let mut bs = bs.freeze();
+        while bs.remaining() >= 0xff_ffff {
+            let payload = bs.split_to(0xff_ffff);
+            self.send_packet(payload).await?;
+        }
+        // even if packet is 0 byte, still send to notify the ending
+        self.send_packet(bs).await?;
+        Ok(())
     }
+
+    async fn send_packet(&mut self, payload: Bytes) -> Result<()> {
+        // 1. 3-byte packet length
+        let len = payload.remaining();
+        let len = [(len & 0xff) as u8, ((len >> 8) & 0xff) as u8, ((len >> 16) & 0xff) as u8];
+        let _ = self.stream.write_all(&len[..]).await?;
+        // 2. 1-byte seq
+        let seq = self.pkt_nr;
+        let _ = self.stream.write_all(std::slice::from_ref(&seq)).await?;
+        // 3. <len> bytes payload
+        let _ = self.stream.write_all(payload.bytes()).await?;
+        // increment pkt_nr at end
+        self.pkt_nr += 1;
+        Ok(())
+    }
+
 }
 
 #[allow(dead_code)]
@@ -95,10 +130,10 @@ where
             cap_flags: CapabilityFlags::empty(),
             server_status: StatusFlags::empty(),
             pkt_nr: 0,
-            msg_state: MsgState::Len,
-            recv_buf: Vec::new(),
-            recv_len: 0,
-            send_buf: vec![],
+            // msg_state: MsgState::Len,
+            // recv_buf: Vec::new(),
+            // recv_len: 0,
+            // send_buf: vec![],
         }
     }
 
@@ -109,10 +144,10 @@ where
             cap_flags,
             server_status,
             pkt_nr: 0,
-            msg_state: MsgState::Len,
-            recv_buf: Vec::new(),
-            recv_len: 0,
-            send_buf: vec![],
+            // msg_state: MsgState::Len,
+            // recv_buf: Vec::new(),
+            // recv_len: 0,
+            // send_buf: vec![],
         }
     }
 
@@ -392,12 +427,11 @@ where
     pub async fn process_info<'a>(&'a mut self) -> Result<ResultSet<'a, S, TextColumnValue>> {
         let cmd = ComProcessInfo::new();
         self.send_msg(cmd, true).await?;
-        new_result_set(self).await
+        new_result_set(self, None).await
     }
 
     /// get a list of binlog files
     pub async fn binlog_files(&mut self) -> Result<Vec<BinlogFile>> {
-        use futures::StreamExt;
         let mut rs = self
             .query()
             .qry("SHOW MASTER LOGS")
@@ -405,7 +439,7 @@ where
             .map_rows(BinlogFileMapper);
 
         let mut files = vec![];
-        while let Some(file) = rs.next().await {
+        while let Some(file) = rs.next_row().await? {
             files.push(file?);
         }
         Ok(files)
@@ -433,7 +467,7 @@ where
                 _marker: PhantomData,
             })
             .first_or_none()
-            .await;
+            .await?;
         if let Some(var) = rs {
             let var = var?;
             return Ok(Some(var));
@@ -480,7 +514,7 @@ where
                 },
             )
             .first_or_none()
-            .await;
+            .await?;
         if let Some(var) = rs {
             let var = var?;
             return Ok(Some(var));
@@ -650,10 +684,9 @@ pub(crate) mod tests {
 
     #[smol_potat::test]
     async fn test_process_info() {
-        use futures::StreamExt;
         let mut conn = new_conn().await;
         let mut process_info = conn.process_info().await.unwrap();
-        while let Some(row) = process_info.next().await {
+        while let Some(row) = process_info.next_row().await.unwrap() {
             dbg!(row);
         }
     }
@@ -661,15 +694,15 @@ pub(crate) mod tests {
     #[smol_potat::test]
     async fn test_process_kill_success() {
         use bytes::Buf;
-        use futures::StreamExt;
         let mut conn1 = new_conn().await;
         let mut conn_id_row = conn1
             .query()
             .qry("select connection_id()")
             .await
             .unwrap()
-            .next()
+            .next_row()
             .await
+            .unwrap()
             .unwrap();
         let conn_id_bytes = conn_id_row.pop().unwrap().unwrap();
         let conn_id: u32 = String::from_utf8_lossy(conn_id_bytes.bytes())
@@ -721,7 +754,6 @@ pub(crate) mod tests {
 
     #[smol_potat::test]
     async fn test_register_slave() {
-        use futures::StreamExt;
         let mut conn = new_conn().await;
         // set slave_id before register
         // this is important
@@ -736,7 +768,7 @@ pub(crate) mod tests {
             .unwrap();
         conn.register_slave(1234567).await.unwrap();
         let mut rs = conn.query().qry("SHOW SLAVE HOSTS").await.unwrap();
-        while let Some(row) = rs.next().await {
+        while let Some(row) = rs.next_row().await.unwrap() {
             dbg!(row);
         }
     }

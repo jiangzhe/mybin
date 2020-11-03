@@ -779,13 +779,26 @@ pub enum BinlogColumnValue {
     Geometry(Bytes),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum MyEnum {
     Pack1(u8),
     Pack2(u16),
     Pack3(u32),
     Pack4(u32),
     Pack8(u64),
+}
+
+impl MyEnum {
+
+    pub fn to_u64(self) -> u64 {
+        match self {
+            Self::Pack1(n) => n as u64,
+            Self::Pack2(n) => n as u64,
+            Self::Pack3(n) => n as u64,
+            Self::Pack4(n) => n as u64,
+            Self::Pack8(n) => n,
+        }
+    }
 }
 
 impl BinlogColumnValue {

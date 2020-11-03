@@ -2,15 +2,12 @@ use crate::conn::Conn;
 use crate::error::{Error, Needed, Result};
 use bytes::{Buf, Bytes};
 use bytes_parser::{ReadBytesExt, ReadFromBytes};
-use futures::{ready, AsyncRead, AsyncWrite, Stream};
+use futures::{AsyncRead, AsyncWrite};
 use mybin_core::binlog::*;
 use mybin_core::cmd::*;
 use mybin_core::col::TextColumnValue;
 use mybin_core::packet::{EofPacket, ErrPacket};
 use mybin_core::resultset::{ColumnExtractor, RowMapper};
-use std::future::Future;
-use std::pin::Pin;
-use std::task::{Context, Poll};
 use uuid::adapter::Hyphenated;
 use uuid::Uuid;
 
@@ -189,6 +186,7 @@ where
                     pv4: ParserV4::new(vec![], false),
                     validate_checksum: self.validate_checksum,
                     completed: true,
+                    non_block: self.non_block,
                 });
             }
             0x00 => {
@@ -230,6 +228,7 @@ where
             pv4,
             validate_checksum: self.validate_checksum,
             completed: false,
+            non_block: self.non_block,
         })
     }
 }
@@ -259,50 +258,98 @@ pub struct BinlogStream<'s, S> {
     pv4: ParserV4,
     validate_checksum: bool,
     completed: bool,
+    non_block: bool,
 }
 
-impl<'s, S> Stream for BinlogStream<'s, S>
+impl<'s, S> BinlogStream<'s, S> 
 where
     S: AsyncRead + Unpin,
 {
-    type Item = Result<Event>;
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+    pub async fn next_event(&mut self) -> Result<Option<Event>> {
         if self.completed {
-            return Poll::Ready(None);
+            return Ok(None);
         }
-
         loop {
-            let mut recv_msg = self.conn.recv_msg();
-            match ready!(Pin::new(&mut recv_msg).poll(cx)) {
-                Ok(mut msg) => {
-                    // check header
-                    if !msg.has_remaining() {
-                        return Poll::Ready(Some(Err(Error::InputIncomplete(
-                            Bytes::new(),
-                            Needed::Unknown,
-                        ))));
-                    }
-                    // won't fail
-                    let header = msg.read_u8().unwrap();
-                    if header != 0x00 {
-                        log::trace!("non-event packet={:?}", msg.bytes());
-                        self.completed = true;
-                        return Poll::Ready(None);
-                    }
-                    match self.pv4.parse_event(&mut msg, self.validate_checksum) {
-                        Ok(Some(event)) => {
-                            log::trace!("parsed event={:?}", event);
-                            return Poll::Ready(Some(Ok(event)));
-                        }
-                        Ok(None) => log::trace!("unsupported event"),
-                        Err(e) => return Poll::Ready(Some(Err(e.into()))),
-                    }
-                }
-                Err(e) => return Poll::Ready(Some(Err(e.into()))),
+            match self.recv_and_parse_event().await? {
+                BinlogStreamEvent::Single(evt) => return Ok(Some(evt)),
+                BinlogStreamEvent::UnsupportedEvent => (),
+                BinlogStreamEvent::End => return Ok(None),
             }
         }
     }
+
+    async fn recv_and_parse_event(&mut self) -> Result<BinlogStreamEvent> {
+        let mut msg = self.conn.recv_msg().await?;
+        if !msg.has_remaining() {
+            return Err(Error::InputIncomplete(
+                Bytes::new(),
+                Needed::Unknown,
+            ));
+        }
+        let header = msg.read_u8().unwrap();
+        if self.non_block && header == 0xfe {
+            return Ok(BinlogStreamEvent::End);
+        }
+        if header != 0x00 {
+            return Err(Error::PacketError(format!("invalid header of binlog stream {}", header)));
+        }
+        match self.pv4.parse_event(&mut msg, self.validate_checksum)? {
+            Some(evt) => Ok(BinlogStreamEvent::Single(evt)),
+            None => Ok(BinlogStreamEvent::UnsupportedEvent),
+        }
+    }
 }
+
+#[derive(Debug, Clone)]
+enum BinlogStreamEvent {
+    Single(Event),
+    UnsupportedEvent,
+    End,
+}
+
+// impl<'s, S> Stream for BinlogStream<'s, S>
+// where
+//     S: AsyncRead + Unpin,
+// {
+//     type Item = Result<Event>;
+//     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+//         if self.completed {
+//             return Poll::Ready(None);
+//         }
+
+//         loop {
+//             // todo: state machine
+//             let mut recv_msg = self.conn.recv_msg();
+//             match ready!(Pin::new(&mut recv_msg).poll(cx)) {
+//                 Ok(mut msg) => {
+//                     // check header
+//                     if !msg.has_remaining() {
+//                         return Poll::Ready(Some(Err(Error::InputIncomplete(
+//                             Bytes::new(),
+//                             Needed::Unknown,
+//                         ))));
+//                     }
+//                     // won't fail
+//                     let header = msg.read_u8().unwrap();
+//                     if header != 0x00 {
+//                         log::trace!("non-event packet={:?}", msg.bytes());
+//                         self.completed = true;
+//                         return Poll::Ready(None);
+//                     }
+//                     match self.pv4.parse_event(&mut msg, self.validate_checksum) {
+//                         Ok(Some(event)) => {
+//                             log::trace!("parsed event={:?}", event);
+//                             return Poll::Ready(Some(Ok(event)));
+//                         }
+//                         Ok(None) => log::trace!("unsupported event"),
+//                         Err(e) => return Poll::Ready(Some(Err(e.into()))),
+//                     }
+//                 }
+//                 Err(e) => return Poll::Ready(Some(Err(e.into()))),
+//             }
+//         }
+//     }
+// }
 
 #[cfg(test)]
 mod tests {
@@ -354,7 +401,6 @@ mod tests {
     #[smol_potat::test]
     async fn test_request_binlog_stream() {
         env_logger::init();
-        use futures::StreamExt;
         let mut conn = new_conn().await;
         let mut binlog_stream = conn
             .binlog()
@@ -365,8 +411,8 @@ mod tests {
             .await
             .unwrap();
         let mut cnt = 0;
-        while let Some(re) = binlog_stream.next().await {
-            dbg!(re.unwrap());
+        while let Some(re) = binlog_stream.next_event().await.unwrap() {
+            dbg!(re);
             cnt += 1;
             if cnt == 50 {
                 break;

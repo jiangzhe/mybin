@@ -1,5 +1,5 @@
 use crate::col::BinaryColumnValue;
-use thiserror::Error;
+use thiserror::*;
 
 pub type Result<T> = std::result::Result<T, Error>;
 

@@ -3,7 +3,6 @@
 //!
 //! inspired by nom parser combinator (https://github.com/Geal/nom)
 pub mod error;
-pub mod future;
 pub mod my;
 pub mod util;
 
@@ -12,15 +11,6 @@ pub use error::*;
 
 /// global empty byte array as place holder
 pub const EMPTY_BYTE_ARRAY: [u8; 0] = [];
-
-// pub trait ReadFromBytesWithContext<'c>
-// where
-//     Self: Sized,
-// {
-//     type Context: 'c;
-
-//     fn read_with_ctx(input: &mut Bytes, ctx: Self::Context) -> Result<Self>;
-// }
 
 pub trait ReadFromBytes
 where

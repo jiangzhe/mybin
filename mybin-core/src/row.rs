@@ -63,14 +63,12 @@ impl LogRow {
         col_bm: &[u8],
         col_metas: &[ColumnMeta],
     ) -> Result<Self> {
-        use bytes::Buf;
-        println!("input={:?}", input.bytes());
+        
         let mut cols = Vec::with_capacity(n_cols);
         for i in 0..n_cols {
             if bitmap::index(col_bm, i) {
                 let col_meta = &col_metas[i];
                 let col_val = BinlogColumnValue::read_from(input, col_meta)?;
-                println!("col_val={:?}", col_val);
                 cols.push(col_val);
             } else {
                 cols.push(BinlogColumnValue::Null);

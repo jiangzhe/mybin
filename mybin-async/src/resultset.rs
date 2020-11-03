@@ -1,33 +1,30 @@
 use crate::conn::Conn;
-use crate::error::{Error, Needed, Result};
+use crate::error::{Error, Result};
 use bytes::{Buf, Bytes};
 use bytes_parser::my::LenEncInt;
 use bytes_parser::ReadFromBytes;
-use futures::stream::{Stream, StreamExt};
-use futures::{ready, AsyncRead, AsyncWrite};
+use futures::{AsyncRead, AsyncWrite};
 use mybin_core::col::{BinaryColumnValue, ColumnDefinition, ColumnType, TextColumnValue};
 use mybin_core::flag::CapabilityFlags;
 use mybin_core::packet::{EofPacket, ErrPacket, OkPacket};
 use mybin_core::resultset::{ColumnExtractor, RowMapper};
 use mybin_core::row::{BinaryRow, TextRow};
-use std::future::Future;
+use mybin_core::cmd::ComStmtClose;
 use std::marker::PhantomData;
-use std::pin::Pin;
-use std::task::{Context, Poll};
 
 /// construct a new result set from given connection
 ///
 /// the incoming bytes should follow either text protocol or binary protocol of result set
 /// https://dev.mysql.com/doc/internals/en/com-query-response.html#packet-ProtocolText::Resultset
 /// https://dev.mysql.com/doc/internals/en/binary-protocol-resultset.html
-pub async fn new_result_set<'s, S, Q>(conn: &'s mut Conn<S>) -> Result<ResultSet<'s, S, Q>>
+pub async fn new_result_set<'s, S, Q>(conn: &'s mut Conn<S>, stmt_id: Option<u32>) -> Result<ResultSet<'s, S, Q>>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     let mut msg = conn.recv_msg().await?;
     let col_cnt = parse_col_cnt_packet(&mut msg, &conn.cap_flags)?;
     if col_cnt == 0 {
-        return Ok(ResultSet::empty(conn));
+        return Ok(ResultSet::empty(conn, stmt_id));
     }
     let mut col_defs = Vec::with_capacity(col_cnt as usize);
     for _ in 0..col_cnt {
@@ -42,7 +39,7 @@ where
         EofPacket::read_from(&mut msg, &conn.cap_flags)?;
     }
     // incoming rows
-    Ok(ResultSet::new(conn, col_defs))
+    Ok(ResultSet::new(conn, col_defs, stmt_id))
 }
 
 /// parse column count packet
@@ -76,28 +73,32 @@ pub struct ResultSet<'s, S: 's, Q> {
     pub(crate) completed: bool,
     // only used for binary columns
     col_types: Vec<ColumnType>,
+    stmt_id: Option<u32>,
     _marker: PhantomData<Q>,
 }
 
 impl<'s, S: 's, Q> ResultSet<'s, S, Q> {
     /// construct an empty result set
-    pub fn empty(conn: &'s mut Conn<S>) -> Self {
+    // todo
+    pub fn empty(conn: &'s mut Conn<S>, stmt_id: Option<u32>) -> Self {
         Self {
             conn,
             col_defs: vec![],
             completed: true,
             col_types: vec![],
+            stmt_id,
             _marker: PhantomData,
         }
     }
 
-    pub fn new(conn: &'s mut Conn<S>, col_defs: Vec<ColumnDefinition>) -> Self {
+    pub fn new(conn: &'s mut Conn<S>, col_defs: Vec<ColumnDefinition>, stmt_id: Option<u32>) -> Self {
         let col_types = col_defs.iter().map(|d| d.col_type).collect();
         Self {
             conn,
             col_defs,
             completed: false,
             col_types,
+            stmt_id,
             _marker: PhantomData,
         }
     }
@@ -123,198 +124,115 @@ impl<'s, S: 's, Q> ResultSet<'s, S, Q> {
 impl<'s, S: 's, Q> ResultSet<'s, S, Q>
 where
     S: AsyncRead + Unpin,
-    Self: Stream<Item = Vec<Q>>,
-    Q: Unpin,
+    Self: RowReader<Column=Q>,
 {
-    pub async fn all(mut self) -> Vec<Vec<Q>> {
+    pub async fn all(mut self) -> Result<Vec<Vec<Q>>> {
         let mut rows = Vec::new();
-        while let Some(row) = self.next().await {
+        while let Some(row) = self.next_row().await? {
             rows.push(row);
         }
-        rows
+        Ok(rows)
     }
 
     pub async fn first(self) -> Result<Vec<Q>> {
         self.first_or_none()
-            .await
+            .await?
             .ok_or_else(|| Error::EmptyResultSet)
     }
 
-    pub async fn first_or_none(mut self) -> Option<Vec<Q>> {
+    pub async fn first_or_none(mut self) -> Result<Option<Vec<Q>>> {
         let mut first = None;
-        while let Some(row) = self.next().await {
+        while let Some(row) = self.next_row().await? {
             if first.is_none() {
                 first.replace(row);
             }
         }
-        first
+        Ok(first)
     }
 
     pub async fn count(mut self) -> Result<usize> {
         let mut cnt = 0;
-        while let Some(_) = self.next().await {
+        while let Some(_) = self.next_row().await? {
             cnt += 1;
         }
         Ok(cnt)
     }
-}
 
-impl<'s, S: 's, Q> Future for ResultSet<'s, S, Q>
-where
-    S: AsyncRead + Unpin,
-    Q: Unpin,
-{
-    type Output = Result<()>;
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+    pub async fn next_row(&mut self) -> Result<Option<Vec<Q>>> {
         if self.completed {
-            return Poll::Ready(Ok(()));
+            return Ok(None);
         }
-        loop {
-            let mut recv_fut = self.conn.recv_msg();
-            // todo: this is wrong, the internal state is broken in loop
-            //       except if we store state inside Conn
-            match ready!(Pin::new(&mut recv_fut).as_mut().poll(cx)) {
-                Err(err) => {
-                    log::warn!("parse message error: {:?}", err);
-                    return Poll::Ready(Err(err.into()));
-                }
-                Ok(msg) => {
-                    if !msg.has_remaining() {
-                        log::warn!("message is empty: {:?}", msg);
-                        return Poll::Ready(Err(Error::InputIncomplete(
-                            Bytes::new(),
-                            Needed::Unknown,
-                        )));
-                    }
-                    match msg[0] {
-                        0xfe if msg.remaining() < 0xffffff => {
+        let mut msg = self.conn.recv_msg().await?;
+        if !msg.has_remaining() {
+            // log::warn!("payload is empty");
+            return Err(Error::PacketError("payload is empty".to_owned()));
+        }
+        match msg[0] {
+            // EOF Packet
+            0xfe if msg.remaining() <= 0xffffff => {
+                if self.conn.cap_flags.contains(CapabilityFlags::DEPRECATE_EOF) {
+                    match OkPacket::read_from(&mut msg, &self.conn.cap_flags) {
+                        Ok(_) => {
                             self.completed = true;
-                            return Poll::Ready(Ok(()));
+                            return Ok(None);
                         }
-                        _ => (),
+                        Err(e) => {
+                            // log::warn!("parse ok packet error {}", e);
+                            return Err(Error::PacketError(e.to_string()));
+                        }
                     }
                 }
-            }
-        }
-    }
-}
-
-impl<'s, S: 's> Stream for ResultSet<'s, S, TextColumnValue>
-where
-    S: AsyncRead + Unpin,
-{
-    type Item = Vec<TextColumnValue>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        if self.completed {
-            return Poll::Ready(None);
-        }
-
-        let mut recv_fut = self.conn.recv_msg();
-        match ready!(Pin::new(&mut recv_fut).as_mut().poll(cx)) {
-            Err(err) => {
-                log::warn!("parse message error: {:?}", err);
-                Poll::Ready(None)
-            }
-            Ok(mut msg) => {
-                if !msg.has_remaining() {
-                    log::warn!("message is empty: {:?}", msg);
-                    return Poll::Ready(None);
-                }
-                match msg[0] {
-                    // EOF Packet
-                    0xfe if msg.remaining() < 0xffffff => {
+                match EofPacket::read_from(&mut msg, &self.conn.cap_flags) {
+                    Ok(_) => {
                         self.completed = true;
-                        if self.conn.cap_flags.contains(CapabilityFlags::DEPRECATE_EOF) {
-                            match OkPacket::read_from(&mut msg, &self.conn.cap_flags) {
-                                Ok(_) => {
-                                    return Poll::Ready(None);
-                                }
-                                Err(e) => {
-                                    log::warn!("parse ok packet error {}", e);
-                                    return Poll::Ready(None);
-                                }
-                            }
-                        }
-                        match EofPacket::read_from(&mut msg, &self.conn.cap_flags) {
-                            Ok(_) => Poll::Ready(None),
-                            Err(e) => {
-                                log::warn!("parse eof packet error {}", e);
-                                Poll::Ready(None)
-                            }
-                        }
+                        Ok(None)
                     }
-                    _ => match TextRow::read_from(&mut msg, self.col_defs.len()) {
-                        Ok(row) => Poll::Ready(Some(row.0)),
-                        Err(e) => {
-                            log::warn!("parse text row error {}", e);
-                            Poll::Ready(None)
-                        }
-                    },
+                    Err(e) => {
+                        // log::warn!("parse eof packet error {}", e);
+                        Err(Error::PacketError(e.to_string()))
+                    }
                 }
+            }
+            _ => {
+                let r = self.read_row(&mut msg)?;
+                Ok(Some(r))
             }
         }
     }
 }
 
-impl<'s, S: 's> Stream for ResultSet<'s, S, BinaryColumnValue>
+impl<'s, S: 's, Q> ResultSet<'s, S, Q>
 where
-    S: AsyncRead + Unpin,
+    S: AsyncWrite + Unpin,
 {
-    type Item = Vec<BinaryColumnValue>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        if self.completed {
-            return Poll::Ready(None);
+    pub async fn close(&mut self) -> Result<()> {
+        if let Some(stmt_id) = self.stmt_id.take() {
+            let cmd = ComStmtClose::new(stmt_id);
+            self.conn.send_msg(cmd, true).await?;
         }
+        Ok(())
+    }
+}
 
-        let mut recv_fut = self.conn.recv_msg();
-        match ready!(Pin::new(&mut recv_fut).as_mut().poll(cx)) {
-            Err(err) => {
-                log::warn!("parse message error: {:?}", err);
-                Poll::Ready(None)
-            }
-            Ok(mut msg) => {
-                if !msg.has_remaining() {
-                    log::warn!("message is empty: {:?}", msg);
-                    return Poll::Ready(None);
-                }
-                match msg[0] {
-                    // EOF Packet
-                    0xfe if msg.remaining() <= 0xffffff => {
-                        if self.conn.cap_flags.contains(CapabilityFlags::DEPRECATE_EOF) {
-                            match OkPacket::read_from(&mut msg, &self.conn.cap_flags) {
-                                Ok(_) => {
-                                    self.completed = true;
-                                    return Poll::Ready(None);
-                                }
-                                Err(e) => {
-                                    log::warn!("parse ok packet error {}", e);
-                                    return Poll::Ready(None);
-                                }
-                            }
-                        }
-                        match EofPacket::read_from(&mut msg, &self.conn.cap_flags) {
-                            Ok(_) => {
-                                self.completed = true;
-                                Poll::Ready(None)
-                            }
-                            Err(e) => {
-                                log::warn!("parse eof packet error {}", e);
-                                Poll::Ready(None)
-                            }
-                        }
-                    }
-                    _ => match BinaryRow::read_from(&mut msg, &self.col_types) {
-                        Ok(row) => Poll::Ready(Some(row.0)),
-                        Err(e) => {
-                            log::warn!("parse text row error {}", e);
-                            Poll::Ready(None)
-                        }
-                    },
-                }
-            }
-        }
+pub trait RowReader {
+    type Column;
+
+    fn read_row(&self, input: &mut Bytes) -> Result<Vec<Self::Column>>;
+}
+
+impl<'s, S> RowReader for ResultSet<'s, S, BinaryColumnValue> {
+    type Column = BinaryColumnValue;
+    fn read_row(&self, input: &mut Bytes) -> Result<Vec<Self::Column>> {
+        let r = BinaryRow::read_from(input, &self.col_types)?;
+        Ok(r.0)
+    }
+}
+
+impl<'s, S> RowReader for ResultSet<'s, S, TextColumnValue> {
+    type Column = TextColumnValue;
+    fn read_row(&self, input: &mut Bytes) -> Result<Vec<Self::Column>> {
+        let r = TextRow::read_from(input, self.col_defs.len())?;
+        Ok(r.0)
     }
 }
 
@@ -328,59 +246,55 @@ impl<'s, S: 's, M, Q> MapperResultSet<'s, S, M, Q>
 where
     S: AsyncRead + Unpin,
     M: RowMapper<Q> + Unpin,
-    Q: Unpin,
-    ResultSet<'s, S, Q>: Stream<Item = Vec<Q>>,
+    ResultSet<'s, S, Q>: RowReader<Column=Q>,
 {
-    pub async fn all(mut self) -> Vec<M::Output> {
+    pub async fn all(mut self) -> Result<Vec<M::Output>> {
         let mut rows = Vec::new();
-        while let Some(row) = self.next().await {
+        while let Some(row) = self.next_row().await? {
             rows.push(row);
         }
-        rows
+        Ok(rows)
     }
 
     pub async fn first(self) -> Result<M::Output> {
         self.first_or_none()
-            .await
+            .await?
             .ok_or_else(|| Error::EmptyResultSet)
     }
 
-    pub async fn first_or_none(mut self) -> Option<M::Output> {
+    pub async fn first_or_none(mut self) -> Result<Option<M::Output>> {
         let mut first = None;
-        while let Some(row) = self.next().await {
+        while let Some(row) = self.next_row().await? {
             if first.is_none() {
                 first.replace(row);
             }
         }
-        first
+        Ok(first)
     }
 
     pub async fn count(mut self) -> Result<usize> {
         let mut cnt = 0;
-        while let Some(_) = self.next().await {
+        while let Some(_) = self.next_row().await? {
             cnt += 1;
         }
         Ok(cnt)
     }
+
+    pub async fn next_row(&mut self) -> Result<Option<<M as RowMapper<Q>>::Output>> {
+        let r = self.rs.next_row().await?.map(|r| self.mapper.map_row(&self.extractor, r));
+        Ok(r)
+    }
 }
 
-impl<'s, S: 's, M, Q> Stream for MapperResultSet<'s, S, M, Q>
+impl<'s, S: 's, M, Q> MapperResultSet<'s, S, M, Q>
 where
-    S: AsyncRead + Unpin,
-    M: RowMapper<Q> + Unpin,
-    Q: Unpin,
-    ResultSet<'s, S, Q>: Stream<Item = Vec<Q>>,
+    S: AsyncWrite + Unpin,
 {
-    type Item = <M as RowMapper<Q>>::Output;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        match ready!(Pin::new(&mut self.rs).poll_next(cx)) {
-            Some(row) => {
-                let item = self.mapper.map_row(&self.extractor, row);
-                Poll::Ready(Some(item))
-            }
-            None => Poll::Ready(None),
-        }
+    // close() should always be called after consuming all rows
+    // to release server resource
+    pub async fn close(mut self) -> Result<()> {
+        self.rs.close().await?;
+        Ok(())
     }
 }
 
@@ -392,7 +306,7 @@ mod tests {
     #[smol_potat::test]
     async fn test_result_set_ops_simple() {
         let mut conn = new_conn().await;
-        let all_rs = conn.query().qry("select 1").await.unwrap().all().await;
+        let all_rs = conn.query().qry("select 1").await.unwrap().all().await.unwrap();
         assert_eq!(1, all_rs.len());
         let first_rs = conn.query().qry("select 1").await.unwrap().first().await;
         dbg!(first_rs.unwrap());
@@ -402,7 +316,7 @@ mod tests {
             .await
             .unwrap()
             .first_or_none()
-            .await;
+            .await.unwrap();
         assert!(first_or_none_rs.is_some());
         let count_rs = conn.query().qry("select 1").await.unwrap().count().await;
         assert_eq!(1, count_rs.unwrap());
@@ -418,7 +332,7 @@ mod tests {
             .unwrap()
             .map_rows(|_extr: &ColumnExtractor, _row: Vec<TextColumnValue>| ())
             .all()
-            .await;
+            .await.unwrap();
         assert_eq!(1, all_rs.len());
         let first_rs = conn
             .query()
@@ -436,7 +350,7 @@ mod tests {
             .unwrap()
             .map_rows(|_extr: &ColumnExtractor, _row: Vec<TextColumnValue>| ())
             .first_or_none()
-            .await;
+            .await.unwrap();
         assert!(first_or_none_rs.is_some());
         let count_rs = conn
             .query()
@@ -458,7 +372,7 @@ mod tests {
             .await
             .unwrap()
             .all()
-            .await;
+            .await.unwrap();
         assert!(all_rs.is_empty());
         let first_rs = conn
             .query()
@@ -474,7 +388,7 @@ mod tests {
             .await
             .unwrap()
             .first_or_none()
-            .await;
+            .await.unwrap();
         assert!(first_or_none_rs.is_none());
         let count_rs = conn
             .query()
