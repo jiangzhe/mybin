@@ -1,21 +1,30 @@
 [package]
-name = "mybinlog"
-version = "0.1.0"
 authors = ["Zhe Jiang <nju.jiangzhe@gmail.com>"]
 edition = "2018"
-
+name = "mybinlog"
+version = "0.1.0"
 [[bin]]
 name = "mybinlog"
 path = "src/mybinlog.rs"
 
 [dependencies]
-mybin-async = { version = "0.1.0", path = "../mybin-async" }
-mybin-core = { version = "0.1.0", path = "../mybin-core" }
-structopt = "0.3"
 anyhow = "1.0"
-smol = "1.0"
 async-net = "1.2"
+bytes = "0.5"
 env_logger = "0.7"
 log = "0.4"
+regex = "1"
+smol = "1.0"
 smol_str = "0.1"
-bytes = "0.5"
+structopt = "0.3"
+
+[dependencies.mybin-async]
+path = "../mybin-async"
+version = "0.1.0"
+
+[dependencies.mybin-core]
+path = "../mybin-core"
+version = "0.1.0"
+
+[dev-dependencies]
+smol-potat = "0.5"

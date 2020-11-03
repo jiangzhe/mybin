@@ -3,16 +3,12 @@ use crate::error::{Error, Needed, Result};
 use crate::resultset::{new_result_set, ResultSet};
 use bytes::{Buf, Bytes};
 use bytes_parser::ReadFromBytes;
-use futures::{ready, AsyncRead, AsyncWrite};
+use futures::{AsyncRead, AsyncWrite};
 use mybin_core::cmd::{ComStmtClose, ComStmtExecute, ComStmtPrepare, StmtPrepareOk};
 use mybin_core::col::{BinaryColumnValue, ColumnDefinition};
 use mybin_core::flag::CapabilityFlags;
 use mybin_core::packet::{EofPacket, ErrPacket, OkPacket};
 use mybin_core::stmt::StmtColumnValue;
-use std::future::Future;
-use std::marker::PhantomData;
-use std::pin::Pin;
-use std::task::{Context, Poll};
 
 #[derive(Debug)]
 pub struct Stmt<'s, S> {
@@ -144,6 +140,9 @@ where
     }
 }
 
+/// todo:
+/// refine the API so user can reuse the prepared statement 
+/// to query mutiple result sets
 impl<'s, S> PreparedStmt<'s, S>
 where
     S: AsyncRead + AsyncWrite + Clone + Unpin,
@@ -151,41 +150,11 @@ where
     pub async fn qry(
         self,
         params: Vec<StmtColumnValue>,
-    ) -> Result<(ResultSet<'s, S, BinaryColumnValue>, CloseStmtFuture<'s, S>)> {
+    ) -> Result<ResultSet<'s, S, BinaryColumnValue>> {
         let cmd = ComStmtExecute::single(self.stmt_id, params);
         self.conn.send_msg(cmd, true).await?;
-        let close = CloseStmtFuture {
-            conn: self.conn.clone(),
-            stmt_id: self.stmt_id,
-            _marker: PhantomData,
-        };
-        let rs = new_result_set(self.conn).await?;
-        Ok((rs, close))
-    }
-}
-
-/// special handle to close the statement
-#[must_use = "futures do nothing unless you `.await` or poll them"]
-#[derive(Debug)]
-pub struct CloseStmtFuture<'s, S: 's> {
-    conn: Conn<S>,
-    stmt_id: u32,
-    _marker: PhantomData<&'s S>,
-}
-
-impl<'s, S: 's> Future for CloseStmtFuture<'s, S>
-where
-    S: AsyncWrite + Unpin,
-{
-    type Output = Result<()>;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let cmd = ComStmtClose::new(self.stmt_id);
-        let mut send_fut = self.conn.send_msg(cmd, true);
-        match ready!(Pin::new(&mut send_fut).poll(cx)) {
-            Ok(_) => Poll::Ready(Ok(())),
-            Err(err) => Poll::Ready(Err(err.into())),
-        }
+        let rs = new_result_set(self.conn, Some(self.stmt_id)).await?;
+        Ok(rs)
     }
 }
 
@@ -256,7 +225,6 @@ mod tests {
 
     #[smol_potat::test]
     async fn test_stmt_qry_empty() {
-        use futures::StreamExt;
         let mut conn = new_conn().await;
         conn.query()
             .exec("create database if not exists stmttest1")
@@ -276,17 +244,16 @@ mod tests {
             .await
             .unwrap();
         log::debug!("stmt prepared");
-        let (mut rs, close) = prepared.qry(vec![]).await.unwrap();
-        while let Some(row) = rs.next().await {
+        let mut rs = prepared.qry(vec![]).await.unwrap();
+        while let Some(row) = rs.next_row().await.unwrap() {
             dbg!(row);
         }
-        close.await.unwrap();
+        rs.close().await.unwrap();
     }
 
     #[smol_potat::test]
     async fn test_stmt_table_and_column() {
         use bytes::Bytes;
-        use futures::StreamExt;
         use mybin_core::resultset::{MyBit, MyI24, MyU24, MyYear};
         use mybin_core::time::MyTime;
         use std::str::FromStr;
@@ -422,7 +389,7 @@ mod tests {
             .await
             .unwrap();
         // select data
-        let (mut rs, close) = conn
+        let mut rs = conn
             .stmt()
             .prepare("SELECT * from bintest1.typetest_exec")
             .await
@@ -431,7 +398,7 @@ mod tests {
             .await
             .unwrap();
         let extractor = rs.extractor();
-        while let Some(row) = rs.next().await {
+        while let Some(row) = rs.next_row().await.unwrap() {
             dbg!(&row);
             let c1: BigDecimal = extractor.get_named_col(&row, "c1").unwrap();
             dbg!(c1);
@@ -500,6 +467,6 @@ mod tests {
             let c33: String = extractor.get_named_col(&row, "c33").unwrap();
             dbg!(c33);
         }
-        close.await.unwrap();
+        rs.close().await.unwrap();
     }
 }

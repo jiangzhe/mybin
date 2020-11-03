@@ -51,7 +51,7 @@ where
     pub async fn qry<Q: Into<String>>(self, qry: Q) -> Result<ResultSet<'a, S, TextColumnValue>> {
         let qry = ComQuery::new(qry);
         self.conn.send_msg(qry, true).await?;
-        new_result_set(self.conn).await
+        new_result_set(self.conn, None).await
     }
 }
 
@@ -60,7 +60,6 @@ mod tests {
     use crate::conn::tests::new_conn;
     use bigdecimal::BigDecimal;
     use chrono::{NaiveDate, NaiveDateTime};
-    use futures::stream::StreamExt;
     use mybin_core::resultset::{MyBit, MyI24, MyU24, MyYear};
     use mybin_core::time::{MyDateTime, MyTime};
 
@@ -89,7 +88,7 @@ mod tests {
             .await
             .unwrap();
         dbg!(&rs.col_defs);
-        while let Some(row) = rs.next().await {
+        while let Some(row) = rs.next_row().await.unwrap() {
             dbg!(row);
         }
     }
@@ -99,7 +98,7 @@ mod tests {
         let mut conn = new_conn().await;
         let mut rs = conn.query().qry("select null").await.unwrap();
         dbg!(&rs.col_defs);
-        while let Some(row) = rs.next().await {
+        while let Some(row) = rs.next_row().await.unwrap() {
             dbg!(row);
         }
     }
@@ -114,7 +113,7 @@ mod tests {
             .await
             .unwrap();
         dbg!(&rs.col_defs);
-        while let Some(row) = rs.next().await {
+        while let Some(row) = rs.next_row().await.unwrap() {
             dbg!(row);
         }
     }
@@ -242,7 +241,7 @@ mod tests {
             .await
             .unwrap();
         let extractor = rs.extractor();
-        while let Some(row) = rs.next().await {
+        while let Some(row) = rs.next_row().await.unwrap() {
             dbg!(&row);
             let c1: BigDecimal = extractor.get_named_col(&row, "c1").unwrap();
             dbg!(c1);
@@ -321,24 +320,22 @@ mod tests {
 
     #[smol_potat::test]
     async fn test_result_set_empty() {
-        use futures::StreamExt;
         let mut conn = new_conn().await;
         let mut rs = conn
             .query()
             .qry("select * from mysql.user where 1 = 0")
             .await
             .unwrap();
-        while let Some(row) = rs.next().await {
+        while let Some(row) = rs.next_row().await.unwrap() {
             dbg!(row);
         }
     }
 
     #[smol_potat::test]
     async fn test_result_set_slave_hosts() {
-        use futures::StreamExt;
         let mut conn = new_conn().await;
         let mut rs = conn.query().qry("SHOW SLAVE HOSTS").await.unwrap();
-        while let Some(row) = rs.next().await {
+        while let Some(row) = rs.next_row().await.unwrap() {
             dbg!(row);
         }
     }
@@ -354,7 +351,7 @@ mod tests {
             .await
             .unwrap();
         let extractor = rs.extractor();
-        while let Some(row) = rs.next().await {
+        while let Some(row) = rs.next_row().await.unwrap() {
             dbg!(&row);
             let id: u32 = extractor.get_col(&row, 0).unwrap();
             dbg!(id);
@@ -388,7 +385,7 @@ mod tests {
             let name: String = extractor.get_named_col(&row, "name").unwrap();
             IdAndName { id, name }
         });
-        while let Some(obj) = rs.next().await {
+        while let Some(obj) = rs.next_row().await.unwrap() {
             dbg!(obj);
         }
     }
