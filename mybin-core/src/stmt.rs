@@ -1,7 +1,7 @@
 use crate::col::{BinaryColumnValue, BinlogColumnValue, ColumnType};
 use crate::decimal::MyDecimal;
 use crate::resultset::{MyBit, MyYear};
-use crate::time::{MyTime, MyDateTime};
+use crate::time::{MyDateTime, MyTime};
 use crate::{to_opt_stmt_column_value, to_stmt_column_value};
 use bigdecimal::BigDecimal;
 use bytes::{Buf, Bytes};
@@ -148,7 +148,7 @@ impl StmtColumnValue {
             }
             BinaryColumnValue::Float(n) => (Cow::Owned(n.to_string()), false),
             BinaryColumnValue::Double(n) => (Cow::Owned(n.to_string()), false),
-            BinaryColumnValue::Timestamp(MyDateTime{
+            BinaryColumnValue::Timestamp(MyDateTime {
                 year,
                 month,
                 day,
@@ -198,7 +198,7 @@ impl StmtColumnValue {
                 }
                 (Cow::Owned(s), true)
             }
-            BinaryColumnValue::DateTime(MyDateTime{
+            BinaryColumnValue::DateTime(MyDateTime {
                 year,
                 month,
                 day,
@@ -374,7 +374,7 @@ impl StmtColumnValue {
         Self {
             col_type: ColumnType::Timestamp,
             unsigned: false,
-            val: BinaryColumnValue::Timestamp(MyDateTime{
+            val: BinaryColumnValue::Timestamp(MyDateTime {
                 year: ts.year() as u16,
                 month: ts.month() as u8,
                 day: ts.day() as u8,
@@ -415,7 +415,7 @@ impl StmtColumnValue {
     }
 
     pub fn new_time(negative: bool, days: u32, tm: NaiveTime) -> Self {
-        let tm = MyTime{
+        let tm = MyTime {
             negative,
             days,
             hour: tm.hour() as u8,
@@ -437,7 +437,7 @@ impl StmtColumnValue {
     }
 
     pub fn new_datetime(ts: NaiveDateTime) -> Self {
-        let ts = MyDateTime{
+        let ts = MyDateTime {
             year: ts.year() as u16,
             month: ts.month() as u8,
             day: ts.day() as u8,
@@ -563,9 +563,9 @@ impl<'c> From<(BinlogColumnValue, bool)> for StmtColumnValue {
             }
             BinlogColumnValue::Float(n) => Self::new_float(n),
             BinlogColumnValue::Double(n) => Self::new_double(n),
-            BinlogColumnValue::Timestamp(secs) => Self::new_timestamp(
-                NaiveDateTime::from_timestamp(secs as i64, 0),
-            ),
+            BinlogColumnValue::Timestamp(secs) => {
+                Self::new_timestamp(NaiveDateTime::from_timestamp(secs as i64, 0))
+            }
             BinlogColumnValue::LongLong(n) => {
                 if unsigned {
                     Self::new_unsigned_bigint(n)
@@ -585,10 +585,8 @@ impl<'c> From<(BinlogColumnValue, bool)> for StmtColumnValue {
             BinlogColumnValue::Date { year, month, day } => {
                 Self::new_date(NaiveDate::from_ymd(year as i32, month as u32, day as u32))
             }
-            BinlogColumnValue::Time(tm) => {
-                Self::new_mytime(tm)
-            }
-            BinlogColumnValue::DateTime(MyDateTime{
+            BinlogColumnValue::Time(tm) => Self::new_mytime(tm),
+            BinlogColumnValue::DateTime(MyDateTime {
                 year,
                 month,
                 day,
@@ -704,7 +702,7 @@ mod tests {
         }
         .to_col();
         assert_eq!(
-            BinaryColumnValue::Time(MyTime{
+            BinaryColumnValue::Time(MyTime {
                 negative: false,
                 days: 0,
                 hour: 1,
@@ -721,7 +719,7 @@ mod tests {
             .and_hms_micro(1, 2, 3, 4)
             .to_col();
         assert_eq!(
-            BinaryColumnValue::DateTime(MyDateTime{
+            BinaryColumnValue::DateTime(MyDateTime {
                 year: 2020,
                 month: 12,
                 day: 31,
@@ -758,13 +756,19 @@ mod tests {
         let (lit, quote) = col18.to_sql_literal();
         assert_eq!("1", &lit);
         assert!(!quote);
-        let col19 = 
-        MyDateTime{
-            year: 2020, month: 12, day: 31, hour: 1, minute: 2, second: 3, micro_second: 0
-        }.to_col();
+        let col19 = MyDateTime {
+            year: 2020,
+            month: 12,
+            day: 31,
+            hour: 1,
+            minute: 2,
+            second: 3,
+            micro_second: 0,
+        }
+        .to_col();
         // replace Timestamp with DateTime
         assert_eq!(
-            BinaryColumnValue::DateTime(MyDateTime{
+            BinaryColumnValue::DateTime(MyDateTime {
                 year: 2020,
                 month: 12,
                 day: 31,

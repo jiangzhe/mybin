@@ -15,7 +15,6 @@ pub struct Opts {
     pub cmd: Command,
 }
 
-
 #[derive(Debug, Clone, StructOpt)]
 pub enum Command {
     Dml {
@@ -29,6 +28,8 @@ pub enum Command {
         table_filter: Option<String>,
         #[structopt(short, long)]
         block: bool,
+        #[structopt(short, long)]
+        limit: usize,
     },
     List,
 }

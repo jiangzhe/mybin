@@ -6,6 +6,7 @@ use crate::resultset::{new_result_set, ResultSet};
 use crate::stmt::Stmt;
 use bytes::{Buf, Bytes, BytesMut};
 use bytes_parser::{ReadFromBytes, WriteToBytes, WriteToBytesWithContext};
+use futures::io::{AsyncReadExt, AsyncWriteExt};
 use futures::{AsyncRead, AsyncWrite};
 use mybin_core::cmd::*;
 use mybin_core::col::{ColumnDefinition, TextColumnValue};
@@ -18,7 +19,6 @@ use mybin_core::resultset::{ColumnExtractor, FromColumnValue, RowMapper};
 use mybin_core::stmt::ToColumnValue;
 use serde_derive::*;
 use std::marker::PhantomData;
-use futures::io::{AsyncReadExt, AsyncWriteExt};
 /// MySQL connection
 ///
 /// A generic MySQL connection based on AsyncRead and AsyncWrite.
@@ -36,7 +36,6 @@ impl<S> Conn<S> {
     /// this method should be called before each command sent
     pub fn reset_pkt_nr(&mut self) {
         self.pkt_nr = 0;
-        log::debug!("pkt_nr reset to {}", self.pkt_nr);
     }
 }
 
@@ -56,7 +55,10 @@ where
             let len = (len[0] as u64) + ((len[1] as u64) << 8) + ((len[2] as u64) << 16);
             // 2. then 1 byte packet sequence
             let mut seq = 0u8;
-            let _ = self.stream.read_exact(std::slice::from_mut(&mut seq)).await?;
+            let _ = self
+                .stream
+                .read_exact(std::slice::from_mut(&mut seq))
+                .await?;
             if seq == 0xff {
                 self.pkt_nr = 0;
             } else {
@@ -85,7 +87,11 @@ where
     /// send message to MySQL server
     ///
     /// this method will split message into multiple packets if payload too large.
-    pub async fn send_msg<T: WriteToBytes + std::fmt::Debug>(&mut self, msg: T, reset_pkt_nr: bool) -> Result<()> {
+    pub async fn send_msg<T: WriteToBytes + std::fmt::Debug>(
+        &mut self,
+        msg: T,
+        reset_pkt_nr: bool,
+    ) -> Result<()> {
         if reset_pkt_nr {
             self.reset_pkt_nr();
         }
@@ -104,7 +110,11 @@ where
     async fn send_packet(&mut self, payload: Bytes) -> Result<()> {
         // 1. 3-byte packet length
         let len = payload.remaining();
-        let len = [(len & 0xff) as u8, ((len >> 8) & 0xff) as u8, ((len >> 16) & 0xff) as u8];
+        let len = [
+            (len & 0xff) as u8,
+            ((len >> 8) & 0xff) as u8,
+            ((len >> 16) & 0xff) as u8,
+        ];
         let _ = self.stream.write_all(&len[..]).await?;
         // 2. 1-byte seq
         let seq = self.pkt_nr;
@@ -115,7 +125,6 @@ where
         self.pkt_nr += 1;
         Ok(())
     }
-
 }
 
 #[allow(dead_code)]

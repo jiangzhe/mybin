@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use mybin_core::packet::ErrPacket;
-use thiserror::Error;
+use thiserror::*;
 
 #[derive(Error, Debug)]
 pub enum Error {
