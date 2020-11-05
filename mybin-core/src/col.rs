@@ -1,6 +1,6 @@
 //! defines structure and metadata for mysql columns
 use crate::decimal::MyDecimal;
-use crate::time::{MyTime, MyDateTime};
+use crate::time::{MyDateTime, MyTime};
 use bitflags::bitflags;
 use bytes::{Bytes, BytesMut};
 use bytes_parser::error::{Error, Result};
@@ -148,7 +148,7 @@ impl From<&ColumnMeta> for ColumnType {
             // todo: pack_len not used?
             ColumnMeta::Double { .. } => ColumnType::Double,
             ColumnMeta::Null => ColumnType::Null,
-            ColumnMeta::Timestamp{..} => ColumnType::Timestamp,
+            ColumnMeta::Timestamp { .. } => ColumnType::Timestamp,
             ColumnMeta::LongLong => ColumnType::LongLong,
             ColumnMeta::Int24 => ColumnType::Int24,
             ColumnMeta::Date => ColumnType::Date,
@@ -270,7 +270,7 @@ impl ColumnMeta {
             ColumnType::Timestamp => unimplemented!(),
             ColumnType::Timestamp2 => {
                 let frac = input.read_u8()?;
-                ColumnMeta::Timestamp{ frac }
+                ColumnMeta::Timestamp { frac }
             }
             ColumnType::LongLong => ColumnMeta::LongLong,
             ColumnType::Int24 => ColumnMeta::Int24,
@@ -278,12 +278,12 @@ impl ColumnMeta {
             ColumnType::Time => unimplemented!(),
             ColumnType::Time2 => {
                 let frac = input.read_u8()?;
-                ColumnMeta::Time2{ frac }
+                ColumnMeta::Time2 { frac }
             }
             ColumnType::DateTime => unimplemented!(),
             ColumnType::DateTime2 => {
                 let frac = input.read_u8()?;
-                ColumnMeta::DateTime{ frac }
+                ColumnMeta::DateTime { frac }
             }
             ColumnType::Year => ColumnMeta::Year,
             ColumnType::Bit => {
@@ -356,11 +356,7 @@ pub enum BinaryColumnValue {
     Timestamp(MyDateTime),
     LongLong(u64),
     Int24(u32),
-    Date {
-        year: u16,
-        month: u8,
-        day: u8,
-    },
+    Date { year: u16, month: u8, day: u8 },
     Time(MyTime),
     DateTime(MyDateTime),
     Year(u16),
@@ -426,7 +422,7 @@ impl BinaryColumnValue {
             ColumnType::Time | ColumnType::Time2 => {
                 let len = input.read_u8()?;
                 match len {
-                    0 => BinaryColumnValue::Time(MyTime{
+                    0 => BinaryColumnValue::Time(MyTime {
                         negative: false,
                         days: 0,
                         hour: 0,
@@ -441,7 +437,7 @@ impl BinaryColumnValue {
                         let hour = input.read_u8()?;
                         let minute = input.read_u8()?;
                         let second = input.read_u8()?;
-                        BinaryColumnValue::Time(MyTime{
+                        BinaryColumnValue::Time(MyTime {
                             negative,
                             days,
                             hour,
@@ -458,7 +454,7 @@ impl BinaryColumnValue {
                         let minute = input.read_u8()?;
                         let second = input.read_u8()?;
                         let micro_second = input.read_le_u32()?;
-                        BinaryColumnValue::Time(MyTime{
+                        BinaryColumnValue::Time(MyTime {
                             negative,
                             days,
                             hour,
@@ -475,10 +471,13 @@ impl BinaryColumnValue {
                     }
                 }
             }
-            ColumnType::Timestamp | ColumnType::Timestamp2 | ColumnType::DateTime | ColumnType::DateTime2 => {
+            ColumnType::Timestamp
+            | ColumnType::Timestamp2
+            | ColumnType::DateTime
+            | ColumnType::DateTime2 => {
                 let len = input.read_u8()?;
                 match len {
-                    0 => BinaryColumnValue::DateTime(MyDateTime{
+                    0 => BinaryColumnValue::DateTime(MyDateTime {
                         year: 0,
                         month: 0,
                         day: 0,
@@ -491,7 +490,7 @@ impl BinaryColumnValue {
                         let year = input.read_le_u16()?;
                         let month = input.read_u8()?;
                         let day = input.read_u8()?;
-                        BinaryColumnValue::DateTime(MyDateTime{
+                        BinaryColumnValue::DateTime(MyDateTime {
                             year,
                             month,
                             day,
@@ -508,7 +507,7 @@ impl BinaryColumnValue {
                         let hour = input.read_u8()?;
                         let minute = input.read_u8()?;
                         let second = input.read_u8()?;
-                        BinaryColumnValue::DateTime(MyDateTime{
+                        BinaryColumnValue::DateTime(MyDateTime {
                             year,
                             month,
                             day,
@@ -526,7 +525,7 @@ impl BinaryColumnValue {
                         let minute = input.read_u8()?;
                         let second = input.read_u8()?;
                         let micro_second = input.read_le_u32()?;
-                        BinaryColumnValue::DateTime(MyDateTime{
+                        BinaryColumnValue::DateTime(MyDateTime {
                             year,
                             month,
                             day,
@@ -640,7 +639,7 @@ impl WriteToBytes for BinaryColumnValue {
             BinaryColumnValue::Double(n) => len += out.write_le_f64(n)?,
             // nothing to append for null value, already indicated in null-bitmap
             BinaryColumnValue::Null => (),
-            BinaryColumnValue::Timestamp(MyDateTime{
+            BinaryColumnValue::Timestamp(MyDateTime {
                 year,
                 month,
                 day,
@@ -668,7 +667,7 @@ impl WriteToBytes for BinaryColumnValue {
                 len += out.write_u8(month)?;
                 len += out.write_u8(day)?;
             }
-            BinaryColumnValue::Time(MyTime{
+            BinaryColumnValue::Time(MyTime {
                 negative,
                 days,
                 hour,
@@ -695,7 +694,7 @@ impl WriteToBytes for BinaryColumnValue {
                     len += out.write_le_u32(micro_second)?;
                 }
             }
-            BinaryColumnValue::DateTime(MyDateTime{
+            BinaryColumnValue::DateTime(MyDateTime {
                 year,
                 month,
                 day,
@@ -761,11 +760,7 @@ pub enum BinlogColumnValue {
     Timestamp(u32),
     LongLong(u64),
     Int24(u32),
-    Date {
-        year: u16,
-        month: u8,
-        day: u8,
-    },
+    Date { year: u16, month: u8, day: u8 },
     Time(MyTime),
     DateTime(MyDateTime),
     Year(u16),
@@ -789,7 +784,6 @@ pub enum MyEnum {
 }
 
 impl MyEnum {
-
     pub fn to_u64(self) -> u64 {
         match self {
             Self::Pack1(n) => n as u64,
@@ -814,7 +808,7 @@ impl BinlogColumnValue {
             ColumnMeta::Float { .. } => BinlogColumnValue::Float(input.read_le_f32()?),
             ColumnMeta::Double { .. } => BinlogColumnValue::Double(input.read_le_f64()?),
             ColumnMeta::Null => BinlogColumnValue::Null,
-            ColumnMeta::Timestamp{..} => {
+            ColumnMeta::Timestamp { .. } => {
                 // https://github.com/mysql/mysql-server/blob/5.7/sql-common/my_time.c#L1980
                 // stored as big endian int32
                 let secs = input.read_be_u32()?;
@@ -830,11 +824,7 @@ impl BinlogColumnValue {
                 let day = (n & 31) as u8;
                 let month = ((n >> 5) & 15) as u8;
                 let year = (n >> 9) as u16;
-                BinlogColumnValue::Date{
-                    year,
-                    month,
-                    day
-                }
+                BinlogColumnValue::Date { year, month, day }
             }
             ColumnMeta::Time => {
                 // https://github.com/mysql/mysql-server/blob/5.7/sql/field.cc#L6173
@@ -848,7 +838,7 @@ impl BinlogColumnValue {
                 let hours = n / 10000;
                 let days = hours / 24;
                 let hour = (hours - days * 24) as u8;
-                BinlogColumnValue::Time(MyTime{
+                BinlogColumnValue::Time(MyTime {
                     negative,
                     days,
                     hour,
@@ -857,10 +847,10 @@ impl BinlogColumnValue {
                     micro_second: 0,
                 })
             }
-            ColumnMeta::Time2{ frac } => {
+            ColumnMeta::Time2 { frac } => {
                 // https://github.com/mysql/mysql-server/blob/5.7/sql-common/my_time.c#L1654
                 // https://github.com/mysql/mysql-server/blob/5.7/sql-common/my_time.c#L1640
-                Self::Time(MyTime::from_binlog(input, *frac as usize)?)                
+                Self::Time(MyTime::from_binlog(input, *frac as usize)?)
             }
             ColumnMeta::DateTime { frac } => {
                 Self::DateTime(MyDateTime::from_binlog(input, *frac as usize)?)
@@ -870,11 +860,7 @@ impl BinlogColumnValue {
             // except 0 (which means 0 in MySQL)
             ColumnMeta::Year => {
                 let n = input.read_u8()?;
-                let y = if n == 0 {
-                    0
-                } else {
-                    (n as u16) + 1900
-                };
+                let y = if n == 0 { 0 } else { (n as u16) + 1900 };
                 Self::Year(y)
             }
             // NewDate,
@@ -903,13 +889,15 @@ impl BinlogColumnValue {
                     3 => MyEnum::Pack3(input.read_le_u24()?),
                     4 => MyEnum::Pack4(input.read_le_u32()?),
                     8 => MyEnum::Pack8(input.read_le_u64()?),
-                    _ => return Err(Error::ConstraintError(format!(
-                        "invalid length of enum: {}",
-                        pack_len
-                    )))
+                    _ => {
+                        return Err(Error::ConstraintError(format!(
+                            "invalid length of enum: {}",
+                            pack_len
+                        )))
+                    }
                 };
                 BinlogColumnValue::Enum(me)
-            },
+            }
             // Set,
             // TinyBlob,
             // MediumBlob,
@@ -1077,7 +1065,8 @@ mod tests {
     #[test]
     fn test_read_binlog_int24_negative() {
         let input = vec![78, 160, 254];
-        let bin_val = BinlogColumnValue::read_from(&mut Bytes::from(input), &ColumnMeta::Int24).unwrap();
+        let bin_val =
+            BinlogColumnValue::read_from(&mut Bytes::from(input), &ColumnMeta::Int24).unwrap();
         let stmt_val = StmtColumnValue::from((bin_val, false));
         if let BinaryColumnValue::Long(n) = stmt_val.val {
             assert_eq!(-90034, n as i32);
@@ -1089,7 +1078,8 @@ mod tests {
     #[test]
     fn test_read_binlog_int24_positive() {
         let input = vec![186, 84, 1];
-        let bin_val = BinlogColumnValue::read_from(&mut Bytes::from(input), &ColumnMeta::Int24).unwrap();
+        let bin_val =
+            BinlogColumnValue::read_from(&mut Bytes::from(input), &ColumnMeta::Int24).unwrap();
         let stmt_val = StmtColumnValue::from((bin_val, true));
         if let BinaryColumnValue::Long(n) = stmt_val.val {
             assert_eq!(87226, n);
@@ -1103,7 +1093,7 @@ mod tests {
         let input = vec![159, 201, 15];
         let mut input = Bytes::from(input);
         let bin_val = BinlogColumnValue::read_from(&mut input, &ColumnMeta::Date).unwrap();
-        if let BinlogColumnValue::Date{year, month, day} = bin_val {
+        if let BinlogColumnValue::Date { year, month, day } = bin_val {
             assert_eq!(2020, year);
             assert_eq!(12, month);
             assert_eq!(31, day);
@@ -1116,8 +1106,18 @@ mod tests {
     fn test_read_binlog_datetime0() {
         let input = vec![153_u8, 165, 66, 16, 131];
         let mut input = Bytes::from(input);
-        let bin_val = BinlogColumnValue::read_from(&mut input, &ColumnMeta::DateTime{frac: 0}).unwrap();
-        if let BinlogColumnValue::DateTime(MyDateTime{year, month, day, hour, minute, second, micro_second}) = bin_val {
+        let bin_val =
+            BinlogColumnValue::read_from(&mut input, &ColumnMeta::DateTime { frac: 0 }).unwrap();
+        if let BinlogColumnValue::DateTime(MyDateTime {
+            year,
+            month,
+            day,
+            hour,
+            minute,
+            second,
+            micro_second,
+        }) = bin_val
+        {
             assert_eq!(2020, year);
             assert_eq!(1, month);
             assert_eq!(1, day);
@@ -1134,8 +1134,18 @@ mod tests {
     fn test_read_binlog_datetime3() {
         let input = vec![153, 165, 66, 16, 131, 1, 194];
         let mut input = Bytes::from(input);
-        let bin_val = BinlogColumnValue::read_from(&mut input, &ColumnMeta::DateTime{frac: 3}).unwrap();
-        if let BinlogColumnValue::DateTime(MyDateTime{year, month, day, hour, minute, second, micro_second}) = bin_val {
+        let bin_val =
+            BinlogColumnValue::read_from(&mut input, &ColumnMeta::DateTime { frac: 3 }).unwrap();
+        if let BinlogColumnValue::DateTime(MyDateTime {
+            year,
+            month,
+            day,
+            hour,
+            minute,
+            second,
+            micro_second,
+        }) = bin_val
+        {
             assert_eq!(2020, year);
             assert_eq!(1, month);
             assert_eq!(1, day);
@@ -1152,8 +1162,18 @@ mod tests {
     fn test_read_binlog_datetime6() {
         let input = vec![153, 165, 66, 16, 131, 0, 176, 11];
         let mut input = Bytes::from(input);
-        let bin_val = BinlogColumnValue::read_from(&mut input, &ColumnMeta::DateTime{frac: 6}).unwrap();
-        if let BinlogColumnValue::DateTime(MyDateTime{year, month, day, hour, minute, second, micro_second}) = bin_val {
+        let bin_val =
+            BinlogColumnValue::read_from(&mut input, &ColumnMeta::DateTime { frac: 6 }).unwrap();
+        if let BinlogColumnValue::DateTime(MyDateTime {
+            year,
+            month,
+            day,
+            hour,
+            minute,
+            second,
+            micro_second,
+        }) = bin_val
+        {
             assert_eq!(2020, year);
             assert_eq!(1, month);
             assert_eq!(1, day);
@@ -1170,8 +1190,17 @@ mod tests {
     fn test_read_binlog_time0() {
         let input = vec![128, 16, 131];
         let mut input = Bytes::from(input);
-        let bin_val = BinlogColumnValue::read_from(&mut input, &ColumnMeta::Time2{frac: 0}).unwrap();
-        if let BinlogColumnValue::Time(MyTime{negative, days, hour, minute, second, micro_second}) = bin_val {
+        let bin_val =
+            BinlogColumnValue::read_from(&mut input, &ColumnMeta::Time2 { frac: 0 }).unwrap();
+        if let BinlogColumnValue::Time(MyTime {
+            negative,
+            days,
+            hour,
+            minute,
+            second,
+            micro_second,
+        }) = bin_val
+        {
             assert_eq!(negative, false);
             assert_eq!(0, days);
             assert_eq!(1, hour);
@@ -1187,8 +1216,17 @@ mod tests {
     fn test_read_binlog_time3() {
         let input = vec![128, 16, 131, 1, 194];
         let mut input = Bytes::from(input);
-        let bin_val = BinlogColumnValue::read_from(&mut input, &ColumnMeta::Time2{frac: 3}).unwrap();
-        if let BinlogColumnValue::Time(MyTime{negative, days, hour, minute, second, micro_second}) = bin_val {
+        let bin_val =
+            BinlogColumnValue::read_from(&mut input, &ColumnMeta::Time2 { frac: 3 }).unwrap();
+        if let BinlogColumnValue::Time(MyTime {
+            negative,
+            days,
+            hour,
+            minute,
+            second,
+            micro_second,
+        }) = bin_val
+        {
             assert_eq!(negative, false);
             assert_eq!(0, days);
             assert_eq!(1, hour);
@@ -1204,8 +1242,17 @@ mod tests {
     fn test_read_binlog_time6() {
         let input = vec![127, 239, 124, 255, 79, 245];
         let mut input = Bytes::from(input);
-        let bin_val = BinlogColumnValue::read_from(&mut input, &ColumnMeta::Time2{frac: 6}).unwrap();
-        if let BinlogColumnValue::Time(MyTime{negative, days, hour, minute, second, micro_second}) = bin_val {
+        let bin_val =
+            BinlogColumnValue::read_from(&mut input, &ColumnMeta::Time2 { frac: 6 }).unwrap();
+        if let BinlogColumnValue::Time(MyTime {
+            negative,
+            days,
+            hour,
+            minute,
+            second,
+            micro_second,
+        }) = bin_val
+        {
             assert_eq!(negative, true);
             assert_eq!(0, days);
             assert_eq!(1, hour);
@@ -1219,26 +1266,33 @@ mod tests {
 
     #[test]
     fn read_binlog_year() {
-        let bin_val = BinlogColumnValue::read_from(
-            &mut Bytes::from_static(b"\x00"), &ColumnMeta::Year).unwrap();
+        let bin_val =
+            BinlogColumnValue::read_from(&mut Bytes::from_static(b"\x00"), &ColumnMeta::Year)
+                .unwrap();
         assert_eq!(BinlogColumnValue::Year(0), bin_val);
-        let bin_val = BinlogColumnValue::read_from(
-            &mut Bytes::from_static(b"\x65"), &ColumnMeta::Year).unwrap();
+        let bin_val =
+            BinlogColumnValue::read_from(&mut Bytes::from_static(b"\x65"), &ColumnMeta::Year)
+                .unwrap();
         assert_eq!(BinlogColumnValue::Year(2001), bin_val);
-        let bin_val = BinlogColumnValue::read_from(
-            &mut Bytes::from_static(b"\xa9"), &ColumnMeta::Year).unwrap();
+        let bin_val =
+            BinlogColumnValue::read_from(&mut Bytes::from_static(b"\xa9"), &ColumnMeta::Year)
+                .unwrap();
         assert_eq!(BinlogColumnValue::Year(2069), bin_val);
-        let bin_val = BinlogColumnValue::read_from(
-            &mut Bytes::from_static(b"\x46"), &ColumnMeta::Year).unwrap();
+        let bin_val =
+            BinlogColumnValue::read_from(&mut Bytes::from_static(b"\x46"), &ColumnMeta::Year)
+                .unwrap();
         assert_eq!(BinlogColumnValue::Year(1970), bin_val);
-        let bin_val = BinlogColumnValue::read_from(
-            &mut Bytes::from_static(b"\x63"), &ColumnMeta::Year).unwrap();
+        let bin_val =
+            BinlogColumnValue::read_from(&mut Bytes::from_static(b"\x63"), &ColumnMeta::Year)
+                .unwrap();
         assert_eq!(BinlogColumnValue::Year(1999), bin_val);
-        let bin_val = BinlogColumnValue::read_from(
-            &mut Bytes::from_static(b"\x01"), &ColumnMeta::Year).unwrap();
+        let bin_val =
+            BinlogColumnValue::read_from(&mut Bytes::from_static(b"\x01"), &ColumnMeta::Year)
+                .unwrap();
         assert_eq!(BinlogColumnValue::Year(1901), bin_val);
-        let bin_val = BinlogColumnValue::read_from(
-            &mut Bytes::from_static(b"\xff"), &ColumnMeta::Year).unwrap();
+        let bin_val =
+            BinlogColumnValue::read_from(&mut Bytes::from_static(b"\xff"), &ColumnMeta::Year)
+                .unwrap();
         assert_eq!(BinlogColumnValue::Year(2155), bin_val);
     }
 
@@ -1246,19 +1300,23 @@ mod tests {
     fn read_binlog_timestamp() {
         let input = vec![95u8, 159, 135, 162];
         let bin_val = BinlogColumnValue::read_from(
-            &mut Bytes::from(input), &ColumnMeta::Timestamp{frac: 0}).unwrap();
+            &mut Bytes::from(input),
+            &ColumnMeta::Timestamp { frac: 0 },
+        )
+        .unwrap();
         // assert_eq!(BinlogColumnValue::Timestamp(
-            
-        // ))
-        let expected = NaiveDate::from_ymd(2020, 11, 2)
-            .and_hms(4, 14, 26);
-        assert_eq!(BinlogColumnValue::Timestamp(expected.timestamp() as u32), bin_val);
 
+        // ))
+        let expected = NaiveDate::from_ymd(2020, 11, 2).and_hms(4, 14, 26);
+        assert_eq!(
+            BinlogColumnValue::Timestamp(expected.timestamp() as u32),
+            bin_val
+        );
     }
 
     #[test]
     fn test_read_write_binary_time() {
-        let tm = BinaryColumnValue::Time(MyTime{
+        let tm = BinaryColumnValue::Time(MyTime {
             negative: true,
             days: 1,
             hour: 2,
@@ -1276,7 +1334,7 @@ mod tests {
     #[test]
     fn test_read_write_binary_datetime() {
         // only date
-        let tm = BinaryColumnValue::DateTime(MyDateTime{
+        let tm = BinaryColumnValue::DateTime(MyDateTime {
             year: 2020,
             month: 8,
             day: 1,
@@ -1292,7 +1350,7 @@ mod tests {
         assert_eq!(tm, output);
 
         // only timestamp without fraction
-        let tm = BinaryColumnValue::DateTime(MyDateTime{
+        let tm = BinaryColumnValue::DateTime(MyDateTime {
             year: 2020,
             month: 8,
             day: 1,

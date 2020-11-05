@@ -169,6 +169,7 @@ impl RowsV2 {
                     j,
                     !bitmap::index(null_bitmap.as_ref(), i as usize),
                 );
+                j += 1;
             }
             let row = LogRow::read_from(input, n_cols as usize, &col_bitmap[..], col_metas)?;
             rows.push(row);

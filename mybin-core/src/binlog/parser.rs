@@ -131,11 +131,7 @@ impl ParserV4 {
         }
 
         let header = EventHeader::read_from(input)?;
-        if header.type_code == LogEventType::HeartbeatLogEvent {
-            println!("read data len = {}", header.data_len());
-            println!("input bytes len = {}", input.remaining());
-            println!("{:?}", input.bytes());
-        }
+        log::debug!("event header={:?}", header);
         let mut raw_data = input.read_len(header.data_len() as usize)?;
         if self.checksum {
             // need to remove 4-byte crc32 code at end
@@ -331,6 +327,8 @@ mod tests {
     const BINLOG_YEAR_DATA: &[u8] = include_bytes!("../../data/mysql-bin.5.7.30.Year");
     const BINLOG_TIMESTAMP_DATA: &[u8] = include_bytes!("../../data/mysql-bin.5.7.30.Timestamp");
     const BINLOG_ENUM_DATA: &[u8] = include_bytes!("../../data/mysql-bin.5.7.30.Enum");
+    const BINLOG_NUMBER_DATA: &[u8] = include_bytes!("../../data/mysql-bin.5.7.30.Number");
+    const BINLOG_NULL_DATA: &[u8] = include_bytes!("../../data/mysql-bin.5.7.30.Null");
 
     #[test]
     fn test_binlog_version() -> Result<()> {
@@ -1029,6 +1027,59 @@ mod tests {
         dbg!(&wre);
         let rows = wre.data.into_rows(&tm.col_metas)?;
         dbg!(rows);
+        Ok(())
+    }
+
+    #[test]
+    fn test_binlog_number_data() -> Result<()> {
+        let mut input = BINLOG_NUMBER_DATA;
+        let input = &mut input.to_bytes();
+        let pv4 = ParserV4::from_binlog_file(input)?;
+        // 5th event is insert
+        for _ in 0..3 {
+            pv4.skip_event(input)?;
+        }
+        let tme = pv4.parse_event(input, false)?;
+        let tme: TableMapEvent = tme.unwrap().try_into()?;
+        let tm = tme.data.into_table_map()?;
+        dbg!(&tm);
+        let wre = pv4.parse_event(input, false)?;
+        let wre: WriteRowsEventV2 = wre.unwrap().try_into()?;
+        dbg!(&wre);
+        let rows = wre.data.into_rows(&tm.col_metas)?;
+        dbg!(rows);
+        Ok(())
+    }
+
+    use crate::col::BinlogColumnValue;
+    #[test]
+    fn test_binlog_null_data() -> Result<()> {
+        let mut input = BINLOG_NULL_DATA;
+        let input = &mut input.to_bytes();
+        let pv4 = ParserV4::from_binlog_file(input)?;
+        // 5th event is insert
+        for _ in 0..3 {
+            pv4.skip_event(input)?;
+        }
+        let tme = pv4.parse_event(input, false)?;
+        let tme: TableMapEvent = tme.unwrap().try_into()?;
+        let tm = tme.data.into_table_map()?;
+        dbg!(&tm);
+        let wre = pv4.parse_event(input, false)?;
+        let wre: WriteRowsEventV2 = wre.unwrap().try_into()?;
+        dbg!(&wre);
+        let mut rows = wre.data.into_rows(&tm.col_metas)?;
+        dbg!(&rows);
+        let row = rows.rows.pop().unwrap().0;
+        assert_eq!(&BinlogColumnValue::Long(1), &row[0]);
+        assert_eq!(&BinlogColumnValue::Null, &row[1]);
+        assert_eq!(&BinlogColumnValue::Long(3), &row[2]);
+        assert_eq!(&BinlogColumnValue::Null, &row[3]);
+        assert_eq!(&BinlogColumnValue::Long(5), &row[4]);
+        assert_eq!(&BinlogColumnValue::Null, &row[5]);
+        assert_eq!(&BinlogColumnValue::Long(7), &row[6]);
+        assert_eq!(&BinlogColumnValue::Null, &row[7]);
+        assert_eq!(&BinlogColumnValue::Null, &row[8]);
         Ok(())
     }
 

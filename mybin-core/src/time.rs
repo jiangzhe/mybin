@@ -2,14 +2,14 @@
 //!
 //! Uses BigEndian and bit operations
 
-use crate::try_non_null_column_value;
-use crate::resultset::FromColumnValue;
 use crate::col::{BinaryColumnValue, TextColumnValue};
-use crate::error::{Result, Error};
+use crate::error::{Error, Result};
+use crate::resultset::FromColumnValue;
+use crate::try_non_null_column_value;
 use bytes::{Buf, Bytes};
+use bytes_parser::error::{Error as BError, Result as BResult};
 use bytes_parser::ReadBytesExt;
-use bytes_parser::error::{Result as BResult, Error as BError};
-use chrono::{NaiveDate, NaiveDateTime, Datelike, Timelike};
+use chrono::{Datelike, NaiveDate, NaiveDateTime, Timelike};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MyTime {
@@ -23,7 +23,7 @@ pub struct MyTime {
 
 impl MyTime {
     /// read time with given fraction in binlog
-    /// 
+    ///
     /// https://github.com/mysql/mysql-server/blob/5.7/sql-common/my_time.c#L1689
     pub fn from_binlog(input: &mut Bytes, frac: usize) -> BResult<Self> {
         let (packed, negative) = packed_from_time_binary(input, frac)?;
@@ -34,7 +34,7 @@ impl MyTime {
         let minute = ((hms >> 6) % (1 << 6)) as u8;
         let second = (hms % (1 << 6)) as u8;
         let micro_second = (packed & 0xff_ffff) as u32;
-        Ok(Self{
+        Ok(Self {
             negative,
             days,
             hour,
@@ -122,7 +122,6 @@ pub struct MyDateTime {
 }
 
 impl MyDateTime {
-
     /// read datetime with given fraction from binlog
     ///
     /// https://github.com/mysql/mysql-server/blob/5.7/sql-common/my_time.c#L1820
@@ -139,7 +138,7 @@ impl MyDateTime {
         let minute = ((hms >> 6) % (1 << 6)) as u8;
         let second = (hms % (1 << 6)) as u8;
         let micro_second = (packed & 0xff_ffff) as u32;
-        Ok(Self{
+        Ok(Self {
             year,
             month,
             day,
@@ -153,7 +152,7 @@ impl MyDateTime {
 
 impl From<NaiveDateTime> for MyDateTime {
     fn from(src: NaiveDateTime) -> Self {
-        Self{
+        Self {
             year: src.year() as u16,
             month: src.month() as u8,
             day: src.day() as u8,
@@ -167,8 +166,12 @@ impl From<NaiveDateTime> for MyDateTime {
 
 impl From<MyDateTime> for NaiveDateTime {
     fn from(src: MyDateTime) -> Self {
-        NaiveDate::from_ymd(src.year as i32, src.month as u32, src.day as u32)
-            .and_hms_micro(src.hour as u32, src.minute as u32, src.second as u32, src.micro_second as u32)
+        NaiveDate::from_ymd(src.year as i32, src.month as u32, src.day as u32).and_hms_micro(
+            src.hour as u32,
+            src.minute as u32,
+            src.second as u32,
+            src.micro_second as u32,
+        )
     }
 }
 
@@ -231,7 +234,12 @@ fn packed_from_time_binary(input: &mut Bytes, frac: usize) -> BResult<(u64, bool
             let p = ((hms as u64) << 24) + (frac_part as u64);
             p.overflowing_sub(0x8000_0000_0000).0
         }
-        _ => return Err(BError::ConstraintError(format!("invalid fractional length of time {}", frac))),
+        _ => {
+            return Err(BError::ConstraintError(format!(
+                "invalid fractional length of time {}",
+                frac
+            )))
+        }
     };
     let packed = if negative {
         (-(packed as i64)) as u64
@@ -267,7 +275,12 @@ fn packed_from_datetime_binary(input: &mut Bytes, frac: usize) -> BResult<u64> {
             let frac_part = input.read_be_u24()?;
             (int_part << 24) + (frac_part as u64)
         }
-        _ => return Err(BError::ConstraintError(format!("invalid fractional length of datetime {}", frac))),
+        _ => {
+            return Err(BError::ConstraintError(format!(
+                "invalid fractional length of datetime {}",
+                frac
+            )))
+        }
     };
     let packed = if negative {
         (-(packed as i64)) as u64
@@ -287,7 +300,17 @@ mod tests {
         let mut input = Bytes::from(input);
         let tm = MyTime::from_binlog(&mut input, 0).unwrap();
         // println!("{:?}", tm);
-        assert_eq!(MyTime{negative: false, days: 0, hour: 1, minute: 2, second: 3, micro_second: 0}, tm);
+        assert_eq!(
+            MyTime {
+                negative: false,
+                days: 0,
+                hour: 1,
+                minute: 2,
+                second: 3,
+                micro_second: 0
+            },
+            tm
+        );
     }
 
     #[test]
@@ -295,7 +318,17 @@ mod tests {
         let input = vec![128, 16, 131, 1, 194];
         let mut input = Bytes::from(input);
         let tm = MyTime::from_binlog(&mut input, 3).unwrap();
-        assert_eq!(MyTime{negative: false, days: 0, hour: 1, minute: 2, second: 3, micro_second: 45000}, tm);
+        assert_eq!(
+            MyTime {
+                negative: false,
+                days: 0,
+                hour: 1,
+                minute: 2,
+                second: 3,
+                micro_second: 45000
+            },
+            tm
+        );
     }
 
     #[test]
@@ -304,9 +337,19 @@ mod tests {
         let input = vec![127, 239, 124, 255, 79, 245];
         let mut input = Bytes::from(input);
         let tm = MyTime::from_binlog(&mut input, 6).unwrap();
-        assert_eq!(MyTime{negative: true, days: 0, hour: 1, minute: 2, second: 3, micro_second: 45067}, tm);
+        assert_eq!(
+            MyTime {
+                negative: true,
+                days: 0,
+                hour: 1,
+                minute: 2,
+                second: 3,
+                micro_second: 45067
+            },
+            tm
+        );
     }
-    
+
     #[test]
     fn test_time_from_text_value() {
         let input = Some(Bytes::from("01:02:03.004"));

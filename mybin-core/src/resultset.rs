@@ -219,7 +219,9 @@ impl FromColumnValue<BinaryColumnValue> for Option<NaiveDateTime> {
     fn from_col(value: BinaryColumnValue) -> Result<Self> {
         match value {
             BinaryColumnValue::Null => Ok(None),
-            BinaryColumnValue::DateTime(ts) | BinaryColumnValue::Timestamp(ts) => Ok(Some(ts.into())),
+            BinaryColumnValue::DateTime(ts) | BinaryColumnValue::Timestamp(ts) => {
+                Ok(Some(ts.into()))
+            }
             _ => Err(Error::column_type_mismatch("datetime", &value)),
         }
     }

@@ -8,6 +8,7 @@ use mybin_core::cmd::*;
 use mybin_core::col::TextColumnValue;
 use mybin_core::packet::{EofPacket, ErrPacket};
 use mybin_core::resultset::{ColumnExtractor, RowMapper};
+use std::time::Duration;
 use uuid::adapter::Hyphenated;
 use uuid::Uuid;
 
@@ -24,6 +25,7 @@ pub struct Binlog<'s, S> {
     sids: Vec<SidRange>,
     non_block: bool,
     validate_checksum: bool,
+    heartbeat_interval: Duration,
 }
 
 impl<'s, S> Binlog<'s, S> {
@@ -36,6 +38,7 @@ impl<'s, S> Binlog<'s, S> {
             sids: vec![],
             non_block: false,
             validate_checksum: false,
+            heartbeat_interval: Duration::from_secs(30),
         }
     }
 
@@ -73,13 +76,18 @@ impl<'s, S> Binlog<'s, S> {
         self.validate_checksum = validate_checksum;
         self
     }
+
+    pub fn heartbeat_interval(mut self, heartbeat_interval: Duration) -> Self {
+        self.heartbeat_interval = heartbeat_interval;
+        self
+    }
 }
 
 impl<'s, S> Binlog<'s, S>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    pub async fn stream(self) -> Result<BinlogStream<'s, S>> {
+    pub async fn request_stream(self) -> Result<BinlogStream<'s, S>> {
         use rand::Rng;
         log::debug!("setup preconditions before request binlog stream");
         // 1. fetch server_id as master_id
@@ -89,14 +97,22 @@ where
             .await?
             .ok_or_else(|| Error::EmptyResultSet)?;
         log::debug!("server_id={}", master_id);
-        // 2. set @master_heartbeat_period = 30
+        // 2. set @master_heartbeat_period
         //    mysql will send HeartbeatLogEvent if in such period there is no event
         //    client should have large network timeout than period and can silently
         //    discard the heartbeat event
+        //    the period unit is nanos
+        //    https://github.com/mysql/mysql-server/blob/8.0/sql/rpl_slave.cc#L2687
         self.conn
-            .set_user_var("MASTER_HEARTBEAT_PERIOD", 30u32)
+            .set_user_var(
+                "MASTER_HEARTBEAT_PERIOD",
+                self.heartbeat_interval.as_nanos() as u64,
+            )
             .await?;
-        log::debug!("set @master_heartbeat_period to 30");
+        log::debug!(
+            "set @master_heartbeat_period to {:?}",
+            self.heartbeat_interval
+        );
         // 3. fetch binlog_checksum
         //    the binlog parser needs to know if checksum is enabled
         let binlog_checksum: String = self
@@ -261,7 +277,7 @@ pub struct BinlogStream<'s, S> {
     non_block: bool,
 }
 
-impl<'s, S> BinlogStream<'s, S> 
+impl<'s, S> BinlogStream<'s, S>
 where
     S: AsyncRead + Unpin,
 {
@@ -281,17 +297,17 @@ where
     async fn recv_and_parse_event(&mut self) -> Result<BinlogStreamEvent> {
         let mut msg = self.conn.recv_msg().await?;
         if !msg.has_remaining() {
-            return Err(Error::InputIncomplete(
-                Bytes::new(),
-                Needed::Unknown,
-            ));
+            return Err(Error::InputIncomplete(Bytes::new(), Needed::Unknown));
         }
         let header = msg.read_u8().unwrap();
         if self.non_block && header == 0xfe {
             return Ok(BinlogStreamEvent::End);
         }
         if header != 0x00 {
-            return Err(Error::PacketError(format!("invalid header of binlog stream {}", header)));
+            return Err(Error::PacketError(format!(
+                "invalid header of binlog stream {}",
+                header
+            )));
         }
         match self.pv4.parse_event(&mut msg, self.validate_checksum)? {
             Some(evt) => Ok(BinlogStreamEvent::Single(evt)),
@@ -306,50 +322,6 @@ enum BinlogStreamEvent {
     UnsupportedEvent,
     End,
 }
-
-// impl<'s, S> Stream for BinlogStream<'s, S>
-// where
-//     S: AsyncRead + Unpin,
-// {
-//     type Item = Result<Event>;
-//     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-//         if self.completed {
-//             return Poll::Ready(None);
-//         }
-
-//         loop {
-//             // todo: state machine
-//             let mut recv_msg = self.conn.recv_msg();
-//             match ready!(Pin::new(&mut recv_msg).poll(cx)) {
-//                 Ok(mut msg) => {
-//                     // check header
-//                     if !msg.has_remaining() {
-//                         return Poll::Ready(Some(Err(Error::InputIncomplete(
-//                             Bytes::new(),
-//                             Needed::Unknown,
-//                         ))));
-//                     }
-//                     // won't fail
-//                     let header = msg.read_u8().unwrap();
-//                     if header != 0x00 {
-//                         log::trace!("non-event packet={:?}", msg.bytes());
-//                         self.completed = true;
-//                         return Poll::Ready(None);
-//                     }
-//                     match self.pv4.parse_event(&mut msg, self.validate_checksum) {
-//                         Ok(Some(event)) => {
-//                             log::trace!("parsed event={:?}", event);
-//                             return Poll::Ready(Some(Ok(event)));
-//                         }
-//                         Ok(None) => log::trace!("unsupported event"),
-//                         Err(e) => return Poll::Ready(Some(Err(e.into()))),
-//                     }
-//                 }
-//                 Err(e) => return Poll::Ready(Some(Err(e.into()))),
-//             }
-//         }
-//     }
-// }
 
 #[cfg(test)]
 mod tests {
@@ -407,7 +379,7 @@ mod tests {
             .binlog_filename("mysql-bin.000002")
             .binlog_pos(4)
             .non_block(true)
-            .stream()
+            .request_stream()
             .await
             .unwrap();
         let mut cnt = 0;

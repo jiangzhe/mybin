@@ -6,12 +6,12 @@ use mybin_async::conn::{Conn, ConnOpts};
 use mybin_core::binlog::Event;
 use mybin_core::col::{ColumnDefinition, ColumnMetas};
 use mybin_core::sql::{self, SqlCollection};
-use opts::{Opts, Command};
+use opts::{Command, Opts};
 // use smol::stream::StreamExt;
+use regex::Regex;
 use smol_str::SmolStr;
 use std::collections::{HashMap, HashSet};
 use structopt::StructOpt;
-use regex::Regex;
 
 fn main() -> Result<()> {
     smol::block_on(async {
@@ -28,7 +28,14 @@ async fn exec(opts: &Opts) -> Result<()> {
             let files = conn.binlog_files().await?;
             println!("{:#?}", files);
         }
-        Command::Dml{ filename, until_now , database_filter, table_filter, block} => {
+        Command::Dml {
+            filename,
+            until_now,
+            database_filter,
+            table_filter,
+            block,
+            limit,
+        } => {
             // helper connection to fetch column names
             let conn = connect(&opts).await?;
             let helper = connect(&opts).await?;
@@ -42,7 +49,17 @@ async fn exec(opts: &Opts) -> Result<()> {
             } else {
                 None
             };
-            print_dmls(conn, filename, *until_now, database_filter, table_filter, !block, helper).await?;
+            print_dmls(
+                conn,
+                filename,
+                *until_now,
+                database_filter,
+                table_filter,
+                !block,
+                *limit,
+                helper,
+            )
+            .await?;
         }
     }
     Ok(())
@@ -62,22 +79,27 @@ async fn connect(opts: &Opts) -> Result<Conn<TcpStream>> {
 }
 
 async fn print_dmls(
-    mut conn: Conn<TcpStream>, 
-    filename: &str, 
-    until_now: bool, 
+    mut conn: Conn<TcpStream>,
+    filename: &str,
+    until_now: bool,
     database_filter: Option<Regex>,
     table_filter: Option<Regex>,
     non_block: bool,
-    mut helper: Conn<TcpStream>
+    limit: usize,
+    mut helper: Conn<TcpStream>,
 ) -> Result<()> {
     // start binlog stream
-    let mut binlog_stream = conn.binlog()
+    let mut binlog_stream = conn
+        .binlog()
         .binlog_filename(filename)
         .binlog_pos(4)
-        .non_block(non_block).stream().await?;
+        .non_block(non_block)
+        .request_stream()
+        .await?;
     let mut tbls = HashMap::new();
     let mut skip_tbls = HashSet::new();
-    while let Some(event) = binlog_stream.next_event().await? {
+    let mut n_rows = 0usize;
+    'outer: while let Some(event) = binlog_stream.next_event().await? {
         match event {
             Event::TableMapEvent(raw) => {
                 let tbl_id = raw.data.table_id;
@@ -115,10 +137,13 @@ async fn print_dmls(
                 }
                 if let Some(tm) = tbls.get(&tbl_id) {
                     let rows = raw.data.into_rows(&tm.col_metas)?;
-                    let del_sql =
-                        sql::delete(tm.db.clone(), tm.tbl.clone(), rows, &tm.col_defs);
+                    let del_sql = sql::delete(tm.db.clone(), tm.tbl.clone(), rows, &tm.col_defs);
                     for s in del_sql.sql_list() {
                         println!("{}", s);
+                        n_rows += 1;
+                        if n_rows >= limit {
+                            break 'outer;
+                        }
                     }
                 }
             }
@@ -129,11 +154,13 @@ async fn print_dmls(
                 }
                 if let Some(tm) = tbls.get(&tbl_id) {
                     let rows = raw.data.into_rows(&tm.col_metas)?;
-                    // println!("table_id={}, schema_name={}, table_name={}", tbl_id, tm.db, tm.tbl);
-                    let ins_sql =
-                        sql::insert(tm.db.clone(), tm.tbl.clone(), rows, &tm.col_defs);
+                    let ins_sql = sql::insert(tm.db.clone(), tm.tbl.clone(), rows, &tm.col_defs);
                     for s in ins_sql.sql_list() {
                         println!("{}", s);
+                        n_rows += 1;
+                        if n_rows >= limit {
+                            break 'outer;
+                        }
                     }
                 }
             }
@@ -146,7 +173,7 @@ async fn print_dmls(
                 }
             }
             evt @ Event::HeartbeatLogEvent(_) => {
-                println!("{:#?}", evt);
+                eprintln!("{:#?}", evt);
             }
             _ => (),
         }
@@ -175,18 +202,19 @@ mod tests {
     #[smol_potat::test]
     async fn test_print_dmls() {
         let mut opts = new_opts();
-        opts.cmd = Command::Dml{
+        opts.cmd = Command::Dml {
             filename: String::from("mysql-bin.000001"),
             until_now: true,
             database_filter: None,
             table_filter: None,
             block: false,
+            limit: 100,
         };
         exec(&opts).await.unwrap();
     }
 
     fn new_opts() -> Opts {
-        Opts{
+        Opts {
             host: String::from("127.0.0.1"),
             port: String::from("13306"),
             username: String::from("root"),

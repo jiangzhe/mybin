@@ -141,7 +141,7 @@ where
 }
 
 /// todo:
-/// refine the API so user can reuse the prepared statement 
+/// refine the API so user can reuse the prepared statement
 /// to query mutiple result sets
 impl<'s, S> PreparedStmt<'s, S>
 where

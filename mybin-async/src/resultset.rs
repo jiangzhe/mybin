@@ -4,12 +4,12 @@ use bytes::{Buf, Bytes};
 use bytes_parser::my::LenEncInt;
 use bytes_parser::ReadFromBytes;
 use futures::{AsyncRead, AsyncWrite};
+use mybin_core::cmd::ComStmtClose;
 use mybin_core::col::{BinaryColumnValue, ColumnDefinition, ColumnType, TextColumnValue};
 use mybin_core::flag::CapabilityFlags;
 use mybin_core::packet::{EofPacket, ErrPacket, OkPacket};
 use mybin_core::resultset::{ColumnExtractor, RowMapper};
 use mybin_core::row::{BinaryRow, TextRow};
-use mybin_core::cmd::ComStmtClose;
 use std::marker::PhantomData;
 
 /// construct a new result set from given connection
@@ -17,7 +17,10 @@ use std::marker::PhantomData;
 /// the incoming bytes should follow either text protocol or binary protocol of result set
 /// https://dev.mysql.com/doc/internals/en/com-query-response.html#packet-ProtocolText::Resultset
 /// https://dev.mysql.com/doc/internals/en/binary-protocol-resultset.html
-pub async fn new_result_set<'s, S, Q>(conn: &'s mut Conn<S>, stmt_id: Option<u32>) -> Result<ResultSet<'s, S, Q>>
+pub async fn new_result_set<'s, S, Q>(
+    conn: &'s mut Conn<S>,
+    stmt_id: Option<u32>,
+) -> Result<ResultSet<'s, S, Q>>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
@@ -91,7 +94,11 @@ impl<'s, S: 's, Q> ResultSet<'s, S, Q> {
         }
     }
 
-    pub fn new(conn: &'s mut Conn<S>, col_defs: Vec<ColumnDefinition>, stmt_id: Option<u32>) -> Self {
+    pub fn new(
+        conn: &'s mut Conn<S>,
+        col_defs: Vec<ColumnDefinition>,
+        stmt_id: Option<u32>,
+    ) -> Self {
         let col_types = col_defs.iter().map(|d| d.col_type).collect();
         Self {
             conn,
@@ -124,7 +131,7 @@ impl<'s, S: 's, Q> ResultSet<'s, S, Q> {
 impl<'s, S: 's, Q> ResultSet<'s, S, Q>
 where
     S: AsyncRead + Unpin,
-    Self: RowReader<Column=Q>,
+    Self: RowReader<Column = Q>,
 {
     pub async fn all(mut self) -> Result<Vec<Vec<Q>>> {
         let mut rows = Vec::new();
@@ -246,7 +253,7 @@ impl<'s, S: 's, M, Q> MapperResultSet<'s, S, M, Q>
 where
     S: AsyncRead + Unpin,
     M: RowMapper<Q> + Unpin,
-    ResultSet<'s, S, Q>: RowReader<Column=Q>,
+    ResultSet<'s, S, Q>: RowReader<Column = Q>,
 {
     pub async fn all(mut self) -> Result<Vec<M::Output>> {
         let mut rows = Vec::new();
@@ -281,7 +288,11 @@ where
     }
 
     pub async fn next_row(&mut self) -> Result<Option<<M as RowMapper<Q>>::Output>> {
-        let r = self.rs.next_row().await?.map(|r| self.mapper.map_row(&self.extractor, r));
+        let r = self
+            .rs
+            .next_row()
+            .await?
+            .map(|r| self.mapper.map_row(&self.extractor, r));
         Ok(r)
     }
 }
@@ -306,7 +317,14 @@ mod tests {
     #[smol_potat::test]
     async fn test_result_set_ops_simple() {
         let mut conn = new_conn().await;
-        let all_rs = conn.query().qry("select 1").await.unwrap().all().await.unwrap();
+        let all_rs = conn
+            .query()
+            .qry("select 1")
+            .await
+            .unwrap()
+            .all()
+            .await
+            .unwrap();
         assert_eq!(1, all_rs.len());
         let first_rs = conn.query().qry("select 1").await.unwrap().first().await;
         dbg!(first_rs.unwrap());
@@ -316,7 +334,8 @@ mod tests {
             .await
             .unwrap()
             .first_or_none()
-            .await.unwrap();
+            .await
+            .unwrap();
         assert!(first_or_none_rs.is_some());
         let count_rs = conn.query().qry("select 1").await.unwrap().count().await;
         assert_eq!(1, count_rs.unwrap());
@@ -332,7 +351,8 @@ mod tests {
             .unwrap()
             .map_rows(|_extr: &ColumnExtractor, _row: Vec<TextColumnValue>| ())
             .all()
-            .await.unwrap();
+            .await
+            .unwrap();
         assert_eq!(1, all_rs.len());
         let first_rs = conn
             .query()
@@ -350,7 +370,8 @@ mod tests {
             .unwrap()
             .map_rows(|_extr: &ColumnExtractor, _row: Vec<TextColumnValue>| ())
             .first_or_none()
-            .await.unwrap();
+            .await
+            .unwrap();
         assert!(first_or_none_rs.is_some());
         let count_rs = conn
             .query()
@@ -372,7 +393,8 @@ mod tests {
             .await
             .unwrap()
             .all()
-            .await.unwrap();
+            .await
+            .unwrap();
         assert!(all_rs.is_empty());
         let first_rs = conn
             .query()
@@ -388,7 +410,8 @@ mod tests {
             .await
             .unwrap()
             .first_or_none()
-            .await.unwrap();
+            .await
+            .unwrap();
         assert!(first_or_none_rs.is_none());
         let count_rs = conn
             .query()

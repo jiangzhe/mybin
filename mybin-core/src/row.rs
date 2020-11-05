@@ -63,7 +63,6 @@ impl LogRow {
         col_bm: &[u8],
         col_metas: &[ColumnMeta],
     ) -> Result<Self> {
-        
         let mut cols = Vec::with_capacity(n_cols);
         for i in 0..n_cols {
             if bitmap::index(col_bm, i) {
