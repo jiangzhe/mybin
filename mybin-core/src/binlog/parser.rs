@@ -67,10 +67,9 @@ impl ParserV4 {
     }
 
     /// create parser from given format description event
-    pub fn from_fde(fde: &FormatDescriptionEvent) -> Self {
-        let post_header_lengths =
-            post_header_lengths_from_raw(fde.data.post_header_lengths.as_ref());
-        let checksum = fde.data.checksum_flag == 1;
+    pub fn from_fde(fde: FormatDescriptionData) -> Self {
+        let post_header_lengths = post_header_lengths_from_raw(fde.post_header_lengths.as_ref());
+        let checksum = fde.checksum_flag == 1;
         ParserV4::new(post_header_lengths, checksum)
     }
 
@@ -107,10 +106,7 @@ impl ParserV4 {
         } else {
             None
         };
-        Ok((
-            Self::from_fde(&FormatDescriptionEvent { header, data }),
-            crc32,
-        ))
+        Ok((Self::from_fde(data), crc32))
     }
 
     // parse the event starting from given offset
@@ -132,135 +128,67 @@ impl ParserV4 {
 
         let header = EventHeader::read_from(input)?;
         log::debug!("event header={:?}", header);
-        let mut raw_data = input.read_len(header.data_len() as usize)?;
+        let mut data = input.read_len(header.data_len() as usize)?;
         if self.checksum {
             // need to remove 4-byte crc32 code at end
-            raw_data.truncate(raw_data.remaining() - 4);
+            data.truncate(data.remaining() - 4);
         }
         let event = match LogEventType::from(header.type_code) {
             // UnknownEvent not supported
-            LogEventType::StartEventV3 => Event::StartEventV3(RawEvent {
-                header: header,
-                data: StartData::read_from(&mut raw_data)?,
-            }),
-            LogEventType::QueryEvent => Event::QueryEvent(RawEvent {
-                header: header,
-                data: QueryData::read_from(&mut raw_data)?,
-            }),
-            LogEventType::StopEvent => Event::StopEvent(RawEvent {
-                header: header,
-                data: (),
-            }),
-            LogEventType::RotateEvent => Event::RotateEvent(RawEvent {
-                header: header,
-                data: RotateData::read_from(&mut raw_data)?,
-            }),
-            LogEventType::IntvarEvent => Event::IntvarEvent(RawEvent {
-                header: header,
-                data: IntvarData::read_from(&mut raw_data)?,
-            }),
-            LogEventType::LoadEvent => Event::LoadEvent(RawEvent {
-                header: header,
-                data: LoadData::read_from(&mut raw_data)?,
-            }),
-            // SlaveEvent not supported
-            LogEventType::CreateFileEvent => Event::CreateFileEvent(RawEvent {
-                header: header,
-                data: CreateFileData::read_from(&mut raw_data)?,
-            }),
-            LogEventType::AppendBlockEvent => Event::AppendBlockEvent(RawEvent {
-                header: header,
-                data: AppendBlockData::read_from(&mut raw_data)?,
-            }),
-            LogEventType::ExecLoadEvent => Event::ExecLoadEvent(RawEvent {
-                header: header,
-                data: ExecLoadData::read_from(&mut raw_data)?,
-            }),
-            LogEventType::DeleteFileEvent => Event::DeleteFileEvent(RawEvent {
-                header: header,
-                data: DeleteFileData::read_from(&mut raw_data)?,
-            }),
-            LogEventType::NewLoadEvent => Event::NewLoadEvent(RawEvent {
-                header: header,
-                data: NewLoadData::read_from(&mut raw_data)?,
-            }),
-            LogEventType::RandEvent => Event::RandEvent(RawEvent {
-                header: header,
-                data: RandData::read_from(&mut raw_data)?,
-            }),
-            LogEventType::UserVarEvent => Event::UserVarEvent(RawEvent {
-                header: header,
-                data: UserVarData::read_from(&mut raw_data)?,
-            }),
-            LogEventType::FormatDescriptionEvent => Event::FormatDescriptionEvent(RawEvent {
-                header: header,
-                data: FormatDescriptionData::read_from(&mut raw_data)?,
-            }),
-            LogEventType::XidEvent => Event::XidEvent(RawEvent {
-                header: header,
-                data: XidData::read_from(&mut raw_data)?,
-            }),
-            LogEventType::BeginLoadQueryEvent => Event::BeginLoadQueryEvent(RawEvent {
-                header: header,
-                data: BeginLoadQueryData::read_from(&mut raw_data)?,
-            }),
-            LogEventType::ExecuteLoadQueryEvent => Event::ExecuteLoadQueryEvent(RawEvent {
-                header: header,
-                data: ExecuteLoadQueryData::read_from(&mut raw_data)?,
-            }),
-            LogEventType::TableMapEvent => Event::TableMapEvent(RawEvent {
-                header: header,
-                data: TableMapData::read_from(&mut raw_data)?,
-            }),
+            LogEventType::StartEventV3 => Event::StartEventV3(RawEvent::new(header, data)),
+            LogEventType::QueryEvent => Event::QueryEvent(RawEvent::new(header, data)),
+            LogEventType::StopEvent => Event::StopEvent(RawEvent::new(header, data)),
+            LogEventType::RotateEvent => Event::RotateEvent(RawEvent::new(header, data)),
+            LogEventType::IntvarEvent => Event::IntvarEvent(RawEvent::new(header, data)),
+            LogEventType::LoadEvent => Event::LoadEvent(RawEvent::new(header, data)),
+            LogEventType::CreateFileEvent => Event::CreateFileEvent(RawEvent::new(header, data)),
+            LogEventType::AppendBlockEvent => Event::AppendBlockEvent(RawEvent::new(header, data)),
+            LogEventType::ExecLoadEvent => Event::ExecLoadEvent(RawEvent::new(header, data)),
+            LogEventType::DeleteFileEvent => Event::DeleteFileEvent(RawEvent::new(header, data)),
+            LogEventType::NewLoadEvent => Event::NewLoadEvent(RawEvent::new(header, data)),
+            LogEventType::RandEvent => Event::RandEvent(RawEvent::new(header, data)),
+            LogEventType::UserVarEvent => Event::UserVarEvent(RawEvent::new(header, data)),
+            LogEventType::FormatDescriptionEvent => {
+                Event::FormatDescriptionEvent(RawEvent::new(header, data))
+            }
+            LogEventType::XidEvent => Event::XidEvent(RawEvent::new(header, data)),
+            LogEventType::BeginLoadQueryEvent => {
+                Event::BeginLoadQueryEvent(RawEvent::new(header, data))
+            }
+            LogEventType::ExecuteLoadQueryEvent => {
+                Event::ExecuteLoadQueryEvent(RawEvent::new(header, data))
+            }
+            LogEventType::TableMapEvent => Event::TableMapEvent(RawEvent::new(header, data)),
             // WriteRowsEventV0 not supported
             // UpdateRowsEventV0 not supported
             // DeleteRowsEventV0 not supported
-            LogEventType::WriteRowsEventV1 => Event::WriteRowsEventV1(RawEvent {
-                header: header,
-                data: WriteRowsDataV1::read_from(&mut raw_data)?,
-            }),
-            LogEventType::UpdateRowsEventV1 => Event::UpdateRowsEventV1(RawEvent {
-                header: header,
-                data: UpdateRowsDataV1::read_from(&mut raw_data)?,
-            }),
-            LogEventType::DeleteRowsEventV1 => Event::DeleteRowsEventV1(RawEvent {
-                header: header,
-                data: DeleteRowsDataV1::read_from(&mut raw_data)?,
-            }),
-            LogEventType::IncidentEvent => Event::IncidentEvent(RawEvent {
-                header: header,
-                data: IncidentData::read_from(&mut raw_data)?,
-            }),
-            LogEventType::HeartbeatLogEvent => Event::HeartbeatLogEvent(RawEvent {
-                header: header,
-                data: (),
-            }),
+            LogEventType::WriteRowsEventV1 => Event::WriteRowsEventV1(RawEvent::new(header, data)),
+            LogEventType::UpdateRowsEventV1 => {
+                Event::UpdateRowsEventV1(RawEvent::new(header, data))
+            }
+            LogEventType::DeleteRowsEventV1 => {
+                Event::DeleteRowsEventV1(RawEvent::new(header, data))
+            }
+            LogEventType::IncidentEvent => Event::IncidentEvent(RawEvent::new(header, data)),
+            LogEventType::HeartbeatLogEvent => {
+                Event::HeartbeatLogEvent(RawEvent::new(header, data))
+            }
             // IgnorableLogEvent not supported
             // RowsQueryLogEvent not supported
-            LogEventType::WriteRowsEventV2 => Event::WriteRowsEventV2(RawEvent {
-                header: header,
-                data: WriteRowsDataV2::read_from(&mut raw_data)?,
-            }),
-            LogEventType::UpdateRowsEventV2 => Event::UpdateRowsEventV2(RawEvent {
-                header: header,
-                data: UpdateRowsDataV2::read_from(&mut raw_data)?,
-            }),
-            LogEventType::DeleteRowsEventV2 => Event::DeleteRowsEventV2(RawEvent {
-                header: header,
-                data: DeleteRowsDataV2::read_from(&mut raw_data)?,
-            }),
-            LogEventType::GtidLogEvent => Event::GtidLogEvent(RawEvent {
-                header: header,
-                data: GtidLogData::read_from(&mut raw_data)?,
-            }),
-            LogEventType::AnonymousGtidLogEvent => Event::AnonymousGtidLogEvent(RawEvent {
-                header: header,
-                data: AnonymousGtidLogData::read_from(&mut raw_data)?,
-            }),
-            LogEventType::PreviousGtidsLogEvent => Event::PreviousGtidsLogEvent(RawEvent {
-                header: header,
-                data: PreviousGtidsLogData::read_from(&mut raw_data)?,
-            }),
+            LogEventType::WriteRowsEventV2 => Event::WriteRowsEventV2(RawEvent::new(header, data)),
+            LogEventType::UpdateRowsEventV2 => {
+                Event::UpdateRowsEventV2(RawEvent::new(header, data))
+            }
+            LogEventType::DeleteRowsEventV2 => {
+                Event::DeleteRowsEventV2(RawEvent::new(header, data))
+            }
+            LogEventType::GtidLogEvent => Event::GtidLogEvent(RawEvent::new(header, data)),
+            LogEventType::AnonymousGtidLogEvent => {
+                Event::AnonymousGtidLogEvent(RawEvent::new(header, data))
+            }
+            LogEventType::PreviousGtidsLogEvent => {
+                Event::PreviousGtidsLogEvent(RawEvent::new(header, data))
+            }
             // TransactionContextEvent not supported
             // ViewChangeEvent not supported
             // XaPrepareLogEvent not supported
@@ -563,10 +491,11 @@ mod tests {
         // the 3rd event is QueryEvent
         let qe = pv4.parse_event(input, true)?;
         let qe: QueryEvent = qe.unwrap().try_into()?;
+        let qe = qe.into_data()?;
         println!("{:#?}", qe);
-        dbg!(std::str::from_utf8(&qe.data.schema)?);
-        dbg!(std::str::from_utf8(&qe.data.query)?);
-        let vars = QueryStatusVars::read_from(&mut qe.data.status_vars.clone())?;
+        dbg!(std::str::from_utf8(&qe.schema)?);
+        dbg!(std::str::from_utf8(&qe.query)?);
+        let vars = QueryStatusVars::read_from(&mut qe.status_vars.clone())?;
         println!("{:#?}", vars);
         vars.iter().for_each(|v| match v {
             QueryStatusVar::Flags2Code(n) => {
@@ -607,10 +536,9 @@ mod tests {
         // 2nd event is RotateEvent
         let re = pv4.parse_event(input, true)?;
         let re: RotateEvent = re.unwrap().try_into()?;
+        let re = re.into_data()?;
         println!("{:#?}", re);
-        dbg!(String::from_utf8_lossy(
-            re.data.next_binlog_filename.as_ref()
-        ));
+        dbg!(String::from_utf8_lossy(re.next_binlog_filename.as_ref()));
         Ok(())
     }
 
@@ -626,6 +554,7 @@ mod tests {
         // 4th event
         let ive = pv4.parse_event(input, true)?;
         let ive: IntvarEvent = ive.unwrap().try_into()?;
+        let ive = ive.into_data()?;
         println!("{:#?}", ive);
         Ok(())
     }
@@ -674,8 +603,9 @@ mod tests {
         // 4th event
         let blqe = pv4.parse_event(input, true)?;
         let blqe: BeginLoadQueryEvent = blqe.unwrap().try_into()?;
+        let blqe = blqe.into_data()?;
         println!("{:#?}", blqe);
-        dbg!(String::from_utf8_lossy(blqe.data.block_data.as_ref()));
+        dbg!(String::from_utf8_lossy(blqe.block_data.as_ref()));
         Ok(())
     }
 
@@ -690,6 +620,7 @@ mod tests {
         // 5th event
         let elqe = pv4.parse_event(input, true)?;
         let elqe: ExecuteLoadQueryEvent = elqe.unwrap().try_into()?;
+        let elqe = elqe.into_data()?;
         println!("{:#?}", elqe);
         Ok(())
     }
@@ -704,6 +635,8 @@ mod tests {
         }
         // 5th event
         let re = pv4.parse_event(input, true)?;
+        let re: RandEvent = re.unwrap().try_into()?;
+        let re = re.into_data()?;
         println!("{:#?}", re);
         Ok(())
     }
@@ -719,6 +652,7 @@ mod tests {
         // 10th is Xid Event
         let xe = pv4.parse_event(input, true)?;
         let xe: XidEvent = xe.unwrap().try_into()?;
+        let xe = xe.into_data()?;
         println!("{:#?}", xe);
         Ok(())
     }
@@ -736,9 +670,10 @@ mod tests {
             match event_type {
                 LogEventType::UserVarEvent => {
                     let uve = pv4.parse_event(input, true)?;
-                    let mut uve: UserVarEvent = uve.unwrap().try_into()?;
+                    let uve: UserVarEvent = uve.unwrap().try_into()?;
+                    let mut uve = uve.into_data()?;
                     println!("{:#?}", uve);
-                    let uvv = UserVarValue::read_from(&mut uve.data.value)?;
+                    let uvv = UserVarValue::read_from(&mut uve.value)?;
                     println!("{:#?}", uvv);
                 }
                 _ => pv4.skip_event(input)?,
@@ -772,8 +707,9 @@ mod tests {
         // 4th event
         let tme = pv4.parse_event(input, true)?;
         let tme: TableMapEvent = tme.unwrap().try_into()?;
+        let tme = tme.into_data()?;
         println!("{:#?}", tme);
-        let tm = tme.data.into_table_map().unwrap();
+        let tm = tme.into_table_map().unwrap();
         println!("{:#?}", tm);
         Ok(())
     }
@@ -789,6 +725,7 @@ mod tests {
         // 7th event
         let dre = pv4.parse_event(input, true)?;
         let dre: DeleteRowsEventV1 = dre.unwrap().try_into()?;
+        let dre = dre.into_data()?;
         println!("{:#?}", dre);
         Ok(())
     }
@@ -804,6 +741,7 @@ mod tests {
         // 5th event
         let ure = pv4.parse_event(input, true)?;
         let ure: UpdateRowsEventV1 = ure.unwrap().try_into()?;
+        let ure = ure.into_data()?;
         println!("{:#?}", ure);
         Ok(())
     }
@@ -819,6 +757,7 @@ mod tests {
         // 3th event
         let wre = pv4.parse_event(input, true)?;
         let wre: WriteRowsEventV1 = wre.unwrap().try_into()?;
+        let wre = wre.into_data()?;
         println!("{:#?}", wre);
         Ok(())
     }
@@ -834,12 +773,14 @@ mod tests {
         // 8th is TableMapEvent
         let tme = pv4.parse_event(input, true)?;
         let tme: TableMapEvent = tme.unwrap().try_into()?;
-        let tm = tme.data.table_map().unwrap();
+        let tme = tme.into_data()?;
+        let tm = tme.table_map().unwrap();
         // 9th event is DeleteRowsEventV2
         let dre = pv4.parse_event(input, true)?;
         let dre: DeleteRowsEventV2 = dre.unwrap().try_into()?;
+        let dre = dre.into_data()?;
         println!("{:#?}", dre);
-        let delete_rows = dre.data.rows(&tm.col_metas).unwrap();
+        let delete_rows = dre.rows(&tm.col_metas).unwrap();
         dbg!(delete_rows);
         Ok(())
     }
@@ -855,12 +796,14 @@ mod tests {
         // 6th is TableMapEvent
         let tme = pv4.parse_event(input, true)?;
         let tme: TableMapEvent = tme.unwrap().try_into()?;
-        let tm = tme.data.table_map().unwrap();
+        let tme = tme.into_data()?;
+        let tm = tme.table_map().unwrap();
         // 7th event is UpdateRowsEventV2
         let ure = pv4.parse_event(input, true)?;
         let ure: UpdateRowsEventV2 = ure.unwrap().try_into()?;
+        let ure = ure.into_data()?;
         println!("{:#?}", ure);
-        let update_rows = ure.data.rows(&tm.col_metas).unwrap();
+        let update_rows = ure.rows(&tm.col_metas).unwrap();
         dbg!(update_rows);
         Ok(())
     }
@@ -876,12 +819,14 @@ mod tests {
         // 4th is TableMapEvent
         let tme = pv4.parse_event(input, true)?;
         let tme: TableMapEvent = tme.unwrap().try_into()?;
-        let tm = tme.data.table_map().unwrap();
+        let tme = tme.into_data()?;
+        let tm = tme.table_map().unwrap();
         // 5th event is WriteRowsEventV2
         let wre = pv4.parse_event(input, true)?;
         let wre: WriteRowsEventV2 = wre.unwrap().try_into()?;
+        let wre = wre.into_data()?;
         println!("{:#?}", wre);
-        let write_rows = wre.data.rows(&tm.col_metas).unwrap();
+        let write_rows = wre.rows(&tm.col_metas).unwrap();
         dbg!(write_rows);
         Ok(())
     }
@@ -895,6 +840,7 @@ mod tests {
         // 2nd event
         let gle = pv4.parse_event(input, true)?;
         let gle: GtidLogEvent = gle.unwrap().try_into()?;
+        let gle = gle.into_data()?;
         println!("{:#?}", gle);
         Ok(())
     }
@@ -908,6 +854,7 @@ mod tests {
         // 2nd event
         let agle = pv4.parse_event(input, true)?;
         let agle: AnonymousGtidLogEvent = agle.unwrap().try_into()?;
+        let agle = agle.into_data()?;
         println!("{:#?}", agle);
         Ok(())
     }
@@ -920,8 +867,9 @@ mod tests {
         // 1st event
         let pgle = pv4.parse_event(input, true)?;
         let pgle: PreviousGtidsLogEvent = pgle.unwrap().try_into()?;
+        let pgle = pgle.into_data()?;
         println!("{:#?}", pgle);
-        dbg!(pgle.data.gtid_set().unwrap());
+        dbg!(pgle.gtid_set().unwrap());
         Ok(())
     }
 
@@ -957,12 +905,14 @@ mod tests {
         }
         let tme = pv4.parse_event(input, false)?;
         let tme: TableMapEvent = tme.unwrap().try_into()?;
-        let tm = tme.data.into_table_map()?;
+        let tme = tme.into_data()?;
+        let tm = tme.into_table_map()?;
         dbg!(&tm);
         let wre = pv4.parse_event(input, false)?;
         let wre: WriteRowsEventV2 = wre.unwrap().try_into()?;
+        let wre = wre.into_data()?;
         dbg!(&wre);
-        let rows = wre.data.into_rows(&tm.col_metas)?;
+        let rows = wre.into_rows(&tm.col_metas)?;
         dbg!(rows);
         Ok(())
     }
@@ -978,12 +928,14 @@ mod tests {
         }
         let tme = pv4.parse_event(input, false)?;
         let tme: TableMapEvent = tme.unwrap().try_into()?;
-        let tm = tme.data.into_table_map()?;
+        let tme = tme.into_data()?;
+        let tm = tme.into_table_map()?;
         dbg!(&tm);
         let wre = pv4.parse_event(input, false)?;
         let wre: WriteRowsEventV2 = wre.unwrap().try_into()?;
+        let wre = wre.into_data()?;
         dbg!(&wre);
-        let rows = wre.data.into_rows(&tm.col_metas)?;
+        let rows = wre.into_rows(&tm.col_metas)?;
         dbg!(rows);
         Ok(())
     }
@@ -999,12 +951,14 @@ mod tests {
         }
         let tme = pv4.parse_event(input, false)?;
         let tme: TableMapEvent = tme.unwrap().try_into()?;
-        let tm = tme.data.into_table_map()?;
+        let tme = tme.into_data()?;
+        let tm = tme.into_table_map()?;
         dbg!(&tm);
         let wre = pv4.parse_event(input, false)?;
         let wre: WriteRowsEventV2 = wre.unwrap().try_into()?;
+        let wre = wre.into_data()?;
         dbg!(&wre);
-        let rows = wre.data.into_rows(&tm.col_metas)?;
+        let rows = wre.into_rows(&tm.col_metas)?;
         dbg!(rows);
         Ok(())
     }
@@ -1020,12 +974,14 @@ mod tests {
         }
         let tme = pv4.parse_event(input, false)?;
         let tme: TableMapEvent = tme.unwrap().try_into()?;
-        let tm = tme.data.into_table_map()?;
+        let tme = tme.into_data()?;
+        let tm = tme.into_table_map()?;
         dbg!(&tm);
         let wre = pv4.parse_event(input, false)?;
         let wre: WriteRowsEventV2 = wre.unwrap().try_into()?;
+        let wre = wre.into_data()?;
         dbg!(&wre);
-        let rows = wre.data.into_rows(&tm.col_metas)?;
+        let rows = wre.into_rows(&tm.col_metas)?;
         dbg!(rows);
         Ok(())
     }
@@ -1041,12 +997,14 @@ mod tests {
         }
         let tme = pv4.parse_event(input, false)?;
         let tme: TableMapEvent = tme.unwrap().try_into()?;
-        let tm = tme.data.into_table_map()?;
+        let tme = tme.into_data()?;
+        let tm = tme.into_table_map()?;
         dbg!(&tm);
         let wre = pv4.parse_event(input, false)?;
         let wre: WriteRowsEventV2 = wre.unwrap().try_into()?;
+        let wre = wre.into_data()?;
         dbg!(&wre);
-        let rows = wre.data.into_rows(&tm.col_metas)?;
+        let rows = wre.into_rows(&tm.col_metas)?;
         dbg!(rows);
         Ok(())
     }
@@ -1063,12 +1021,14 @@ mod tests {
         }
         let tme = pv4.parse_event(input, false)?;
         let tme: TableMapEvent = tme.unwrap().try_into()?;
-        let tm = tme.data.into_table_map()?;
+        let tme = tme.into_data()?;
+        let tm = tme.into_table_map()?;
         dbg!(&tm);
         let wre = pv4.parse_event(input, false)?;
         let wre: WriteRowsEventV2 = wre.unwrap().try_into()?;
+        let wre = wre.into_data()?;
         dbg!(&wre);
-        let mut rows = wre.data.into_rows(&tm.col_metas)?;
+        let mut rows = wre.into_rows(&tm.col_metas)?;
         dbg!(&rows);
         let row = rows.rows.pop().unwrap().0;
         assert_eq!(&BinlogColumnValue::Long(1), &row[0]);

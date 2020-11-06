@@ -19,6 +19,12 @@ where
     fn read_from(input: &mut Bytes) -> Result<Self>;
 }
 
+impl ReadFromBytes for () {
+    fn read_from(_input: &mut Bytes) -> Result<Self> {
+        Ok(())
+    }
+}
+
 pub trait ReadBytesExt {
     fn read_u8(&mut self) -> Result<u8>;
 

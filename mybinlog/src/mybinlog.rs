@@ -5,7 +5,7 @@ use async_net::TcpStream;
 use mybin_async::conn::{Conn, ConnOpts};
 use mybin_core::binlog::Event;
 use mybin_core::col::{ColumnDefinition, ColumnMetas};
-use mybin_core::sql::{self, SqlCollection};
+use mybin_core::sql::{PreparedSql, SqlCollection};
 use opts::{Command, Opts};
 // use smol::stream::StreamExt;
 use regex::Regex;
@@ -102,9 +102,10 @@ async fn print_dmls(
     'outer: while let Some(event) = binlog_stream.next_event().await? {
         match event {
             Event::TableMapEvent(raw) => {
-                let tbl_id = raw.data.table_id;
+                let data = raw.into_data()?;
+                let tbl_id = data.table_id;
                 if !tbls.contains_key(&tbl_id) && !skip_tbls.contains(&tbl_id) {
-                    let tm = raw.data.into_table_map()?;
+                    let tm = data.into_table_map()?;
                     if let Some(re) = database_filter.as_ref() {
                         if !re.is_match(&tm.schema_name) {
                             skip_tbls.insert(tbl_id);
@@ -131,39 +132,70 @@ async fn print_dmls(
                 }
             }
             Event::DeleteRowsEventV2(raw) => {
-                let tbl_id = raw.data.table_id;
+                let data = raw.into_data()?;
+                let tbl_id = data.table_id;
                 if skip_tbls.contains(&tbl_id) {
                     continue;
                 }
                 if let Some(tm) = tbls.get(&tbl_id) {
-                    let rows = raw.data.into_rows(&tm.col_metas)?;
-                    let del_sql = sql::delete(tm.db.clone(), tm.tbl.clone(), rows, &tm.col_defs);
+                    let rows = data.into_rows(&tm.col_metas)?;
+                    let del_sql =
+                        PreparedSql::delete(tm.db.clone(), tm.tbl.clone(), rows, &tm.col_defs);
                     for s in del_sql.sql_list() {
                         println!("{}", s);
                         n_rows += 1;
-                        if n_rows >= limit {
+                        if limit != 0 && n_rows >= limit {
                             break 'outer;
                         }
+                    }
+                }
+            }
+            Event::UpdateRowsEventV2(raw) => {
+                let next_pos = raw.header.next_pos;
+                let data = raw.into_data()?;
+                let tbl_id = data.table_id;
+                if skip_tbls.contains(&tbl_id) {
+                    continue;
+                }
+                if let Some(tm) = tbls.get(&tbl_id) {
+                    let rows = data.into_rows(&tm.col_metas)?;
+                    match PreparedSql::update(tm.db.clone(), tm.tbl.clone(), rows, &tm.col_defs) {
+                        Some(upd_sql) => {
+                            for s in upd_sql.sql_list() {
+                                println!("{}", s);
+                                n_rows += 1;
+                                if limit != 0 && n_rows >= limit {
+                                    break 'outer;
+                                }
+                            }
+                        }
+                        None => println!("-- Cannot generate update SQL for table {}.{} because no key column found. next_offset={}", tm.db, tm.tbl, next_pos),
                     }
                 }
             }
             Event::WriteRowsEventV2(raw) => {
-                let tbl_id = raw.data.table_id;
+                let data = raw.into_data()?;
+                let tbl_id = data.table_id;
                 if skip_tbls.contains(&tbl_id) {
                     continue;
                 }
                 if let Some(tm) = tbls.get(&tbl_id) {
-                    let rows = raw.data.into_rows(&tm.col_metas)?;
-                    let ins_sql = sql::insert(tm.db.clone(), tm.tbl.clone(), rows, &tm.col_defs);
+                    let rows = data.into_rows(&tm.col_metas)?;
+                    let ins_sql =
+                        PreparedSql::insert(tm.db.clone(), tm.tbl.clone(), rows, &tm.col_defs);
                     for s in ins_sql.sql_list() {
                         println!("{}", s);
                         n_rows += 1;
-                        if n_rows >= limit {
+                        if limit != 0 && n_rows >= limit {
                             break 'outer;
                         }
                     }
                 }
             }
+            // Event::QueryEvent(qry) => {
+            //     let query = String::from_utf8_lossy(qry.data.query.bytes());
+            //     println!("{}", query);
+            // }
             Event::RotateEvent(_) => {
                 // when log file rotated, the table id cache must be reset
                 tbls.clear();
