@@ -234,6 +234,7 @@ impl UpdateRowsV2 {
                     j,
                     !bitmap::index(before_null_bitmap.as_ref(), i as usize),
                 );
+                j += 1;
             }
             let before_row =
                 LogRow::read_from(input, n_cols as usize, &before_col_bitmap[..], col_metas)?;
@@ -252,6 +253,7 @@ impl UpdateRowsV2 {
                     j,
                     !bitmap::index(after_null_bitmap.as_ref(), i as usize),
                 );
+                j += 1;
             }
             let after_row =
                 LogRow::read_from(input, n_cols as usize, &after_col_bitmap[..], col_metas)?;
@@ -267,6 +269,7 @@ impl UpdateRowsV2 {
     }
 }
 
+/// combine before row and after row
 #[derive(Debug, Clone)]
 pub struct UpdateRow(pub Vec<BinlogColumnValue>, pub Vec<BinlogColumnValue>);
 

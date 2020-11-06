@@ -1,4 +1,4 @@
-use crate::binlog::rows_v2::RowsV2;
+use crate::binlog::rows_v2::{RowsV2, UpdateRowsV2};
 use crate::bitmap;
 use crate::col::{ColumnDefinition, ColumnFlags, ColumnType};
 use crate::stmt::StmtColumnValue;
@@ -60,6 +60,79 @@ impl PreparedSql {
     pub fn sql_stmt(&self) -> Cow<String> {
         Cow::Owned(self.sql_fragments.concat())
     }
+
+    pub fn delete(
+        db: SmolStr,
+        tbl: SmolStr,
+        rowsv2: RowsV2,
+        col_defs: &[ColumnDefinition],
+    ) -> PreparedSql {
+        let col_defs = filter_col_defs(rowsv2.present_bitmap.bytes(), col_defs);
+        let sql_fragments = delete_sql_fragments(&db, &tbl, &col_defs);
+        let mut params = Vec::with_capacity(rowsv2.rows.len());
+        for cols in rowsv2.rows {
+            let param: Vec<StmtColumnValue> = col_defs
+                .iter()
+                .zip(cols.0.into_iter())
+                .filter(|(cn, _)| cn.key)
+                .map(|(cn, row)| StmtColumnValue::from((row, cn.unsigned)))
+                .collect();
+            params.push(param);
+        }
+        Self::new(db, sql_fragments, params)
+    }
+
+    pub fn insert(
+        db: SmolStr,
+        tbl: SmolStr,
+        rowsv2: RowsV2,
+        col_defs: &[ColumnDefinition],
+    ) -> PreparedSql {
+        let col_defs = filter_col_defs(rowsv2.present_bitmap.bytes(), col_defs);
+        let sql_fragments = insert_sql_fragments(&db, &tbl, &col_defs);
+        let mut params = Vec::with_capacity(rowsv2.rows.len());
+        for cols in rowsv2.rows {
+            let param: Vec<StmtColumnValue> = col_defs
+                .iter()
+                .zip(cols.0.into_iter())
+                .map(|(cn, row)| StmtColumnValue::from((row, cn.unsigned)))
+                .collect();
+            params.push(param);
+        }
+        Self::new(db, sql_fragments, params)
+    }
+
+    /// only return sql if key column exists
+    pub fn update(
+        db: SmolStr,
+        tbl: SmolStr,
+        rowsv2: UpdateRowsV2,
+        col_defs: &[ColumnDefinition],
+    ) -> Option<PreparedSql> {
+        if col_defs.iter().all(|def| {
+            !def.flags.contains(ColumnFlags::PRIMARY_KEY)
+                && !def.flags.contains(ColumnFlags::UNIQUE_KEY)
+        }) {
+            return None;
+        }
+        let before_col_defs = filter_col_defs(rowsv2.before_present_bitmap.bytes(), col_defs);
+        let after_col_defs = filter_col_defs(rowsv2.after_present_bitmap.bytes(), col_defs);
+        let sql_fragments = update_sql_fragments(&db, &tbl, &before_col_defs, &after_col_defs);
+        let mut params = Vec::new();
+        for cols in rowsv2.rows {
+            let mut param = Vec::new();
+            for (def, row) in after_col_defs.iter().zip(cols.1.into_iter()) {
+                param.push(StmtColumnValue::from((row, def.unsigned)));
+            }
+            for (def, row) in before_col_defs.iter().zip(cols.0.into_iter()) {
+                if def.key {
+                    param.push(StmtColumnValue::from((row, def.unsigned)));
+                }
+            }
+            params.push(param);
+        }
+        Some(Self::new(db, sql_fragments, params))
+    }
 }
 
 impl SqlCollection for PreparedSql {
@@ -90,28 +163,6 @@ impl SqlCollection for PreparedSql {
     }
 }
 
-pub fn delete(
-    db: SmolStr,
-    tbl: SmolStr,
-    rows: RowsV2,
-    col_defs: &[ColumnDefinition],
-) -> PreparedSql {
-    let col_defs = filter_col_defs(rows.present_bitmap.bytes(), col_defs);
-    let sql_fragments = delete_sql_fragments(&db, &tbl, &col_defs);
-    prepared_sql(db, rows, &col_defs, sql_fragments, true)
-}
-
-pub fn insert(
-    db: SmolStr,
-    tbl: SmolStr,
-    rows: RowsV2,
-    col_defs: &[ColumnDefinition],
-) -> PreparedSql {
-    let col_defs = filter_col_defs(rows.present_bitmap.bytes(), col_defs);
-    let sql_fragments = insert_sql_fragments(&db, &tbl, &col_defs);
-    prepared_sql(db, rows, &col_defs, sql_fragments, false)
-}
-
 fn delete_sql_fragments(db: &SmolStr, tbl: &SmolStr, col_defs: &[ColDef]) -> Vec<String> {
     let mut sql_fragments = Vec::new();
     sql_fragments.push(format!("DELETE FROM `{}`.`{}` WHERE ", db, tbl));
@@ -127,8 +178,46 @@ fn delete_sql_fragments(db: &SmolStr, tbl: &SmolStr, col_defs: &[ColDef]) -> Vec
                     .push_str(&format!("`{}` = ", cf.name));
             }
             sql_fragments.push("?".to_owned());
+            idx += 1;
         }
-        idx += 1;
+    }
+    sql_fragments
+}
+
+fn update_sql_fragments(
+    db: &SmolStr,
+    tbl: &SmolStr,
+    before_col_defs: &[ColDef],
+    after_col_defs: &[ColDef],
+) -> Vec<String> {
+    let mut sql_fragments = Vec::new();
+    sql_fragments.push(format!("UPDATE `{}`.`{}` SET ", db, tbl));
+    for (idx, cf) in after_col_defs.iter().enumerate() {
+        if idx > 0 {
+            sql_fragments.push(format!(", `{}` = ", cf.name));
+        } else {
+            sql_fragments
+                .last_mut()
+                .unwrap()
+                .push_str(&format!("`{}` = ", cf.name));
+        }
+        sql_fragments.push("?".to_owned());
+    }
+    sql_fragments.push(format!(" WHERE "));
+    let mut idx = 0;
+    for cf in before_col_defs {
+        if cf.key {
+            if idx > 0 {
+                sql_fragments.push(format!(" AND `{}` = ", cf.name));
+            } else {
+                sql_fragments
+                    .last_mut()
+                    .unwrap()
+                    .push_str(&format!("`{}` = ", cf.name));
+            }
+            sql_fragments.push("?".to_owned());
+            idx += 1;
+        }
     }
     sql_fragments
 }
@@ -168,26 +257,6 @@ fn filter_col_defs(present_bitmap: &[u8], col_defs: &[ColumnDefinition]) -> Vec<
                 || def.flags.contains(ColumnFlags::UNIQUE_KEY),
         })
         .collect()
-}
-
-fn prepared_sql(
-    db: SmolStr,
-    drs: RowsV2,
-    col_defs: &[ColDef],
-    sql_fragments: Vec<String>,
-    key_filter: bool,
-) -> PreparedSql {
-    let mut params = Vec::with_capacity(drs.rows.len());
-    for cols in drs.rows {
-        let param: Vec<StmtColumnValue> = col_defs
-            .iter()
-            .zip(cols.0.into_iter())
-            .filter(|(cn, _)| !key_filter || cn.key)
-            .map(|(cn, row)| StmtColumnValue::from((row, cn.unsigned)))
-            .collect();
-        params.push(param);
-    }
-    PreparedSql::new(db, sql_fragments, params)
 }
 
 #[derive(Debug, Clone)]

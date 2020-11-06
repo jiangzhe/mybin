@@ -28,7 +28,7 @@ pub enum Command {
         table_filter: Option<String>,
         #[structopt(short, long)]
         block: bool,
-        #[structopt(short, long)]
+        #[structopt(short, long, default_value = "0")]
         limit: usize,
     },
     List,

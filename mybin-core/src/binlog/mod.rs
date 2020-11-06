@@ -32,6 +32,7 @@ pub use rotate::RotateData;
 use rows_v1::{DeleteRowsDataV1, UpdateRowsDataV1, WriteRowsDataV1};
 use rows_v2::{DeleteRowsDataV2, UpdateRowsDataV2, WriteRowsDataV2};
 use std::convert::TryFrom;
+use std::marker::PhantomData;
 use table_map::TableMapData;
 use user_var::UserVarData;
 use xid::XidData;
@@ -223,7 +224,22 @@ pub struct RawEventV1<D> {
 #[derive(Debug, Clone)]
 pub struct RawEvent<D> {
     pub header: EventHeader,
-    pub data: D,
+    pub data: Bytes,
+    _marker: PhantomData<D>,
+}
+
+impl<D: ReadFromBytes> RawEvent<D> {
+    pub fn new(header: EventHeader, data: Bytes) -> Self {
+        Self {
+            header,
+            data,
+            _marker: PhantomData,
+        }
+    }
+
+    pub fn into_data(mut self: Self) -> Result<D> {
+        D::read_from(&mut self.data)
+    }
 }
 
 pub type StartEventV3 = RawEvent<StartData>;
