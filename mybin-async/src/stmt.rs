@@ -252,6 +252,52 @@ mod tests {
     }
 
     #[smol_potat::test]
+    async fn test_stmt_prepare_update() {
+        let mut conn = new_conn().await;
+        conn.query()
+            .exec("create database if not exists stmttest2")
+            .await
+            .unwrap();
+        log::debug!("database created");
+        conn.init_db("stmttest2").await.unwrap();
+        log::debug!("database changed");
+        conn.query()
+            .exec("create table if not exists stmt_prp_upd (id int)")
+            .await
+            .unwrap();
+        log::debug!("table created");
+        
+        let mut ins = conn
+            .stmt()
+            .prepare("insert into stmt_prp_upd (id) values (?)")
+            .await
+            .unwrap();
+        log::debug!("ins stmt prepared");
+        ins.exec(vec![StmtColumnValue::new_int(1)]).await.unwrap();
+        ins.close().await.unwrap();
+
+        let mut upd = conn
+            .stmt()
+            .prepare("update stmt_prp_upd set id = id + ? where id = ?")
+            .await
+            .unwrap();
+        log::debug!("upd stmt prepared");
+        upd.exec(vec![StmtColumnValue::new_int(1), StmtColumnValue::new_int(1)]).await.unwrap();
+        upd.close().await.unwrap();
+
+        let mut sel = conn.query().qry("select * from stmt_prp_upd").await.unwrap();
+        while let Ok(Some(row)) = sel.next_row().await {
+            println!("row={:?}", row);
+        }
+
+        conn.query()
+        .exec("drop database if exists stmttest2")
+        .await
+        .unwrap();
+        log::debug!("database dropped");
+    }
+
+    #[smol_potat::test]
     async fn test_stmt_table_and_column() {
         use bytes::Bytes;
         use mybin_core::resultset::{MyBit, MyI24, MyU24, MyYear};
