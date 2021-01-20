@@ -122,7 +122,7 @@ impl StmtColumnValue {
         match &self.val {
             BinaryColumnValue::Null => (Cow::Borrowed(SQL_NULL), false),
             BinaryColumnValue::NewDecimal(bs) => {
-                let s = std::str::from_utf8(bs.bytes()).unwrap();
+                let s = std::str::from_utf8(bs.chunk()).unwrap();
                 (Cow::Borrowed(s), false)
             }
             BinaryColumnValue::Tiny(n) => {
@@ -218,14 +218,14 @@ impl StmtColumnValue {
             }
             BinaryColumnValue::Year(n) => (Cow::Owned(format!("{:04}", n)), false),
             BinaryColumnValue::VarString(bs) | BinaryColumnValue::String(bs) => {
-                if !bs.bytes().contains(&b'\'') {
+                if !bs.chunk().contains(&b'\'') {
                     (
-                        Cow::Borrowed(std::str::from_utf8(bs.bytes()).unwrap()),
+                        Cow::Borrowed(std::str::from_utf8(bs.chunk()).unwrap()),
                         true,
                     )
                 } else {
                     let mut s = String::new();
-                    for &b in bs.bytes() {
+                    for &b in bs.chunk() {
                         if b == b'\'' {
                             s.push('\'');
                             s.push('\'');
@@ -239,7 +239,7 @@ impl StmtColumnValue {
             BinaryColumnValue::Bit(bs) => {
                 // bs at most 8 bytes
                 let mut n = 0_u64;
-                for (i, &b) in bs.bytes().iter().enumerate() {
+                for (i, &b) in bs.chunk().iter().enumerate() {
                     let offset = i << 3;
                     n += (b as u64) << offset;
                 }
@@ -251,7 +251,7 @@ impl StmtColumnValue {
                 encoded[0] = b'x';
                 encoded[1] = b'\'';
                 let last = encoded.len() - 1;
-                hex::encode_to_slice(bs.bytes(), &mut encoded[2..last]).unwrap();
+                hex::encode_to_slice(bs.chunk(), &mut encoded[2..last]).unwrap();
                 encoded[last] = b'\'';
                 // won't fail to be converted to string
                 (Cow::Owned(String::from_utf8(encoded).unwrap()), false)
@@ -508,7 +508,7 @@ impl StmtColumnValue {
     }
 
     pub fn new_mybit(bits: MyBit) -> Self {
-        Self::new_bit(Vec::from(bits.0.bytes()))
+        Self::new_bit(Vec::from(bits.0.chunk()))
     }
 
     pub fn new_blob(bs: impl Into<Bytes>) -> Self {
@@ -604,7 +604,7 @@ impl<'c> From<(BinlogColumnValue, bool)> for StmtColumnValue {
             ),
             BinlogColumnValue::Year(n) => Self::new_year(n),
             // Varchar(Bytes),
-            BinlogColumnValue::Bit(bs) => Self::new_bit(Vec::from(bs.bytes())),
+            BinlogColumnValue::Bit(bs) => Self::new_bit(Vec::from(bs.chunk())),
             BinlogColumnValue::NewDecimal(d) => Self::new_mydecimal(d),
             BinlogColumnValue::Enum(e) => Self::new_unsigned_bigint(e.to_u64()),
             BinlogColumnValue::Blob(bs) => Self::new_blob(bs),

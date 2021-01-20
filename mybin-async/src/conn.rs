@@ -120,7 +120,7 @@ where
         let seq = self.pkt_nr;
         let _ = self.stream.write_all(std::slice::from_ref(&seq)).await?;
         // 3. <len> bytes payload
-        let _ = self.stream.write_all(payload.bytes()).await?;
+        let _ = self.stream.write_all(payload.chunk()).await?;
         // increment pkt_nr at end
         self.pkt_nr += 1;
         Ok(())
@@ -169,12 +169,12 @@ where
         log::debug!(
             "protocol version: {}, server version: {}, connection_id: {}",
             handshake.protocol_version,
-            String::from_utf8_lossy(handshake.server_version.bytes()),
+            String::from_utf8_lossy(handshake.server_version.chunk()),
             handshake.connection_id,
         );
         log::debug!(
             "auth_plugin={}, auth_data_1={:?}, auth_data_2={:?}",
-            String::from_utf8_lossy(handshake.auth_plugin_name.bytes()),
+            String::from_utf8_lossy(handshake.auth_plugin_name.chunk()),
             handshake.auth_plugin_data_1,
             handshake.auth_plugin_data_2
         );
@@ -226,13 +226,13 @@ where
                 return Err(Error::PacketError(format!(
                     "error_code: {}, error_message: {}",
                     err.error_code,
-                    String::from_utf8_lossy(err.error_message.bytes()),
+                    String::from_utf8_lossy(err.error_message.chunk()),
                 )))
             }
             HandshakeMessage::Switch(switch) => {
                 log::debug!(
                     "switch auth_plugin={}, auth_data={:?}",
-                    String::from_utf8_lossy(switch.plugin_name.bytes()),
+                    String::from_utf8_lossy(switch.plugin_name.chunk()),
                     switch.auth_plugin_data
                 );
                 unimplemented!();
@@ -325,7 +325,7 @@ where
         let cmd = ComStatistics::new();
         self.send_msg(cmd, true).await?;
         let msg = self.recv_msg().await?;
-        Ok(String::from_utf8(Vec::from(msg.bytes()))?)
+        Ok(String::from_utf8(Vec::from(msg.chunk()))?)
     }
 
     /// triggers a dump on internal debug info to stdout of the mysql server
@@ -645,7 +645,7 @@ pub(crate) mod tests {
     async fn test_init_db_fail() {
         let mut conn = new_conn().await;
         let fail = conn.init_db("not_exists").await;
-        dbg!(fail.unwrap_err())
+        dbg!(fail.unwrap_err());
     }
 
     #[smol_potat::test]
@@ -714,7 +714,7 @@ pub(crate) mod tests {
             .unwrap()
             .unwrap();
         let conn_id_bytes = conn_id_row.pop().unwrap().unwrap();
-        let conn_id: u32 = String::from_utf8_lossy(conn_id_bytes.bytes())
+        let conn_id: u32 = String::from_utf8_lossy(conn_id_bytes.chunk())
             .parse()
             .unwrap();
         log::debug!("connection_id={}", conn_id);

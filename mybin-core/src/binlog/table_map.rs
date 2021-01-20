@@ -109,11 +109,11 @@ impl TryFrom<RawTableMap> for TableMap {
     fn try_from(raw: RawTableMap) -> crate::error::Result<Self> {
         let schema_name = SmolStr::from(String::from_utf8(Vec::from(raw.schema_name.as_ref()))?);
         let table_name = SmolStr::from(String::from_utf8(Vec::from(raw.table_name.as_ref()))?);
-        let null_bitmap = Vec::from(raw.null_bitmap.bytes());
+        let null_bitmap = Vec::from(raw.null_bitmap.chunk());
         let col_metas = ColumnMetas::read_from(
             &mut raw.col_meta_defs.clone(),
             raw.col_cnt as usize,
-            raw.col_defs.bytes(),
+            raw.col_defs.chunk(),
         )?;
         Ok(TableMap {
             schema_name,

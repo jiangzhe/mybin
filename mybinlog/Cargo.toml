@@ -9,14 +9,15 @@ path = "src/mybinlog.rs"
 
 [dependencies]
 anyhow = "1.0"
-async-net = "1.2"
-bytes = "0.5"
-env_logger = "0.7"
+async-net = "1.5"
+bytes = "1.0"
+env_logger = "0.8"
 log = "0.4"
 regex = "1"
-smol = "1.0"
+smol = "1.2.5"
 smol_str = "0.1"
 structopt = "0.3"
+async-executor = "1.4"
 
 [dependencies.mybin-async]
 path = "../mybin-async"
@@ -27,4 +28,4 @@ path = "../mybin-core"
 version = "0.1.0"
 
 [dev-dependencies]
-smol-potat = "0.5"
+smol-potat = "1.1"

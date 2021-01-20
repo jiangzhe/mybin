@@ -17,7 +17,7 @@ macro_rules! try_from_text_column_value {
                     match value {
                         None => Ok(None),
                         Some(bs) => {
-                            let s = std::str::from_utf8(bs.bytes())?;
+                            let s = std::str::from_utf8(bs.chunk())?;
                             Ok(Some(s.parse()?))
                         }
                     }

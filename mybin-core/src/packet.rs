@@ -228,7 +228,7 @@ mod tests {
 
     #[test]
     fn test_packet() {
-        let mut input = (&PACKET_DATA[..]).to_bytes();
+        let mut input = Bytes::copy_from_slice(&PACKET_DATA[..]);
         let pkt = Packet::read_from(&mut input).unwrap();
         dbg!(pkt);
     }
@@ -236,7 +236,7 @@ mod tests {
     #[test]
     fn test_ok_packet() {
         let input: Vec<u8> = vec![0, 0, 0, 2, 0, 0, 0];
-        let mut input = (&input[..]).to_bytes();
+        let mut input = Bytes::copy_from_slice(&input[..]);
         let ok = OkPacket::read_from(&mut input, &CapabilityFlags::PROTOCOL_41).unwrap();
         dbg!(ok);
     }
@@ -258,7 +258,7 @@ mod tests {
             101, 32, 114, 101, 97, 100, 32, 102, 114, 111, 109, 32, 39, 46, 47, 109, 121, 115, 113,
             108, 45, 98, 105, 110, 46, 48, 48, 48, 48, 48, 49, 39, 32, 97, 116, 32, 49, 50, 51, 46,
         ];
-        let mut input = (&input[..]).to_bytes();
+        let mut input = Bytes::copy_from_slice(&input[..]);
         let err = ErrPacket::read_from(&mut input, &CapabilityFlags::PROTOCOL_41, true).unwrap();
         dbg!(err);
     }

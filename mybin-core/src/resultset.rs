@@ -130,7 +130,7 @@ impl FromColumnValue<TextColumnValue> for Option<NaiveDateTime> {
         match value {
             None => Ok(None),
             Some(bs) => {
-                let s = std::str::from_utf8(bs.bytes())?;
+                let s = std::str::from_utf8(bs.chunk())?;
                 let ts = NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
                     .or_else(|_| NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f"))?;
                 Ok(Some(ts))
@@ -146,7 +146,7 @@ impl FromColumnValue<TextColumnValue> for Option<bool> {
         match value {
             None => Ok(None),
             Some(bs) => {
-                let s = std::str::from_utf8(bs.bytes())?;
+                let s = std::str::from_utf8(bs.chunk())?;
                 let v: u8 = s.parse()?;
                 Ok(Some(v == 1))
             }
@@ -234,7 +234,7 @@ impl FromColumnValue<BinaryColumnValue> for Option<BigDecimal> {
         match value {
             BinaryColumnValue::Null => Ok(None),
             BinaryColumnValue::NewDecimal(bs) => {
-                let s = std::str::from_utf8(bs.bytes())?;
+                let s = std::str::from_utf8(bs.chunk())?;
                 Ok(Some(s.parse()?))
             }
             _ => Err(Error::column_type_mismatch("BigDecimal", &value)),
@@ -272,7 +272,7 @@ impl FromColumnValue<TextColumnValue> for Option<MyI24> {
         match value {
             None => Ok(None),
             Some(bs) => {
-                let s = std::str::from_utf8(bs.bytes())?;
+                let s = std::str::from_utf8(bs.chunk())?;
                 let n: i32 = s.parse()?;
                 Ok(Some(MyI24(n)))
             }
@@ -304,7 +304,7 @@ impl FromColumnValue<TextColumnValue> for Option<MyU24> {
         match value {
             None => Ok(None),
             Some(bs) => {
-                let s = std::str::from_utf8(bs.bytes())?;
+                let s = std::str::from_utf8(bs.chunk())?;
                 let n: u32 = s.parse()?;
                 Ok(Some(MyU24(n)))
             }
@@ -334,7 +334,7 @@ impl FromColumnValue<TextColumnValue> for Option<MyYear> {
         match value {
             None => Ok(None),
             Some(bs) => {
-                let s = std::str::from_utf8(bs.bytes())?;
+                let s = std::str::from_utf8(bs.chunk())?;
                 let n: u16 = s.parse()?;
                 Ok(Some(MyYear(n)))
             }
@@ -351,7 +351,7 @@ impl FromColumnValue<BinaryColumnValue> for Option<String> {
             BinaryColumnValue::Blob(bs)
             | BinaryColumnValue::VarString(bs)
             | BinaryColumnValue::String(bs) => {
-                let s = String::from_utf8(Vec::from(bs.bytes()))?;
+                let s = String::from_utf8(Vec::from(bs.chunk()))?;
                 Ok(Some(s))
             }
             _ => Err(Error::column_type_mismatch("String", &value)),
@@ -366,7 +366,7 @@ impl FromColumnValue<TextColumnValue> for Option<String> {
         match value {
             None => Ok(None),
             Some(bs) => {
-                let s = String::from_utf8(Vec::from(bs.bytes()))?;
+                let s = String::from_utf8(Vec::from(bs.chunk()))?;
                 Ok(Some(s))
             }
         }

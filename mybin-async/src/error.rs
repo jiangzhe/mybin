@@ -33,11 +33,11 @@ pub enum Error {
 impl From<ErrPacket> for Error {
     fn from(err: ErrPacket) -> Error {
         use bytes::Buf;
-        let sql_state = match String::from_utf8(Vec::from(err.sql_state.bytes())) {
+        let sql_state = match String::from_utf8(Vec::from(err.sql_state.chunk())) {
             Ok(sql_state) => sql_state,
             Err(e) => return e.into(),
         };
-        let error_message = match String::from_utf8(Vec::from(err.error_message.bytes())) {
+        let error_message = match String::from_utf8(Vec::from(err.error_message.chunk())) {
             Ok(error_message) => error_message,
             Err(e) => return e.into(),
         };
