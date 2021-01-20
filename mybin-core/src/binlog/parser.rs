@@ -260,36 +260,36 @@ mod tests {
 
     #[test]
     fn test_binlog_version() -> Result<()> {
-        let mut input = BINLOG_5_7_30;
-        let input = &mut input.to_bytes();
-        let bv = BinlogVersion::read_from(input)?;
+        let input = BINLOG_5_7_30;
+        let mut input = Bytes::copy_from_slice(&input[..]);
+        let bv = BinlogVersion::read_from(&mut input)?;
         assert_eq!(BinlogVersion::V4, bv);
 
-        let mut input = &b"\xfebin"[..];
-        let input = &mut input.to_bytes();
-        let fail = BinlogVersion::read_from(input);
+        let input = &b"\xfebin"[..];
+        let mut input = Bytes::copy_from_slice(&input[..]);
+        let fail = BinlogVersion::read_from(&mut input);
         dbg!(fail.unwrap_err());
         Ok(())
     }
 
     #[test]
     fn test_binlog_no_checksum() -> Result<()> {
-        let mut input = BINLOG_NO_CHECKSUM;
-        let input = &mut input.to_bytes();
-        BinlogVersion::read_from(input)?;
-        EventHeader::read_from(input)?;
-        let fdd = FormatDescriptionData::read_from(input)?;
+        let input = BINLOG_NO_CHECKSUM;
+        let mut input = Bytes::copy_from_slice(&input[..]);
+        BinlogVersion::read_from(&mut input)?;
+        EventHeader::read_from(&mut input)?;
+        let fdd = FormatDescriptionData::read_from(&mut input)?;
         println!("{:#?}", fdd);
         Ok(())
     }
 
     #[test]
     fn test_format_description_event_5_5() -> Result<()> {
-        let mut input = BINLOG_5_5_50;
-        let input = &mut input.to_bytes();
-        BinlogVersion::read_from(input)?;
-        let header = EventHeader::read_from(input)?;
-        let fdd = FormatDescriptionData::read_from(input)?;
+        let input = BINLOG_5_5_50;
+        let mut input = Bytes::copy_from_slice(&input[..]);
+        BinlogVersion::read_from(&mut input)?;
+        let header = EventHeader::read_from(&mut input)?;
+        let fdd = FormatDescriptionData::read_from(&mut input)?;
         assert_eq!(
             LogEventType::FormatDescriptionEvent,
             LogEventType::from(header.type_code)
@@ -351,11 +351,11 @@ mod tests {
 
     #[test]
     fn test_format_description_event_5_7() -> Result<()> {
-        let mut input = BINLOG_5_7_30;
-        let input = &mut input.to_bytes();
-        BinlogVersion::read_from(input)?;
-        let header = EventHeader::read_from(input)?;
-        let fdd = FormatDescriptionData::read_from(input)?;
+        let input = BINLOG_5_7_30;
+        let mut input = Bytes::copy_from_slice(&input[..]);
+        BinlogVersion::read_from(&mut input)?;
+        let header = EventHeader::read_from(&mut input)?;
+        let fdd = FormatDescriptionData::read_from(&mut input)?;
         assert_eq!(
             LogEventType::FormatDescriptionEvent,
             LogEventType::from(header.type_code)
@@ -482,14 +482,14 @@ mod tests {
     #[test]
     fn test_query_event() -> Result<()> {
         use crate::binlog::query::{Flags2Code, QueryStatusVar, QueryStatusVars, SqlModeCode};
-        let mut input = BINLOG_QUERY_EVENT;
-        let input = &mut input.to_bytes();
-        let pv4 = ParserV4::from_binlog_file(input)?;
+        let input = BINLOG_QUERY_EVENT;
+        let mut input = Bytes::copy_from_slice(&input[..]);
+        let pv4 = ParserV4::from_binlog_file(&mut input)?;
         for _ in 0..2 {
-            pv4.skip_event(input)?;
+            pv4.skip_event(&mut input)?;
         }
         // the 3rd event is QueryEvent
-        let qe = pv4.parse_event(input, true)?;
+        let qe = pv4.parse_event(&mut input, true)?;
         let qe: QueryEvent = qe.unwrap().try_into()?;
         let qe = qe.into_data()?;
         println!("{:#?}", qe);
@@ -515,12 +515,12 @@ mod tests {
     // FDE, PreviousGtid, Stop
     #[test]
     fn test_stop_event() -> Result<()> {
-        let mut input = BINLOG_5_7_30;
-        let input = &mut input.to_bytes();
-        let pv4 = ParserV4::from_binlog_file(input)?;
-        pv4.skip_event(input)?;
+        let input = BINLOG_5_7_30;
+        let mut input = Bytes::copy_from_slice(&input[..]);
+        let pv4 = ParserV4::from_binlog_file(&mut input)?;
+        pv4.skip_event(&mut input)?;
         // third event is StopEvent
-        let se = pv4.parse_event(input, true)?.unwrap();
+        let se = pv4.parse_event(&mut input, true)?.unwrap();
         println!("{:#?}", se);
         Ok(())
     }
@@ -529,12 +529,12 @@ mod tests {
     // FDE, PreviousGtid, Rotate
     #[test]
     fn test_rotate_event() -> Result<()> {
-        let mut input = BINLOG_ROTATE_EVENT;
-        let input = &mut input.to_bytes();
-        let pv4 = ParserV4::from_binlog_file(input)?;
-        pv4.skip_event(input)?;
+        let input = BINLOG_ROTATE_EVENT;
+        let mut input = Bytes::copy_from_slice(&input[..]);
+        let pv4 = ParserV4::from_binlog_file(&mut input)?;
+        pv4.skip_event(&mut input)?;
         // 2nd event is RotateEvent
-        let re = pv4.parse_event(input, true)?;
+        let re = pv4.parse_event(&mut input, true)?;
         let re: RotateEvent = re.unwrap().try_into()?;
         let re = re.into_data()?;
         println!("{:#?}", re);
@@ -545,14 +545,14 @@ mod tests {
     // rename after implementation
     #[test]
     fn test_intvar_event() -> Result<()> {
-        let mut input = BINLOG_RAND_EVENT;
-        let input = &mut input.to_bytes();
-        let pv4 = ParserV4::from_binlog_file(input)?;
+        let input = BINLOG_RAND_EVENT;
+        let mut input = Bytes::copy_from_slice(&input[..]);
+        let pv4 = ParserV4::from_binlog_file(&mut input)?;
         for _ in 0..3 {
-            pv4.skip_event(input)?;
+            pv4.skip_event(&mut input)?;
         }
         // 4th event
-        let ive = pv4.parse_event(input, true)?;
+        let ive = pv4.parse_event(&mut input, true)?;
         let ive: IntvarEvent = ive.unwrap().try_into()?;
         let ive = ive.into_data()?;
         println!("{:#?}", ive);
@@ -594,14 +594,14 @@ mod tests {
     // Xid
     #[test]
     fn test_begin_load_query_event() -> Result<()> {
-        let mut input = BINLOG_BEGIN_LOAD_QUERY_EVENT;
-        let input = &mut input.to_bytes();
-        let pv4 = ParserV4::from_binlog_file(input)?;
+        let input = BINLOG_BEGIN_LOAD_QUERY_EVENT;
+        let mut input = Bytes::copy_from_slice(&input[..]);
+        let pv4 = ParserV4::from_binlog_file(&mut input)?;
         for _ in 0..3 {
-            pv4.skip_event(input)?;
+            pv4.skip_event(&mut input)?;
         }
         // 4th event
-        let blqe = pv4.parse_event(input, true)?;
+        let blqe = pv4.parse_event(&mut input, true)?;
         let blqe: BeginLoadQueryEvent = blqe.unwrap().try_into()?;
         let blqe = blqe.into_data()?;
         println!("{:#?}", blqe);
@@ -611,14 +611,14 @@ mod tests {
 
     #[test]
     fn test_execute_load_query_event() -> Result<()> {
-        let mut input = BINLOG_BEGIN_LOAD_QUERY_EVENT;
-        let input = &mut input.to_bytes();
-        let pv4 = ParserV4::from_binlog_file(input)?;
+        let input = BINLOG_BEGIN_LOAD_QUERY_EVENT;
+        let mut input = Bytes::copy_from_slice(&input[..]);
+        let pv4 = ParserV4::from_binlog_file(&mut input)?;
         for _ in 0..4 {
-            pv4.skip_event(input)?;
+            pv4.skip_event(&mut input)?;
         }
         // 5th event
-        let elqe = pv4.parse_event(input, true)?;
+        let elqe = pv4.parse_event(&mut input, true)?;
         let elqe: ExecuteLoadQueryEvent = elqe.unwrap().try_into()?;
         let elqe = elqe.into_data()?;
         println!("{:#?}", elqe);
@@ -627,14 +627,14 @@ mod tests {
 
     #[test]
     fn test_rand_event() -> Result<()> {
-        let mut input = BINLOG_RAND_EVENT;
-        let input = &mut input.to_bytes();
-        let pv4 = ParserV4::from_binlog_file(input)?;
+        let input = BINLOG_RAND_EVENT;
+        let mut input = Bytes::copy_from_slice(&input[..]);
+        let pv4 = ParserV4::from_binlog_file(&mut input)?;
         for _ in 0..4 {
-            pv4.skip_event(input)?;
+            pv4.skip_event(&mut input)?;
         }
         // 5th event
-        let re = pv4.parse_event(input, true)?;
+        let re = pv4.parse_event(&mut input, true)?;
         let re: RandEvent = re.unwrap().try_into()?;
         let re = re.into_data()?;
         println!("{:#?}", re);
@@ -643,14 +643,14 @@ mod tests {
 
     #[test]
     fn test_xid_event() -> Result<()> {
-        let mut input = BINLOG_ROWS_EVENT_V2;
-        let input = &mut input.to_bytes();
-        let pv4 = ParserV4::from_binlog_file(input)?;
+        let input = BINLOG_ROWS_EVENT_V2;
+        let mut input = Bytes::copy_from_slice(&input[..]);
+        let pv4 = ParserV4::from_binlog_file(&mut input)?;
         for _ in 0..9 {
-            pv4.skip_event(input)?;
+            pv4.skip_event(&mut input)?;
         }
         // 10th is Xid Event
-        let xe = pv4.parse_event(input, true)?;
+        let xe = pv4.parse_event(&mut input, true)?;
         let xe: XidEvent = xe.unwrap().try_into()?;
         let xe = xe.into_data()?;
         println!("{:#?}", xe);
@@ -661,22 +661,22 @@ mod tests {
     fn test_user_var_event() -> Result<()> {
         use crate::binlog::user_var::UserVarValue;
 
-        let mut input = BINLOG_USER_VAR_EVENT;
-        let input = &mut input.to_bytes();
-        let pv4 = ParserV4::from_binlog_file(input)?;
+        let input = BINLOG_USER_VAR_EVENT;
+        let mut input = Bytes::copy_from_slice(&input[..]);
+        let pv4 = ParserV4::from_binlog_file(&mut input)?;
         while input.has_remaining() {
             // not consume the real bytes
             let event_type = LogEventType::read_from(&mut input.clone())?;
             match event_type {
                 LogEventType::UserVarEvent => {
-                    let uve = pv4.parse_event(input, true)?;
+                    let uve = pv4.parse_event(&mut input, true)?;
                     let uve: UserVarEvent = uve.unwrap().try_into()?;
                     let mut uve = uve.into_data()?;
                     println!("{:#?}", uve);
                     let uvv = UserVarValue::read_from(&mut uve.value)?;
                     println!("{:#?}", uvv);
                 }
-                _ => pv4.skip_event(input)?,
+                _ => pv4.skip_event(&mut input)?,
             }
         }
         Ok(())
@@ -698,14 +698,14 @@ mod tests {
     // Xid(COMMIT)
     #[test]
     fn test_table_map_event() -> Result<()> {
-        let mut input = BINLOG_ROWS_EVENT_V2;
-        let input = &mut input.to_bytes();
-        let pv4 = ParserV4::from_binlog_file(input)?;
+        let input = BINLOG_ROWS_EVENT_V2;
+        let mut input = Bytes::copy_from_slice(&input[..]);
+        let pv4 = ParserV4::from_binlog_file(&mut input)?;
         for _ in 0..3 {
-            pv4.skip_event(input)?;
+            pv4.skip_event(&mut input)?;
         }
         // 4th event
-        let tme = pv4.parse_event(input, true)?;
+        let tme = pv4.parse_event(&mut input, true)?;
         let tme: TableMapEvent = tme.unwrap().try_into()?;
         let tme = tme.into_data()?;
         println!("{:#?}", tme);
@@ -716,14 +716,14 @@ mod tests {
 
     #[test]
     fn test_delete_rows_event_v1() -> Result<()> {
-        let mut input = BINLOG_ROWS_EVENT_V1;
-        let input = &mut input.to_bytes();
-        let pv4 = ParserV4::from_binlog_file(input)?;
+        let input = BINLOG_ROWS_EVENT_V1;
+        let mut input = Bytes::copy_from_slice(&input[..]);
+        let pv4 = ParserV4::from_binlog_file(&mut input)?;
         for _ in 0..6 {
-            pv4.skip_event(input)?;
+            pv4.skip_event(&mut input)?;
         }
         // 7th event
-        let dre = pv4.parse_event(input, true)?;
+        let dre = pv4.parse_event(&mut input, true)?;
         let dre: DeleteRowsEventV1 = dre.unwrap().try_into()?;
         let dre = dre.into_data()?;
         println!("{:#?}", dre);
@@ -732,14 +732,14 @@ mod tests {
 
     #[test]
     fn test_update_rows_event_v1() -> Result<()> {
-        let mut input = BINLOG_ROWS_EVENT_V1;
-        let input = &mut input.to_bytes();
-        let pv4 = ParserV4::from_binlog_file(input)?;
+        let input = BINLOG_ROWS_EVENT_V1;
+        let mut input = Bytes::copy_from_slice(&input[..]);
+        let pv4 = ParserV4::from_binlog_file(&mut input)?;
         for _ in 0..4 {
-            pv4.skip_event(input)?;
+            pv4.skip_event(&mut input)?;
         }
         // 5th event
-        let ure = pv4.parse_event(input, true)?;
+        let ure = pv4.parse_event(&mut input, true)?;
         let ure: UpdateRowsEventV1 = ure.unwrap().try_into()?;
         let ure = ure.into_data()?;
         println!("{:#?}", ure);
@@ -748,14 +748,14 @@ mod tests {
 
     #[test]
     fn test_write_rows_event_v1() -> Result<()> {
-        let mut input = BINLOG_ROWS_EVENT_V1;
-        let input = &mut input.to_bytes();
-        let pv4 = ParserV4::from_binlog_file(input)?;
+        let input = BINLOG_ROWS_EVENT_V1;
+        let mut input = Bytes::copy_from_slice(&input[..]);
+        let pv4 = ParserV4::from_binlog_file(&mut input)?;
         for _ in 0..2 {
-            pv4.skip_event(input)?;
+            pv4.skip_event(&mut input)?;
         }
         // 3th event
-        let wre = pv4.parse_event(input, true)?;
+        let wre = pv4.parse_event(&mut input, true)?;
         let wre: WriteRowsEventV1 = wre.unwrap().try_into()?;
         let wre = wre.into_data()?;
         println!("{:#?}", wre);
@@ -764,19 +764,19 @@ mod tests {
 
     #[test]
     fn test_delete_rows_event_v2() -> Result<()> {
-        let mut input = BINLOG_ROWS_EVENT_V2;
-        let input = &mut input.to_bytes();
-        let pv4 = ParserV4::from_binlog_file(input)?;
+        let input = BINLOG_ROWS_EVENT_V2;
+        let mut input = Bytes::copy_from_slice(&input[..]);
+        let pv4 = ParserV4::from_binlog_file(&mut input)?;
         for _ in 0..7 {
-            pv4.skip_event(input)?;
+            pv4.skip_event(&mut input)?;
         }
         // 8th is TableMapEvent
-        let tme = pv4.parse_event(input, true)?;
+        let tme = pv4.parse_event(&mut input, true)?;
         let tme: TableMapEvent = tme.unwrap().try_into()?;
         let tme = tme.into_data()?;
         let tm = tme.table_map().unwrap();
         // 9th event is DeleteRowsEventV2
-        let dre = pv4.parse_event(input, true)?;
+        let dre = pv4.parse_event(&mut input, true)?;
         let dre: DeleteRowsEventV2 = dre.unwrap().try_into()?;
         let dre = dre.into_data()?;
         println!("{:#?}", dre);
@@ -787,19 +787,19 @@ mod tests {
 
     #[test]
     fn test_update_rows_event_v2() -> Result<()> {
-        let mut input = BINLOG_ROWS_EVENT_V2;
-        let input = &mut input.to_bytes();
-        let pv4 = ParserV4::from_binlog_file(input)?;
+        let input = BINLOG_ROWS_EVENT_V2;
+        let mut input = Bytes::copy_from_slice(&input[..]);
+        let pv4 = ParserV4::from_binlog_file(&mut input)?;
         for _ in 0..5 {
-            pv4.skip_event(input)?;
+            pv4.skip_event(&mut input)?;
         }
         // 6th is TableMapEvent
-        let tme = pv4.parse_event(input, true)?;
+        let tme = pv4.parse_event(&mut input, true)?;
         let tme: TableMapEvent = tme.unwrap().try_into()?;
         let tme = tme.into_data()?;
         let tm = tme.table_map().unwrap();
         // 7th event is UpdateRowsEventV2
-        let ure = pv4.parse_event(input, true)?;
+        let ure = pv4.parse_event(&mut input, true)?;
         let ure: UpdateRowsEventV2 = ure.unwrap().try_into()?;
         let ure = ure.into_data()?;
         println!("{:#?}", ure);
@@ -810,19 +810,19 @@ mod tests {
 
     #[test]
     fn test_write_rows_event_v2() -> Result<()> {
-        let mut input = BINLOG_ROWS_EVENT_V2;
-        let input = &mut input.to_bytes();
-        let pv4 = ParserV4::from_binlog_file(input)?;
+        let input = BINLOG_ROWS_EVENT_V2;
+        let mut input = Bytes::copy_from_slice(&input[..]);
+        let pv4 = ParserV4::from_binlog_file(&mut input)?;
         for _ in 0..3 {
-            pv4.skip_event(input)?;
+            pv4.skip_event(&mut input)?;
         }
         // 4th is TableMapEvent
-        let tme = pv4.parse_event(input, true)?;
+        let tme = pv4.parse_event(&mut input, true)?;
         let tme: TableMapEvent = tme.unwrap().try_into()?;
         let tme = tme.into_data()?;
         let tm = tme.table_map().unwrap();
         // 5th event is WriteRowsEventV2
-        let wre = pv4.parse_event(input, true)?;
+        let wre = pv4.parse_event(&mut input, true)?;
         let wre: WriteRowsEventV2 = wre.unwrap().try_into()?;
         let wre = wre.into_data()?;
         println!("{:#?}", wre);
@@ -833,12 +833,12 @@ mod tests {
 
     #[test]
     fn test_gtid_log_event() -> Result<()> {
-        let mut input = BINLOG_GTID_EVENT;
-        let input = &mut input.to_bytes();
-        let pv4 = ParserV4::from_binlog_file(input)?;
-        pv4.skip_event(input)?;
+        let input = BINLOG_GTID_EVENT;
+        let mut input = Bytes::copy_from_slice(&input[..]);
+        let pv4 = ParserV4::from_binlog_file(&mut input)?;
+        pv4.skip_event(&mut input)?;
         // 2nd event
-        let gle = pv4.parse_event(input, true)?;
+        let gle = pv4.parse_event(&mut input, true)?;
         let gle: GtidLogEvent = gle.unwrap().try_into()?;
         let gle = gle.into_data()?;
         println!("{:#?}", gle);
@@ -847,12 +847,12 @@ mod tests {
 
     #[test]
     fn test_anonymous_gtid_log_event() -> Result<()> {
-        let mut input = BINLOG_RAND_EVENT;
-        let input = &mut input.to_bytes();
-        let pv4 = ParserV4::from_binlog_file(input)?;
-        pv4.skip_event(input)?;
+        let input = BINLOG_RAND_EVENT;
+        let mut input = Bytes::copy_from_slice(&input[..]);
+        let pv4 = ParserV4::from_binlog_file(&mut input)?;
+        pv4.skip_event(&mut input)?;
         // 2nd event
-        let agle = pv4.parse_event(input, true)?;
+        let agle = pv4.parse_event(&mut input, true)?;
         let agle: AnonymousGtidLogEvent = agle.unwrap().try_into()?;
         let agle = agle.into_data()?;
         println!("{:#?}", agle);
@@ -861,11 +861,11 @@ mod tests {
 
     #[test]
     fn test_previous_gtids_log_event() -> Result<()> {
-        let mut input = BINLOG_GTID_EVENT;
-        let input = &mut input.to_bytes();
-        let pv4 = ParserV4::from_binlog_file(input)?;
+        let input = BINLOG_GTID_EVENT;
+        let mut input = Bytes::copy_from_slice(&input[..]);
+        let pv4 = ParserV4::from_binlog_file(&mut input)?;
         // 1st event
-        let pgle = pv4.parse_event(input, true)?;
+        let pgle = pv4.parse_event(&mut input, true)?;
         let pgle: PreviousGtidsLogEvent = pgle.unwrap().try_into()?;
         let pgle = pgle.into_data()?;
         println!("{:#?}", pgle);
@@ -884,7 +884,7 @@ mod tests {
             BINLOG_BEGIN_LOAD_QUERY_EVENT,
             BINLOG_RAND_EVENT,
         ];
-        for mut f in files.into_iter().map(|mut f| f.to_bytes()) {
+        for mut f in files.into_iter().map(Bytes::copy_from_slice) {
             let pv4 = ParserV4::from_binlog_file(&mut f)?;
             while f.has_remaining() {
                 pv4.checksum_event(&f)?;
@@ -896,19 +896,19 @@ mod tests {
 
     #[test]
     fn test_binlog_time_data() -> Result<()> {
-        let mut input = BINLOG_TIME_DATA;
-        let input = &mut input.to_bytes();
-        let pv4 = ParserV4::from_binlog_file(input)?;
+        let input = BINLOG_TIME_DATA;
+        let mut input = Bytes::copy_from_slice(&input[..]);
+        let pv4 = ParserV4::from_binlog_file(&mut input)?;
         // 5th event is insert
         for _ in 0..3 {
-            pv4.skip_event(input)?;
+            pv4.skip_event(&mut input)?;
         }
-        let tme = pv4.parse_event(input, false)?;
+        let tme = pv4.parse_event(&mut input, false)?;
         let tme: TableMapEvent = tme.unwrap().try_into()?;
         let tme = tme.into_data()?;
         let tm = tme.into_table_map()?;
         dbg!(&tm);
-        let wre = pv4.parse_event(input, false)?;
+        let wre = pv4.parse_event(&mut input, false)?;
         let wre: WriteRowsEventV2 = wre.unwrap().try_into()?;
         let wre = wre.into_data()?;
         dbg!(&wre);
@@ -919,19 +919,19 @@ mod tests {
 
     #[test]
     fn test_binlog_year_data() -> Result<()> {
-        let mut input = BINLOG_YEAR_DATA;
-        let input = &mut input.to_bytes();
-        let pv4 = ParserV4::from_binlog_file(input)?;
+        let input = BINLOG_YEAR_DATA;
+        let mut input = Bytes::copy_from_slice(&input[..]);
+        let pv4 = ParserV4::from_binlog_file(&mut input)?;
         // 5th event is insert
         for _ in 0..3 {
-            pv4.skip_event(input)?;
+            pv4.skip_event(&mut input)?;
         }
-        let tme = pv4.parse_event(input, false)?;
+        let tme = pv4.parse_event(&mut input, false)?;
         let tme: TableMapEvent = tme.unwrap().try_into()?;
         let tme = tme.into_data()?;
         let tm = tme.into_table_map()?;
         dbg!(&tm);
-        let wre = pv4.parse_event(input, false)?;
+        let wre = pv4.parse_event(&mut input, false)?;
         let wre: WriteRowsEventV2 = wre.unwrap().try_into()?;
         let wre = wre.into_data()?;
         dbg!(&wre);
@@ -942,19 +942,19 @@ mod tests {
 
     #[test]
     fn test_binlog_timestamp_data() -> Result<()> {
-        let mut input = BINLOG_TIMESTAMP_DATA;
-        let input = &mut input.to_bytes();
-        let pv4 = ParserV4::from_binlog_file(input)?;
+        let input = BINLOG_TIMESTAMP_DATA;
+        let mut input = Bytes::copy_from_slice(&input[..]);
+        let pv4 = ParserV4::from_binlog_file(&mut input)?;
         // 5th event is insert
         for _ in 0..3 {
-            pv4.skip_event(input)?;
+            pv4.skip_event(&mut input)?;
         }
-        let tme = pv4.parse_event(input, false)?;
+        let tme = pv4.parse_event(&mut input, false)?;
         let tme: TableMapEvent = tme.unwrap().try_into()?;
         let tme = tme.into_data()?;
         let tm = tme.into_table_map()?;
         dbg!(&tm);
-        let wre = pv4.parse_event(input, false)?;
+        let wre = pv4.parse_event(&mut input, false)?;
         let wre: WriteRowsEventV2 = wre.unwrap().try_into()?;
         let wre = wre.into_data()?;
         dbg!(&wre);
@@ -965,19 +965,19 @@ mod tests {
 
     #[test]
     fn test_binlog_enum_data() -> Result<()> {
-        let mut input = BINLOG_ENUM_DATA;
-        let input = &mut input.to_bytes();
-        let pv4 = ParserV4::from_binlog_file(input)?;
+        let input = BINLOG_ENUM_DATA;
+        let mut input = Bytes::copy_from_slice(&input[..]);
+        let pv4 = ParserV4::from_binlog_file(&mut input)?;
         // 5th event is insert
         for _ in 0..3 {
-            pv4.skip_event(input)?;
+            pv4.skip_event(&mut input)?;
         }
-        let tme = pv4.parse_event(input, false)?;
+        let tme = pv4.parse_event(&mut input, false)?;
         let tme: TableMapEvent = tme.unwrap().try_into()?;
         let tme = tme.into_data()?;
         let tm = tme.into_table_map()?;
         dbg!(&tm);
-        let wre = pv4.parse_event(input, false)?;
+        let wre = pv4.parse_event(&mut input, false)?;
         let wre: WriteRowsEventV2 = wre.unwrap().try_into()?;
         let wre = wre.into_data()?;
         dbg!(&wre);
@@ -988,19 +988,19 @@ mod tests {
 
     #[test]
     fn test_binlog_number_data() -> Result<()> {
-        let mut input = BINLOG_NUMBER_DATA;
-        let input = &mut input.to_bytes();
-        let pv4 = ParserV4::from_binlog_file(input)?;
+        let input = BINLOG_NUMBER_DATA;
+        let mut input = Bytes::copy_from_slice(&input[..]);
+        let pv4 = ParserV4::from_binlog_file(&mut input)?;
         // 5th event is insert
         for _ in 0..3 {
-            pv4.skip_event(input)?;
+            pv4.skip_event(&mut input)?;
         }
-        let tme = pv4.parse_event(input, false)?;
+        let tme = pv4.parse_event(&mut input, false)?;
         let tme: TableMapEvent = tme.unwrap().try_into()?;
         let tme = tme.into_data()?;
         let tm = tme.into_table_map()?;
         dbg!(&tm);
-        let wre = pv4.parse_event(input, false)?;
+        let wre = pv4.parse_event(&mut input, false)?;
         let wre: WriteRowsEventV2 = wre.unwrap().try_into()?;
         let wre = wre.into_data()?;
         dbg!(&wre);
@@ -1012,19 +1012,19 @@ mod tests {
     use crate::col::BinlogColumnValue;
     #[test]
     fn test_binlog_null_data() -> Result<()> {
-        let mut input = BINLOG_NULL_DATA;
-        let input = &mut input.to_bytes();
-        let pv4 = ParserV4::from_binlog_file(input)?;
+        let input = BINLOG_NULL_DATA;
+        let mut input = Bytes::copy_from_slice(&input[..]);
+        let pv4 = ParserV4::from_binlog_file(&mut input)?;
         // 5th event is insert
         for _ in 0..3 {
-            pv4.skip_event(input)?;
+            pv4.skip_event(&mut input)?;
         }
-        let tme = pv4.parse_event(input, false)?;
+        let tme = pv4.parse_event(&mut input, false)?;
         let tme: TableMapEvent = tme.unwrap().try_into()?;
         let tme = tme.into_data()?;
         let tm = tme.into_table_map()?;
         dbg!(&tm);
-        let wre = pv4.parse_event(input, false)?;
+        let wre = pv4.parse_event(&mut input, false)?;
         let wre: WriteRowsEventV2 = wre.unwrap().try_into()?;
         let wre = wre.into_data()?;
         dbg!(&wre);

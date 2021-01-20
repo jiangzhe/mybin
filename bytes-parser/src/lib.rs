@@ -154,7 +154,7 @@ impl ReadBytesExt for Bytes {
                 Needed::Size(3 - self.remaining()),
             ));
         }
-        let bs = self.bytes();
+        let bs = self.chunk();
         let r = bs[0] as u32 + ((bs[1] as u32) << 8) + ((bs[2] as u32) << 16);
         self.advance(3);
         Ok(r)
@@ -167,7 +167,7 @@ impl ReadBytesExt for Bytes {
                 Needed::Size(3 - self.remaining()),
             ));
         }
-        let bs = self.bytes();
+        let bs = self.chunk();
         let r = bs[2] as u32 + ((bs[1] as u32) << 8) + ((bs[0] as u32) << 16);
         self.advance(3);
         Ok(r)
@@ -212,7 +212,7 @@ impl ReadBytesExt for Bytes {
                 Needed::Size(6 - self.remaining()),
             ));
         }
-        let bs = self.bytes();
+        let bs = self.chunk();
         let r = bs[0] as u64
             + ((bs[1] as u64) << 8)
             + ((bs[2] as u64) << 16)
@@ -274,7 +274,7 @@ impl ReadBytesExt for Bytes {
     }
 
     fn read_until(&mut self, b: u8, inclusive: bool) -> Result<Bytes> {
-        if let Some(pos) = self.bytes().iter().position(|&x| x == b) {
+        if let Some(pos) = self.chunk().iter().position(|&x| x == b) {
             let end = pos + 1;
             let bs = if inclusive {
                 self.split_to(end)
@@ -304,7 +304,7 @@ impl WriteToBytes for &[u8] {
 impl WriteToBytes for Bytes {
     fn write_to(self, out: &mut BytesMut) -> Result<usize> {
         let len = self.remaining();
-        out.put(self.bytes());
+        out.put(self.chunk());
         Ok(len)
     }
 }
@@ -456,14 +456,12 @@ impl WriteBytesExt for BytesMut {
 mod tests {
     use super::*;
     use crate::error::Result;
-    use bytes::Buf;
 
     #[test]
     fn test_u8() -> Result<()> {
         // read
         let orig = vec![1u8];
-        let mut input = &orig[..];
-        let input = &mut input.to_bytes();
+        let mut input = Bytes::copy_from_slice(&orig[..]);
         let success = input.read_u8()?;
         assert_eq!(1, success);
         let fail = input.read_u8();
@@ -479,8 +477,7 @@ mod tests {
     fn test_i8() -> Result<()> {
         // read
         let orig = vec![-20i8 as u8];
-        let mut input = &orig[..];
-        let input = &mut input.to_bytes();
+        let mut input = Bytes::copy_from_slice(&orig[..]);
         let success = input.read_i8()?;
         assert_eq!(-20, success);
         let fail = input.read_u8();
@@ -496,8 +493,7 @@ mod tests {
     fn test_le_u16() -> Result<()> {
         // read
         let orig = vec![1u8, 2, 3];
-        let mut input = &orig[..];
-        let input = &mut input.to_bytes();
+        let mut input = Bytes::copy_from_slice(&orig[..]);
         let success = input.read_le_u16()?;
         assert_eq!(1 + (2u16 << 8), success);
         let fail = input.read_le_u16();
@@ -512,8 +508,7 @@ mod tests {
     #[test]
     fn test_be_u16() -> Result<()> {
         let orig = vec![1u8, 2, 3];
-        let mut input = &orig[..];
-        let input = &mut input.to_bytes();
+        let mut input = Bytes::copy_from_slice(&orig[..]);
         let success = input.read_be_u16()?;
         assert_eq!((1u16 << 8) + 2, success);
         let fail = input.read_be_u16();
@@ -525,8 +520,7 @@ mod tests {
     fn test_le_i16() -> Result<()> {
         // read
         let orig = Vec::from((-200i16 as u16).to_le_bytes());
-        let mut input = &orig[..];
-        let input = &mut input.to_bytes();
+        let mut input = Bytes::copy_from_slice(&orig[..]);
         let success = input.read_le_i16()?;
         assert_eq!(-200, success);
         let fail = input.read_le_i16();
@@ -542,8 +536,7 @@ mod tests {
     fn test_be_i16() -> Result<()> {
         // read
         let orig = Vec::from((-200i16 as u16).to_be_bytes());
-        let mut input = &orig[..];
-        let input = &mut input.to_bytes();
+        let mut input = Bytes::copy_from_slice(&orig[..]);
         let success = input.read_be_i16()?;
         assert_eq!(-200, success);
         let fail = input.read_be_i16();
@@ -555,8 +548,7 @@ mod tests {
     fn test_le_u24() -> Result<()> {
         // read
         let orig = vec![1, 2, 3, 4];
-        let mut input = &orig[..];
-        let input = &mut input.to_bytes();
+        let mut input = Bytes::copy_from_slice(&orig[..]);
         let success = input.read_le_u24()?;
         assert_eq!(1u32 + (2u32 << 8) + (3u32 << 16), success);
         let fail = input.read_le_u24();
@@ -572,8 +564,7 @@ mod tests {
     fn test_be_u24() -> Result<()> {
         // read
         let orig = vec![1, 2, 3, 4];
-        let mut input = &orig[..];
-        let input = &mut input.to_bytes();
+        let mut input = Bytes::copy_from_slice(&orig[..]);
         let success = input.read_be_u24()?;
         assert_eq!((1u32 << 16) + (2u32 << 8) + 3u32, success);
         let fail = input.read_be_u24();
@@ -585,8 +576,7 @@ mod tests {
     fn test_le_i24() -> Result<()> {
         // read
         let orig = Vec::from(&(-200000i32 as u32 | 0xff80_0000).to_le_bytes()[..3]);
-        let mut input = &orig[..];
-        let input = &mut input.to_bytes();
+        let mut input = Bytes::copy_from_slice(&orig[..]);
         let success = input.read_le_i24()?;
         assert_eq!(-200000, success);
         let fail = input.read_le_i24();
@@ -602,8 +592,7 @@ mod tests {
     fn test_le_u32() -> Result<()> {
         // read
         let orig = vec![1u8, 2, 3, 4, 5];
-        let mut input = &orig[..];
-        let input = &mut input.to_bytes();
+        let mut input = Bytes::copy_from_slice(&orig[..]);
         let success = input.read_le_u32()?;
         assert_eq!(1u32 + (2u32 << 8) + (3u32 << 16) + (4u32 << 24), success);
         let fail = input.read_le_u32();
@@ -619,8 +608,7 @@ mod tests {
     fn test_le_i32() -> Result<()> {
         // read
         let orig = Vec::from((-20000000i32 as u32).to_le_bytes());
-        let mut input = &orig[..];
-        let input = &mut input.to_bytes();
+        let mut input = Bytes::copy_from_slice(&orig[..]);
         let success = input.read_le_i32()?;
         assert_eq!(-20000000, success);
         let fail = input.read_le_i32();
@@ -635,9 +623,8 @@ mod tests {
     #[test]
     fn test_le_u48() -> Result<()> {
         // read
-        let input = vec![1u8, 2, 3, 4, 1, 2, 3, 4];
-        let mut input = &input[..];
-        let input = &mut input.to_bytes();
+        let orig = vec![1u8, 2, 3, 4, 1, 2, 3, 4];
+        let mut input = Bytes::copy_from_slice(&orig[..]);
         let success = input.read_le_u48()?;
         assert_eq!(
             1u64 + (2u64 << 8) + (3u64 << 16) + (4u64 << 24) + (1u64 << 32) + (2u64 << 40),
@@ -656,8 +643,7 @@ mod tests {
     fn test_le_i48() -> Result<()> {
         // read
         let orig = Vec::from(&(-2000000000i64 as u64 | 0xffff_8000_0000_0000).to_le_bytes()[..6]);
-        let mut input = &orig[..];
-        let input = &mut input.to_bytes();
+        let mut input = Bytes::copy_from_slice(&orig[..]);
         let success = input.read_le_i48()?;
         assert_eq!(-2000000000i64, success);
         let fail = input.read_le_i48();
@@ -673,8 +659,7 @@ mod tests {
     fn test_le_u64() -> Result<()> {
         // read
         let orig = vec![1, 2, 3, 4, 1, 2, 3, 4, 1, 2, 3, 4];
-        let mut input = &orig[..];
-        let input = &mut input.to_bytes();
+        let mut input = Bytes::copy_from_slice(&orig[..]);
         let success = input.read_le_u64()?;
         assert_eq!(
             1u64 + (2u64 << 8)
@@ -700,8 +685,7 @@ mod tests {
     fn test_le_i64() -> Result<()> {
         // read
         let orig = Vec::from((-200000000000i64 as u64).to_le_bytes());
-        let mut input = &orig[..];
-        let input = &mut input.to_bytes();
+        let mut input = Bytes::copy_from_slice(&orig[..]);
         let success = input.read_le_i64()?;
         assert_eq!(-200000000000i64, success);
         let fail = input.read_le_i64();
@@ -717,8 +701,7 @@ mod tests {
     fn test_le_u128() -> Result<()> {
         // read
         let orig = Vec::from(200000000000200000000000_u128.to_le_bytes());
-        let mut input = &orig[..];
-        let input = &mut input.to_bytes();
+        let mut input = Bytes::copy_from_slice(&orig[..]);
         let success = input.read_le_u128()?;
         assert_eq!(200000000000200000000000_u128, success);
         let fail = input.read_le_u128();
@@ -734,8 +717,7 @@ mod tests {
     fn test_le_i128() -> Result<()> {
         // read
         let orig = Vec::from((-200000000000200000000000_i128 as u128).to_le_bytes());
-        let mut input = &orig[..];
-        let input = &mut input.to_bytes();
+        let mut input = Bytes::copy_from_slice(&orig[..]);
         let success = input.read_le_i128()?;
         assert_eq!(-200000000000200000000000_i128, success);
         let fail = input.read_le_i128();

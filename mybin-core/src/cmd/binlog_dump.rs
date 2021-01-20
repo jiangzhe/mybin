@@ -71,7 +71,7 @@ impl ReadFromBytes for ComBinlogDump {
         let flags = input.read_le_u16()?;
         let server_id = input.read_le_u32()?;
         let binlog_filename = input.split_to(input.remaining());
-        let binlog_filename = String::from_utf8(Vec::from(binlog_filename.bytes()))?;
+        let binlog_filename = String::from_utf8(Vec::from(binlog_filename.chunk()))?;
         Ok(ComBinlogDump {
             cmd,
             binlog_pos,
@@ -189,7 +189,7 @@ impl ReadFromBytes for ComBinlogDumpGtid {
         let server_id = input.read_le_u32()?;
         let binlog_filename_len = input.read_le_u32()?;
         let binlog_filename = input.read_len(binlog_filename_len as usize)?;
-        let binlog_filename = String::from_utf8(Vec::from(binlog_filename.bytes()))?;
+        let binlog_filename = String::from_utf8(Vec::from(binlog_filename.chunk()))?;
         let binlog_pos = input.read_le_u64()?;
         // always read sid_data
         let sid_data_len = input.read_le_u32()?;

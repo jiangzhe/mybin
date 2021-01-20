@@ -249,13 +249,12 @@ impl WriteToBytes for LenEncStr {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bytes::Buf;
 
     #[test]
     fn test_len_enc_int_1() {
         // read
         let orig = vec![0x0a_u8];
-        let bs = &mut (&orig[..]).to_bytes();
+        let mut bs = Bytes::copy_from_slice(&orig[..]);
         let lei = bs.read_len_enc_int().unwrap();
         assert_eq!(LenEncInt::Len1(0x0a), lei);
         // write
@@ -268,7 +267,7 @@ mod tests {
     fn test_len_enc_int_3() {
         // read
         let orig = vec![0xfc_u8, 0xfd, 0x00];
-        let bs = &mut (&orig[..]).to_bytes();
+        let mut bs = Bytes::copy_from_slice(&orig[..]);
         let lei = bs.read_len_enc_int().unwrap();
         assert_eq!(LenEncInt::Len3(0xfd_u16), lei);
         // write
@@ -278,7 +277,7 @@ mod tests {
 
         // read
         let orig = vec![0xfc_u8, 0x1d, 0x05];
-        let bs = &mut (&orig[..]).to_bytes();
+        let mut bs = Bytes::copy_from_slice(&orig[..]);
         let lei = bs.read_len_enc_int().unwrap();
         assert_eq!(LenEncInt::Len3(0x051d_u16), lei);
         // write
@@ -291,7 +290,7 @@ mod tests {
     fn test_len_enc_int_4() {
         // read
         let orig = vec![0xfd_u8, 0xc2, 0xb2, 0xa2];
-        let bs = &mut (&orig[..]).to_bytes();
+        let mut bs = Bytes::copy_from_slice(&orig[..]);
         let lei = bs.read_len_enc_int().unwrap();
         assert_eq!(LenEncInt::Len4(0xa2b2c2_u32), lei);
         // write
@@ -304,7 +303,7 @@ mod tests {
     fn test_len_enc_int_8() {
         // read
         let orig = vec![0xfe, 0x0d, 0x0c, 0x0b, 0x0a, 0x04, 0x03, 0x02, 0x01];
-        let bs = &mut (&orig[..]).to_bytes();
+        let mut bs = Bytes::copy_from_slice(&orig[..]);
         let lei = bs.read_len_enc_int().unwrap();
         assert_eq!(LenEncInt::Len9(0x010203040a0b0c0d_u64), lei);
         // write
@@ -317,7 +316,7 @@ mod tests {
     fn test_len_enc_int_err() {
         // read
         let orig = vec![0xff_u8];
-        let bs = &mut (&orig[..]).to_bytes();
+        let mut bs = Bytes::copy_from_slice(&orig[..]);
         let lei = bs.read_len_enc_int().unwrap();
         assert_eq!(LenEncInt::Err, lei);
         // write
@@ -330,7 +329,7 @@ mod tests {
     fn test_len_enc_int_null() {
         // read
         let orig = vec![0xfb_u8];
-        let bs = &mut (&orig[..]).to_bytes();
+        let mut bs = Bytes::copy_from_slice(&orig[..]);
         let lei = bs.read_len_enc_int().unwrap();
         assert_eq!(LenEncInt::Null, lei);
         // write
@@ -343,7 +342,7 @@ mod tests {
     fn test_len_enc_str() {
         // read
         let orig = b"\x05hello";
-        let bs = &mut (&orig[..]).to_bytes();
+        let mut bs = Bytes::copy_from_slice(&orig[..]);
         let les = bs.read_len_enc_str().unwrap();
         assert_eq!(b"hello", les.bytes().unwrap().as_ref());
         // write
@@ -356,8 +355,7 @@ mod tests {
     fn test_bytes_len_enc_int_null() {
         // read
         let orig = b"\xfb";
-        let mut bs = &orig[..];
-        let mut bs = bs.to_bytes();
+        let mut bs = Bytes::copy_from_slice(&orig[..]);
         let lei = bs.read_len_enc_int().unwrap();
         assert_eq!(LenEncInt::Null, lei);
         // write
@@ -370,7 +368,7 @@ mod tests {
     fn test_bytes_len_enc_str_valid() {
         // read
         let orig = b"\x05hello";
-        let mut bs = (&orig[..]).to_bytes();
+        let mut bs = Bytes::copy_from_slice(&orig[..]);
         let les = bs.read_len_enc_str().unwrap();
         assert_eq!("hello", les.clone().into_str().unwrap());
         // write
@@ -383,7 +381,7 @@ mod tests {
     fn test_bytes_len_enc_str_invalid() {
         // realet orig = b"\x05hello";
         let orig = b"\x05hell";
-        let mut bs = (&orig[..]).to_bytes();
+        let mut bs = Bytes::copy_from_slice(&orig[..]);
         let fail = bs.read_len_enc_str();
         assert!(fail.is_err());
     }

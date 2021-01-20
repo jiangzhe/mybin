@@ -158,7 +158,7 @@ impl RowsV2 {
         while input.has_remaining() {
             let null_bitmap = input.read_len(null_bitmap_len as usize)?;
             // use present_bitmap as base and mark null using null_bitmap
-            let mut col_bitmap = Vec::from(present_bitmap.bytes());
+            let mut col_bitmap = Vec::from(present_bitmap.chunk());
             let mut j = 0;
             for i in 0..present_cols {
                 while !bitmap::index(&col_bitmap, j) {

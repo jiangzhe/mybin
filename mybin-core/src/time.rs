@@ -62,7 +62,7 @@ impl FromColumnValue<TextColumnValue> for Option<MyTime> {
         match value {
             None => Ok(None),
             Some(bs) => {
-                let s = std::str::from_utf8(bs.bytes())?;
+                let s = std::str::from_utf8(bs.chunk())?;
                 let s = s.trim_start();
                 // because MySQL time can be negative and more than 24 hours,
                 // cannot use NaiveTime::parse_from_str()
@@ -192,7 +192,7 @@ impl FromColumnValue<TextColumnValue> for Option<MyDateTime> {
         match value {
             None => Ok(None),
             Some(bs) => {
-                let s = std::str::from_utf8(bs.bytes())?;
+                let s = std::str::from_utf8(bs.chunk())?;
                 dbg!(s);
                 let ts = if s.len() > 19 {
                     NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f")?

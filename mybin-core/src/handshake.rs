@@ -135,7 +135,7 @@ impl WriteToBytes for HandshakeClientResponse41 {
             // use len-enc-int here
             let lblen = LenEncInt::from(lb.len() as u64);
             len += lblen.write_to(out)?;
-            len += out.write_bytes(lb.bytes())?;
+            len += out.write_bytes(lb.chunk())?;
         }
         Ok(len)
     }
@@ -225,17 +225,17 @@ mod tests {
 
     #[test]
     fn test_read_handshake_packet() {
-        let input = &mut PACKET_DATA.to_bytes();
+        let input = &mut Bytes::copy_from_slice(PACKET_DATA);
         let pkt = Packet::read_from(input).unwrap();
         let handshake = InitialHandshake::read_from(&mut pkt.payload.clone()).unwrap();
         dbg!(&handshake);
         println!(
             "server_version={}",
-            String::from_utf8_lossy(handshake.server_version.bytes())
+            String::from_utf8_lossy(handshake.server_version.chunk())
         );
         println!(
             "auth_plugin_name={}",
-            String::from_utf8_lossy(handshake.auth_plugin_name.bytes())
+            String::from_utf8_lossy(handshake.auth_plugin_name.chunk())
         );
         let capability_flags = CapabilityFlags::from_bits(handshake.capability_flags).unwrap();
         println!("capability_flags={:#?}", capability_flags);
@@ -243,7 +243,7 @@ mod tests {
 
     #[test]
     fn test_read_bytes_handshake_packet() {
-        let mut input = PACKET_DATA.to_bytes();
+        let mut input = Bytes::copy_from_slice(PACKET_DATA);
         let pkt = Packet::read_from(&mut input).unwrap();
         dbg!(pkt);
     }

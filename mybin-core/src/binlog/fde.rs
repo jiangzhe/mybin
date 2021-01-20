@@ -71,7 +71,7 @@ impl ReadFromBytes for FormatDescriptionData {
         if input.remaining() == fde_post_header_len as usize {
             // version not support checksum
             let post_header_lengths = input.split_to(input.remaining());
-            let post_header_lengths = Vec::from(post_header_lengths.bytes());
+            let post_header_lengths = Vec::from(post_header_lengths.chunk());
             return Ok(FormatDescriptionData {
                 binlog_version,
                 server_version,
@@ -83,7 +83,7 @@ impl ReadFromBytes for FormatDescriptionData {
         }
         // version supports checksum
         let post_header_lengths = input.split_to(fde_post_header_len as usize);
-        let post_header_lengths = Vec::from(post_header_lengths.bytes());
+        let post_header_lengths = Vec::from(post_header_lengths.chunk());
         let checksum_flag = input.read_u8()?;
         // there may be remaining 4-byte crc32 checksum at last or not
         Ok(FormatDescriptionData {

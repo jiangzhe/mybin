@@ -8,8 +8,9 @@ workspace = ".."
 [dependencies]
 thiserror = "1.0"
 futures = "0.3"
-bytes = "0.5"
+bytes = "1.0"
 
 [dev-dependencies]
-smol-potat = "0.5.0"
-smol = "0.3.3"
+smol-potat = "1.1"
+smol = "1.2.5"
+async-executor = "1.4"

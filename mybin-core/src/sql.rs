@@ -67,7 +67,7 @@ impl PreparedSql {
         rowsv2: RowsV2,
         col_defs: &[ColumnDefinition],
     ) -> PreparedSql {
-        let col_defs = filter_col_defs(rowsv2.present_bitmap.bytes(), col_defs);
+        let col_defs = filter_col_defs(rowsv2.present_bitmap.chunk(), col_defs);
         let sql_fragments = delete_sql_fragments(&db, &tbl, &col_defs);
         let mut params = Vec::with_capacity(rowsv2.rows.len());
         for cols in rowsv2.rows {
@@ -88,7 +88,7 @@ impl PreparedSql {
         rowsv2: RowsV2,
         col_defs: &[ColumnDefinition],
     ) -> PreparedSql {
-        let col_defs = filter_col_defs(rowsv2.present_bitmap.bytes(), col_defs);
+        let col_defs = filter_col_defs(rowsv2.present_bitmap.chunk(), col_defs);
         let sql_fragments = insert_sql_fragments(&db, &tbl, &col_defs);
         let mut params = Vec::with_capacity(rowsv2.rows.len());
         for cols in rowsv2.rows {
@@ -115,8 +115,8 @@ impl PreparedSql {
         }) {
             return None;
         }
-        let before_col_defs = filter_col_defs(rowsv2.before_present_bitmap.bytes(), col_defs);
-        let after_col_defs = filter_col_defs(rowsv2.after_present_bitmap.bytes(), col_defs);
+        let before_col_defs = filter_col_defs(rowsv2.before_present_bitmap.chunk(), col_defs);
+        let after_col_defs = filter_col_defs(rowsv2.after_present_bitmap.chunk(), col_defs);
         let sql_fragments = update_sql_fragments(&db, &tbl, &before_col_defs, &after_col_defs);
         let mut params = Vec::new();
         for cols in rowsv2.rows {
