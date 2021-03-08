@@ -266,7 +266,7 @@ mod tests {
             .await
             .unwrap();
         log::debug!("table created");
-        
+
         let mut ins = conn
             .stmt()
             .prepare("insert into stmt_prp_upd (id) values (?)")
@@ -282,18 +282,27 @@ mod tests {
             .await
             .unwrap();
         log::debug!("upd stmt prepared");
-        upd.exec(vec![StmtColumnValue::new_int(1), StmtColumnValue::new_int(1)]).await.unwrap();
+        upd.exec(vec![
+            StmtColumnValue::new_int(1),
+            StmtColumnValue::new_int(1),
+        ])
+        .await
+        .unwrap();
         upd.close().await.unwrap();
 
-        let mut sel = conn.query().qry("select * from stmt_prp_upd").await.unwrap();
+        let mut sel = conn
+            .query()
+            .qry("select * from stmt_prp_upd")
+            .await
+            .unwrap();
         while let Ok(Some(row)) = sel.next_row().await {
             println!("row={:?}", row);
         }
 
         conn.query()
-        .exec("drop database if exists stmttest2")
-        .await
-        .unwrap();
+            .exec("drop database if exists stmttest2")
+            .await
+            .unwrap();
         log::debug!("database dropped");
     }
 
