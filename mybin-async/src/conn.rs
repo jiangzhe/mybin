@@ -1,4 +1,4 @@
-use crate::auth_plugin::{AuthPlugin, MysqlNativePassword};
+use crate::auth_plugin::{AuthPlugin, CachingSha2Password, MysqlNativePassword};
 use crate::binlog::{Binlog, BinlogFile, BinlogFileMapper};
 use crate::error::{Error, Result};
 use crate::query::Query;
@@ -139,10 +139,6 @@ where
             cap_flags: CapabilityFlags::empty(),
             server_status: StatusFlags::empty(),
             pkt_nr: 0,
-            // msg_state: MsgState::Len,
-            // recv_buf: Vec::new(),
-            // recv_len: 0,
-            // send_buf: vec![],
         }
     }
 
@@ -153,10 +149,6 @@ where
             cap_flags,
             server_status,
             pkt_nr: 0,
-            // msg_state: MsgState::Len,
-            // recv_buf: Vec::new(),
-            // recv_len: 0,
-            // send_buf: vec![],
         }
     }
 
@@ -174,7 +166,7 @@ where
         );
         log::debug!(
             "auth_plugin={}, auth_data_1={:?}, auth_data_2={:?}",
-            String::from_utf8_lossy(handshake.auth_plugin_name.chunk()),
+            handshake.auth_plugin_name,
             handshake.auth_plugin_data_1,
             handshake.auth_plugin_data_2
         );
@@ -196,8 +188,14 @@ where
         // disable ssl currently
         self.cap_flags.remove(CapabilityFlags::SSL);
         // by default use mysql_native_password auth_plugin
-        let (auth_plugin_name, auth_response) =
-            gen_auth_resp(&opts.username, &opts.password, &seed)?;
+        // todo: we should use server suggested plugin to generate auth response
+        //       e.g. MySQL 8.0.x suggests caching_sha2_password by default.
+        let auth_response = gen_auth_resp(
+            &handshake.auth_plugin_name,
+            &opts.username,
+            &opts.password,
+            &seed,
+        )?;
 
         if !opts.database.is_empty() {
             self.cap_flags.insert(CapabilityFlags::CONNECT_WITH_DB);
@@ -208,12 +206,13 @@ where
             username: opts.username,
             auth_response,
             database: opts.database,
-            auth_plugin_name,
+            auth_plugin_name: handshake.auth_plugin_name,
             ..Default::default()
         };
         self.send_msg(client_resp, false).await?;
         let cap_flags = self.cap_flags.clone();
         let mut msg = self.recv_msg().await?;
+
         // todo: handle auth switch request
         match HandshakeMessage::read_from(&mut msg, &cap_flags)? {
             HandshakeMessage::Ok(ok) => {
@@ -232,9 +231,13 @@ where
             HandshakeMessage::Switch(switch) => {
                 log::debug!(
                     "switch auth_plugin={}, auth_data={:?}",
-                    String::from_utf8_lossy(switch.plugin_name.chunk()),
+                    switch.plugin_name,
                     switch.auth_plugin_data
                 );
+                unimplemented!();
+            }
+            HandshakeMessage::MoreData(more) => {
+                log::debug!("auth more data={:?}", more);
                 unimplemented!();
             }
         }
@@ -370,7 +373,12 @@ where
                 ComChangeUserResponse::Err(err) => return Err(err.into()),
                 ComChangeUserResponse::Switch(switch) => {
                     // currently only support mysql_native_password
-                    let (_, data) = gen_auth_resp(username, password, switch.auth_plugin_data)?;
+                    let data = gen_auth_resp(
+                        &switch.plugin_name,
+                        username,
+                        password,
+                        switch.auth_plugin_data,
+                    )?;
                     self.send_msg(&data[..], false).await?;
                 }
                 ComChangeUserResponse::More(_) => unimplemented!(),
@@ -565,7 +573,12 @@ where
     }
 }
 
-fn gen_auth_resp<U, P, S>(username: U, password: P, seed: S) -> Result<(String, Vec<u8>)>
+fn gen_auth_resp<U, P, S>(
+    auth_plugin_name: &str,
+    username: U,
+    password: P,
+    seed: S,
+) -> Result<Vec<u8>>
 where
     U: AsRef<str>,
     P: AsRef<str>,
@@ -576,11 +589,26 @@ where
         // remove trailing 0x00 byte
         seed = &seed[..seed.len() - 1];
     }
-    let mut ap = MysqlNativePassword::new();
-    ap.set_credential(username.as_ref(), password.as_ref());
     let mut auth_response = vec![];
-    ap.next(&seed, &mut auth_response)?;
-    Ok(("mysql_native_password".to_owned(), auth_response))
+    match auth_plugin_name {
+        "mysql_native_password" => {
+            let mut ap = MysqlNativePassword::new();
+            ap.set_credential(username.as_ref(), password.as_ref());
+            ap.next(&seed, &mut auth_response)?;
+        }
+        "caching_sha2_password" => {
+            let mut ap = CachingSha2Password::with_ssl(false);
+            ap.set_credential(username.as_ref(), password.as_ref());
+            ap.next(&seed, &mut auth_response)?;
+        }
+        _ => {
+            return Err(Error::CustomError(format!(
+                "auth plugin {} not supported",
+                auth_plugin_name
+            )))
+        }
+    }
+    Ok(auth_response)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

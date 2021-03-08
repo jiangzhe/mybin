@@ -19,7 +19,7 @@ pub struct InitialHandshake {
     pub auth_plugin_data_length: u8,
     // reserved 10 bytes
     pub auth_plugin_data_2: Bytes,
-    pub auth_plugin_name: Bytes,
+    pub auth_plugin_name: String,
 }
 
 impl ReadFromBytes for InitialHandshake {
@@ -46,9 +46,10 @@ impl ReadFromBytes for InitialHandshake {
             Bytes::new()
         };
         let auth_plugin_name = if cap_flags.contains(CapabilityFlags::PLUGIN_AUTH) {
-            input.read_until(0, false)?
+            let apn = input.read_until(0, false)?;
+            String::from_utf8(apn.to_vec())?
         } else {
-            Bytes::new()
+            String::new()
         };
         Ok(InitialHandshake {
             protocol_version,
@@ -168,7 +169,7 @@ pub struct ConnectAttr {
 pub struct AuthSwitchRequest {
     pub header: u8,
     // null terminated string
-    pub plugin_name: Bytes,
+    pub plugin_name: String,
     // EOF terminated string
     pub auth_plugin_data: Bytes,
 }
@@ -186,7 +187,7 @@ impl ReadFromBytes for AuthSwitchRequest {
         let auth_plugin_data = input.split_to(input.remaining());
         Ok(AuthSwitchRequest {
             header,
-            plugin_name,
+            plugin_name: String::from_utf8(plugin_name.to_vec())?,
             auth_plugin_data,
         })
     }
@@ -233,10 +234,7 @@ mod tests {
             "server_version={}",
             String::from_utf8_lossy(handshake.server_version.chunk())
         );
-        println!(
-            "auth_plugin_name={}",
-            String::from_utf8_lossy(handshake.auth_plugin_name.chunk())
-        );
+        println!("auth_plugin_name={}", handshake.auth_plugin_name);
         let capability_flags = CapabilityFlags::from_bits(handshake.capability_flags).unwrap();
         println!("capability_flags={:#?}", capability_flags);
     }

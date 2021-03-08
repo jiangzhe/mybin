@@ -1,5 +1,5 @@
 use crate::flag::*;
-use crate::handshake::AuthSwitchRequest;
+use crate::handshake::{AuthMoreData, AuthSwitchRequest};
 use bytes::{Buf, Bytes};
 use bytes_parser::error::{Error, Needed, Result};
 use bytes_parser::my::ReadMyEnc;
@@ -42,6 +42,7 @@ pub enum HandshakeMessage {
     Ok(OkPacket),
     Err(ErrPacket),
     Switch(AuthSwitchRequest),
+    MoreData(AuthMoreData),
 }
 
 impl HandshakeMessage {
@@ -53,6 +54,10 @@ impl HandshakeMessage {
             0x00 => {
                 let ok = OkPacket::read_from(input, cap_flags)?;
                 Ok(HandshakeMessage::Ok(ok))
+            }
+            0x01 => {
+                let more = AuthMoreData::read_from(input)?;
+                Ok(HandshakeMessage::MoreData(more))
             }
             0xff => {
                 let err = ErrPacket::read_from(input, cap_flags, false)?;

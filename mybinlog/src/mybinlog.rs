@@ -7,7 +7,6 @@ use mybin_core::binlog::Event;
 use mybin_core::col::{ColumnDefinition, ColumnMetas};
 use mybin_core::sql::{PreparedSql, SqlCollection};
 use opts::{Command, Opts};
-// use smol::stream::StreamExt;
 use regex::Regex;
 use smol_str::SmolStr;
 use std::collections::{HashMap, HashSet};
