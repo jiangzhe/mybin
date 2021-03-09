@@ -11,6 +11,7 @@ mod rotate;
 mod rows_v1;
 pub mod rows_v2;
 mod table_map;
+pub mod transform;
 mod user_var;
 mod util;
 mod xid;

@@ -77,22 +77,22 @@ mod tests {
     #[test]
     fn test_bitmap_to_iter() {
         let single_zeros = [0u8];
-        let sum = to_iter(&single_zeros, 0)
+        let sum: i32 = to_iter(&single_zeros, 0)
             .map(|b| if b { 1 } else { 0 })
             .sum();
         assert_eq!(0, sum);
         let single_ones = [0xff_u8];
-        let sum = to_iter(&single_ones, 0)
+        let sum: i32 = to_iter(&single_ones, 0)
             .map(|b| if b { 1 } else { 0 })
             .sum();
         assert_eq!(8, sum);
         let multi_zeros = [0u8, 0, 0];
-        let sum = to_iter(&multi_zeros, 0)
+        let sum: i32 = to_iter(&multi_zeros, 0)
             .map(|b| if b { 1 } else { 0 })
             .sum();
         assert_eq!(0, sum);
         let multi_ones = [0xff_u8, 0xff, 0xff];
-        let sum = to_iter(&multi_ones, 0).map(|b| if b { 1 } else { 0 }).sum();
+        let sum: i32 = to_iter(&multi_ones, 0).map(|b| if b { 1 } else { 0 }).sum();
         assert_eq!(24, sum);
     }
 

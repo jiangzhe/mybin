@@ -1,6 +1,7 @@
 use crate::binlog::rows_v2::{RowsV2, UpdateRowsV2};
-use crate::bitmap;
-use crate::col::{ColumnDefinition, ColumnFlags, ColumnType};
+use crate::binlog::transform::FromRowsV2;
+use crate::binlog::transform::{filter_col_defs, ColDef};
+use crate::col::ColumnDefinition;
 use crate::stmt::StmtColumnValue;
 use bytes::Buf;
 use smol_str::SmolStr;
@@ -60,13 +61,35 @@ impl PreparedSql {
     pub fn sql_stmt(&self) -> Cow<String> {
         Cow::Owned(self.sql_fragments.concat())
     }
+}
 
-    pub fn delete(
+impl FromRowsV2 for PreparedSql {
+    fn from_insert(
         db: SmolStr,
         tbl: SmolStr,
         rowsv2: RowsV2,
         col_defs: &[ColumnDefinition],
-    ) -> PreparedSql {
+    ) -> Self {
+        let col_defs = filter_col_defs(rowsv2.present_bitmap.chunk(), col_defs);
+        let sql_fragments = insert_sql_fragments(&db, &tbl, &col_defs);
+        let mut params = Vec::with_capacity(rowsv2.rows.len());
+        for cols in rowsv2.rows {
+            let param: Vec<StmtColumnValue> = col_defs
+                .iter()
+                .zip(cols.0.into_iter())
+                .map(|(cn, row)| StmtColumnValue::from((row, cn.unsigned)))
+                .collect();
+            params.push(param);
+        }
+        Self::new(db, sql_fragments, params)
+    }
+
+    fn from_delete(
+        db: SmolStr,
+        tbl: SmolStr,
+        rowsv2: RowsV2,
+        col_defs: &[ColumnDefinition],
+    ) -> Self {
         let col_defs = filter_col_defs(rowsv2.present_bitmap.chunk(), col_defs);
         let sql_fragments = delete_sql_fragments(&db, &tbl, &col_defs);
         let mut params = Vec::with_capacity(rowsv2.rows.len());
@@ -82,39 +105,12 @@ impl PreparedSql {
         Self::new(db, sql_fragments, params)
     }
 
-    pub fn insert(
-        db: SmolStr,
-        tbl: SmolStr,
-        rowsv2: RowsV2,
-        col_defs: &[ColumnDefinition],
-    ) -> PreparedSql {
-        let col_defs = filter_col_defs(rowsv2.present_bitmap.chunk(), col_defs);
-        let sql_fragments = insert_sql_fragments(&db, &tbl, &col_defs);
-        let mut params = Vec::with_capacity(rowsv2.rows.len());
-        for cols in rowsv2.rows {
-            let param: Vec<StmtColumnValue> = col_defs
-                .iter()
-                .zip(cols.0.into_iter())
-                .map(|(cn, row)| StmtColumnValue::from((row, cn.unsigned)))
-                .collect();
-            params.push(param);
-        }
-        Self::new(db, sql_fragments, params)
-    }
-
-    /// only return sql if key column exists
-    pub fn update(
+    fn from_update(
         db: SmolStr,
         tbl: SmolStr,
         rowsv2: UpdateRowsV2,
         col_defs: &[ColumnDefinition],
-    ) -> Option<PreparedSql> {
-        if col_defs.iter().all(|def| {
-            !def.flags.contains(ColumnFlags::PRIMARY_KEY)
-                && !def.flags.contains(ColumnFlags::UNIQUE_KEY)
-        }) {
-            return None;
-        }
+    ) -> Self {
         let before_col_defs = filter_col_defs(rowsv2.before_present_bitmap.chunk(), col_defs);
         let after_col_defs = filter_col_defs(rowsv2.after_present_bitmap.chunk(), col_defs);
         let sql_fragments = update_sql_fragments(&db, &tbl, &before_col_defs, &after_col_defs);
@@ -131,7 +127,7 @@ impl PreparedSql {
             }
             params.push(param);
         }
-        Some(Self::new(db, sql_fragments, params))
+        Self::new(db, sql_fragments, params)
     }
 }
 
@@ -243,28 +239,6 @@ fn insert_sql_fragments(db: &SmolStr, tbl: &SmolStr, col_defs: &[ColDef]) -> Vec
     }
     sql_fragments.push(")".to_owned());
     sql_fragments
-}
-
-fn filter_col_defs(present_bitmap: &[u8], col_defs: &[ColumnDefinition]) -> Vec<ColDef> {
-    bitmap::to_iter(present_bitmap, 0)
-        .zip(col_defs.iter())
-        .filter(|(present, _)| *present)
-        .map(|(_, def)| ColDef {
-            name: def.name.clone(),
-            col_type: def.col_type,
-            unsigned: def.flags.contains(ColumnFlags::UNSIGNED),
-            key: def.flags.contains(ColumnFlags::PRIMARY_KEY)
-                || def.flags.contains(ColumnFlags::UNIQUE_KEY),
-        })
-        .collect()
-}
-
-#[derive(Debug, Clone)]
-pub struct ColDef {
-    pub name: SmolStr,
-    pub col_type: ColumnType,
-    pub unsigned: bool,
-    pub key: bool,
 }
 
 #[cfg(test)]

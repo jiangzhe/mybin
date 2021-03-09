@@ -8,7 +8,8 @@ use crypto::sha2::Sha256;
 /// this trait and impls refers to MySQL 5.1.49
 /// JDBC implementation but simplified
 pub trait AuthPlugin {
-    const NAME: &'static str;
+    /// name of this plugin
+    fn name(&self) -> &str;
 
     /// set credentials
     ///
@@ -33,7 +34,9 @@ impl MysqlNativePassword {
 }
 
 impl AuthPlugin for MysqlNativePassword {
-    const NAME: &'static str = "mysql_native_password";
+    fn name(&self) -> &'static str {
+        "mysql_native_password"
+    }
 
     fn set_credential(&mut self, _username: &str, password: &str) {
         self.password = Vec::from(password.as_bytes());
@@ -105,7 +108,9 @@ impl CachingSha2Password {
 }
 
 impl AuthPlugin for CachingSha2Password {
-    const NAME: &'static str = "caching_sha2_password";
+    fn name(&self) -> &str {
+        "caching_sha2_password"
+    }
 
     fn set_credential(&mut self, username: &str, password: &str) {
         self.password = Vec::from(password.as_bytes());

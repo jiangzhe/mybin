@@ -12,7 +12,6 @@ pub mod quit;
 pub mod resp;
 pub mod resultset;
 pub mod row;
-pub mod sql;
 pub mod stmt;
 pub mod time;
 

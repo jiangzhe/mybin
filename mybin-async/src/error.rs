@@ -26,7 +26,7 @@ pub enum Error {
     EmptyResultSet,
     #[error("core error {0}")]
     CoreError(#[from] mybin_core::error::Error),
-    #[error("custom error {0}")]
+    #[error("{0}")]
     CustomError(String),
 }
 
