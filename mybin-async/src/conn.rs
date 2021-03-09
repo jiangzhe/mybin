@@ -187,15 +187,12 @@ where
         CapabilityFlags::default();
         // disable ssl currently
         self.cap_flags.remove(CapabilityFlags::SSL);
-        // by default use mysql_native_password auth_plugin
-        // todo: we should use server suggested plugin to generate auth response
+        // use server suggested plugin to generate auth response
         //       e.g. MySQL 8.0.x suggests caching_sha2_password by default.
-        let auth_response = gen_auth_resp(
-            &handshake.auth_plugin_name,
-            &opts.username,
-            &opts.password,
-            &seed,
-        )?;
+        // currently only two auth plugins are supported
+        let mut auth_plugin = new_auth_plugin(&handshake.auth_plugin_name)?;
+        let auth_response =
+            gen_init_auth_resp(&mut *auth_plugin, &opts.username, &opts.password, &seed)?;
 
         if !opts.database.is_empty() {
             self.cap_flags.insert(CapabilityFlags::CONNECT_WITH_DB);
@@ -211,34 +208,39 @@ where
         };
         self.send_msg(client_resp, false).await?;
         let cap_flags = self.cap_flags.clone();
-        let mut msg = self.recv_msg().await?;
-
-        // todo: handle auth switch request
-        match HandshakeMessage::read_from(&mut msg, &cap_flags)? {
-            HandshakeMessage::Ok(ok) => {
-                log::debug!("handshake succeeds");
-                self.server_status = ok.status_flags;
-                // reset packet number for command phase
-                self.reset_pkt_nr();
-            }
-            HandshakeMessage::Err(err) => {
-                return Err(Error::PacketError(format!(
-                    "error_code: {}, error_message: {}",
-                    err.error_code,
-                    String::from_utf8_lossy(err.error_message.chunk()),
-                )))
-            }
-            HandshakeMessage::Switch(switch) => {
-                log::debug!(
-                    "switch auth_plugin={}, auth_data={:?}",
-                    switch.plugin_name,
-                    switch.auth_plugin_data
-                );
-                unimplemented!();
-            }
-            HandshakeMessage::MoreData(more) => {
-                log::debug!("auth more data={:?}", more);
-                unimplemented!();
+        loop {
+            let mut msg = self.recv_msg().await?;
+            match HandshakeMessage::read_from(&mut msg, &cap_flags)? {
+                HandshakeMessage::Ok(ok) => {
+                    log::debug!("handshake succeeds");
+                    self.server_status = ok.status_flags;
+                    // reset packet number for command phase
+                    self.reset_pkt_nr();
+                    break;
+                }
+                HandshakeMessage::Err(err) => {
+                    return Err(Error::PacketError(format!(
+                        "error_code: {}, error_message: {}",
+                        err.error_code,
+                        String::from_utf8_lossy(err.error_message.chunk()),
+                    )))
+                }
+                HandshakeMessage::Switch(switch) => {
+                    log::debug!(
+                        "switch auth_plugin={}, auth_data={:?}",
+                        switch.plugin_name,
+                        switch.auth_plugin_data
+                    );
+                    unimplemented!();
+                }
+                HandshakeMessage::MoreData(more) => {
+                    log::debug!("auth more data={:?}", more);
+                    let mut resp = vec![];
+                    auth_plugin.next(&more.plugin_data, &mut resp)?;
+                    if !resp.is_empty() {
+                        self.send_msg(&resp[..], false).await?;
+                    }
+                }
             }
         }
         Ok(())
@@ -366,22 +368,30 @@ where
         cmd.write_with_ctx(&mut buf, &self.cap_flags)?;
         self.send_msg(buf.freeze(), true).await?;
 
+        let mut auth_plugin: Option<Box<dyn AuthPlugin>> = None;
         loop {
             let mut msg = self.recv_msg().await?;
             match ComChangeUserResponse::read_from(&mut msg, &self.cap_flags)? {
                 ComChangeUserResponse::Ok(_) => break,
                 ComChangeUserResponse::Err(err) => return Err(err.into()),
                 ComChangeUserResponse::Switch(switch) => {
-                    // currently only support mysql_native_password
-                    let data = gen_auth_resp(
-                        &switch.plugin_name,
+                    auth_plugin.replace(new_auth_plugin(&switch.plugin_name)?);
+                    let resp = gen_init_auth_resp(
+                        auth_plugin.as_mut().unwrap().as_mut(),
                         username,
                         password,
                         switch.auth_plugin_data,
                     )?;
-                    self.send_msg(&data[..], false).await?;
+                    self.send_msg(&resp[..], false).await?;
                 }
-                ComChangeUserResponse::More(_) => unimplemented!(),
+                ComChangeUserResponse::More(more) => {
+                    let mut resp = vec![];
+                    auth_plugin
+                        .as_mut()
+                        .unwrap()
+                        .next(&more.plugin_data, &mut resp)?;
+                    self.send_msg(&resp[..], false).await?;
+                }
             }
         }
         Ok(())
@@ -573,8 +583,22 @@ where
     }
 }
 
-fn gen_auth_resp<U, P, S>(
-    auth_plugin_name: &str,
+fn new_auth_plugin(plugin_name: &str) -> Result<Box<dyn AuthPlugin>> {
+    let auth_plugin: Box<dyn AuthPlugin> = match plugin_name {
+        "mysql_native_password" => Box::new(MysqlNativePassword::new()),
+        "caching_sha2_password" => Box::new(CachingSha2Password::with_ssl(false)),
+        _ => {
+            return Err(Error::CustomError(format!(
+                "auth plugin {} not supported",
+                plugin_name
+            )))
+        }
+    };
+    Ok(auth_plugin)
+}
+
+fn gen_init_auth_resp<U, P, S>(
+    auth_plugin: &mut dyn AuthPlugin,
     username: U,
     password: P,
     seed: S,
@@ -590,24 +614,8 @@ where
         seed = &seed[..seed.len() - 1];
     }
     let mut auth_response = vec![];
-    match auth_plugin_name {
-        "mysql_native_password" => {
-            let mut ap = MysqlNativePassword::new();
-            ap.set_credential(username.as_ref(), password.as_ref());
-            ap.next(&seed, &mut auth_response)?;
-        }
-        "caching_sha2_password" => {
-            let mut ap = CachingSha2Password::with_ssl(false);
-            ap.set_credential(username.as_ref(), password.as_ref());
-            ap.next(&seed, &mut auth_response)?;
-        }
-        _ => {
-            return Err(Error::CustomError(format!(
-                "auth plugin {} not supported",
-                auth_plugin_name
-            )))
-        }
-    }
+    auth_plugin.set_credential(username.as_ref(), password.as_ref());
+    auth_plugin.next(&seed, &mut auth_response)?;
     Ok(auth_response)
 }
 

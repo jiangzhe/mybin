@@ -6,6 +6,7 @@ use async_io::Async;
 use cmd_opt::CommandOpt;
 use config::{Config, Tcp};
 use mybin_async::conn::{Conn, ConnOpts};
+use mybin_core::binlog::Event;
 use std::fs::File;
 use std::io::Read;
 use std::net::{TcpStream, ToSocketAddrs};
@@ -22,8 +23,15 @@ fn main() -> Result<()> {
     smol::block_on(async {
         let mut conn = connect_tcp(&conf.connect.tcp().unwrap()).await?;
         let binlog_files = conn.binlog_files().await?;
+        log::debug!("list of binlog files: {}", binlog_files.len());
         for bf in binlog_files {
-            println!("{:?}", bf);
+            log::debug!("{:?}", bf);
+        }
+        log::debug!("requesting binlog stream");
+        let mut binlog_stream = conn.binlog().request_stream().await?;
+        log::debug!("binlog stream requested");
+        while let Some(evt) = binlog_stream.next_event().await? {
+            log::debug!("{:?}", evt);
         }
         Ok(())
     })

@@ -3,9 +3,10 @@ mod opts;
 use anyhow::Result;
 use async_net::TcpStream;
 use mybin_async::conn::{Conn, ConnOpts};
+use mybin_core::binlog::transform::sql::{PreparedSql, SqlCollection};
+use mybin_core::binlog::transform::FromRowsV2;
 use mybin_core::binlog::Event;
-use mybin_core::col::{ColumnDefinition, ColumnMetas};
-use mybin_core::sql::{PreparedSql, SqlCollection};
+use mybin_core::col::{ColumnDefinition, ColumnFlags, ColumnMetas};
 use opts::{Command, Opts};
 use regex::Regex;
 use smol_str::SmolStr;
@@ -139,7 +140,7 @@ async fn print_dmls(
                 if let Some(tm) = tbls.get(&tbl_id) {
                     let rows = data.into_rows(&tm.col_metas)?;
                     let del_sql =
-                        PreparedSql::delete(tm.db.clone(), tm.tbl.clone(), rows, &tm.col_defs);
+                        PreparedSql::from_delete(tm.db.clone(), tm.tbl.clone(), rows, &tm.col_defs);
                     for s in del_sql.sql_list() {
                         println!("{}", s);
                         n_rows += 1;
@@ -158,17 +159,22 @@ async fn print_dmls(
                 }
                 if let Some(tm) = tbls.get(&tbl_id) {
                     let rows = data.into_rows(&tm.col_metas)?;
-                    match PreparedSql::update(tm.db.clone(), tm.tbl.clone(), rows, &tm.col_defs) {
-                        Some(upd_sql) => {
-                            for s in upd_sql.sql_list() {
-                                println!("{}", s);
-                                n_rows += 1;
-                                if limit != 0 && n_rows >= limit {
-                                    break 'outer;
-                                }
+                    if !key_exists(&tm.col_defs) {
+                        println!("-- Cannot generate update SQL for table {}.{} because no key column found. next_offset={}", tm.db, tm.tbl, next_pos);
+                    } else {
+                        let upd_sql = PreparedSql::from_update(
+                            tm.db.clone(),
+                            tm.tbl.clone(),
+                            rows,
+                            &tm.col_defs,
+                        );
+                        for s in upd_sql.sql_list() {
+                            println!("{}", s);
+                            n_rows += 1;
+                            if limit != 0 && n_rows >= limit {
+                                break 'outer;
                             }
                         }
-                        None => println!("-- Cannot generate update SQL for table {}.{} because no key column found. next_offset={}", tm.db, tm.tbl, next_pos),
                     }
                 }
             }
@@ -181,7 +187,7 @@ async fn print_dmls(
                 if let Some(tm) = tbls.get(&tbl_id) {
                     let rows = data.into_rows(&tm.col_metas)?;
                     let ins_sql =
-                        PreparedSql::insert(tm.db.clone(), tm.tbl.clone(), rows, &tm.col_defs);
+                        PreparedSql::from_insert(tm.db.clone(), tm.tbl.clone(), rows, &tm.col_defs);
                     for s in ins_sql.sql_list() {
                         println!("{}", s);
                         n_rows += 1;
@@ -210,6 +216,12 @@ async fn print_dmls(
         }
     }
     Ok(())
+}
+
+fn key_exists(col_defs: &[ColumnDefinition]) -> bool {
+    col_defs.iter().any(|c| {
+        c.flags.contains(ColumnFlags::PRIMARY_KEY) && c.flags.contains(ColumnFlags::UNIQUE_KEY)
+    })
 }
 
 #[derive(Debug, Clone)]

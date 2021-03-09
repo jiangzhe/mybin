@@ -196,7 +196,7 @@ impl ReadFromBytes for AuthSwitchRequest {
 #[derive(Debug, Clone)]
 pub struct AuthMoreData {
     pub header: u8,
-    pub plugin_data: Bytes,
+    pub plugin_data: Vec<u8>,
 }
 
 impl ReadFromBytes for AuthMoreData {
@@ -211,7 +211,7 @@ impl ReadFromBytes for AuthMoreData {
         let plugin_data = input.split_to(input.remaining());
         Ok(AuthMoreData {
             header,
-            plugin_data,
+            plugin_data: plugin_data.to_vec(),
         })
     }
 }
